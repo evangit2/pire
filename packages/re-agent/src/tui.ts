@@ -32,9 +32,11 @@
 
 import * as readline from "node:readline";
 import { execSync } from "node:child_process";
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import * as https from "node:https";
+import * as http from "node:http";
 import { RE_TOOLS, RE_SYSTEM_PROMPT, probeTools } from "./index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -56,11 +58,124 @@ const C = {
 
 interface OutputLine { text: string; kind: "cmd" | "out" | "err" | "info" | "tool" | "chat" }
 
+// ─── LLM Config ────────────────────────────────────────────────
+
+interface LLMConfig {
+	baseUrl: string;
+	apiKey: string;
+	model: string;
+}
+
+function loadLLMConfig(): LLMConfig | null {
+	// Try Hermes config files
+	const candidates = [
+		process.env.HERMES_CONFIG,
+		join(process.env.HOME || "/home/evan", ".hermes/config.yaml"),
+		join(process.env.HOME || "/home/evan", ".hermes/profiles/default/config.yaml"),
+	];
+
+	for (const path of candidates) {
+		if (!path || !existsSync(path)) continue;
+		try {
+			const content = readFileSync(path, "utf-8");
+			// Simple YAML extraction — no dependency needed
+			const baseUrl = content.match(/base_url:\s*(.+)/)?.[1]?.trim();
+			const apiKey = content.match(/api_key:\s*(.+)/)?.[1]?.trim();
+			const model = content.match(/^\s*default:\s*(.+)/m)?.[1]?.trim();
+
+			if (baseUrl && apiKey && model) {
+				// Normalize URL — strip trailing slash, ensure /api/v1 path
+				let url = baseUrl.replace(/\/$/, "");
+				if (!url.includes("/api/v1")) {
+					// base_url in hermes config points to /api/v1/ already
+				}
+				return { baseUrl: url, apiKey, model };
+			}
+		} catch {}
+	}
+
+	// Try environment variables
+	if (process.env.OPENAI_API_KEY && process.env.OPENAI_BASE_URL) {
+		return {
+			baseUrl: process.env.OPENAI_BASE_URL,
+			apiKey: process.env.OPENAI_API_KEY,
+			model: process.env.OPENAI_MODEL || "gpt-4",
+		};
+	}
+
+	return null;
+}
+
+async function chatWithLLM(config: LLMConfig, systemPrompt: string, messages: { role: string; content: string }[]): Promise<string> {
+	const url = new URL(config.baseUrl.replace(/\/$/, "") + "/chat/completions");
+	const body = JSON.stringify({
+		model: config.model,
+		messages: [
+			{ role: "system", content: systemPrompt },
+			...messages,
+		],
+		max_tokens: 4096,
+		stream: false,
+	});
+
+	const options: http.RequestOptions = {
+		method: "POST",
+		headers: {
+			"Content-Type": "application/json",
+			"Authorization": `Bearer ${config.apiKey}`,
+		},
+	};
+
+	const doRequest = (): Promise<string> => new Promise((resolve, reject) => {
+		const client = url.protocol === "https:" ? https : http;
+		const req = client.request(url, options, (res) => {
+			let data = "";
+			res.on("data", (chunk) => (data += chunk));
+			res.on("end", () => {
+				if (res.statusCode && res.statusCode >= 500) {
+					reject(new Error(`HTTP ${res.statusCode}: ${data.slice(0, 100)}`));
+					return;
+				}
+				try {
+					const json = JSON.parse(data);
+					const msg = json.choices?.[0]?.message;
+					const content = msg?.content ?? msg?.reasoning;
+					if (content) resolve(content);
+					else reject(new Error(`No content in response: ${data.slice(0, 200)}`));
+				} catch (e) {
+					reject(new Error(`Failed to parse LLM response: ${data.slice(0, 200)}`));
+				}
+			});
+		});
+		req.on("error", reject);
+		req.setTimeout(60000, () => {
+			req.destroy(new Error("Request timeout"));
+		});
+		req.write(body);
+		req.end();
+	});
+
+	// Retry on transient failures (502, timeout, etc.)
+	let lastErr: Error | null = null;
+	for (let attempt = 0; attempt < 3; attempt++) {
+		try {
+			return await doRequest();
+		} catch (e) {
+			lastErr = e instanceof Error ? e : new Error(String(e));
+			if (attempt < 2) await new Promise(r => setTimeout(r, 2000 * (attempt + 1)));
+		}
+	}
+	throw lastErr;
+}
+
 export class PireTUI {
 	private rl: readline.Interface;
 	private target: string;
 	private tools: Record<string, boolean> = {};
 	private output: OutputLine[] = [];
+	private llm: LLMConfig | null = null;
+	private chatHistory: { role: string; content: string }[] = [];
+	private recentToolOutput: string[] = [];  // unflushed context for LLM
 
 	constructor(target?: string) {
 		this.target = target ?? "";
@@ -74,6 +189,15 @@ export class PireTUI {
 	async start() {
 		this.push("info", `pire v${VERSION} — Reverse Engineering Agent`);
 		this.push("info", `Type :help for commands, or just start chatting.`);
+
+		// Load LLM config
+		this.llm = loadLLMConfig();
+		if (this.llm) {
+			this.push("info", `LLM: ${this.llm.model}`);
+		} else {
+			this.push("err", "No LLM config found. Set HERMES_CONFIG or OPENAI_API_KEY/OPENAI_BASE_URL.");
+			this.push("info", "Tool/shell commands still work. Chat will not.");
+		}
 
 		// Probe tools
 		this.push("info", "Probing system...");
@@ -91,13 +215,35 @@ export class PireTUI {
 
 		this.render();
 		this.rl.setPrompt("");
-		this.rl.on("line", (line) => this.handleInput(line));
+		this.rl.on("line", (line) => {
+			// Queue input — don't process while busy
+			this.inputQueue.push(line);
+			this.processQueue();
+		});
 		this.rl.on("close", () => this.stop());
+	}
+
+	private inputQueue: string[] = [];
+	private processing = false;
+
+	private async processQueue() {
+		if (this.processing) return;
+		this.processing = true;
+		while (this.inputQueue.length > 0) {
+			const line = this.inputQueue.shift()!;
+			await this.handleInput(line);
+		}
+		this.processing = false;
 	}
 
 	private push(kind: OutputLine["kind"], text: string) {
 		for (const line of text.split("\n")) {
 			this.output.push({ text: line, kind });
+		}
+		// Save tool/output lines for LLM context
+		if (kind === "tool" || kind === "out") {
+			this.recentToolOutput.push(text);
+			if (this.recentToolOutput.length > 50) this.recentToolOutput.shift();
 		}
 		if (this.output.length > 5000) this.output = this.output.slice(-5000);
 	}
@@ -295,8 +441,44 @@ export class PireTUI {
 			} catch (e) {
 				this.push("err", String(e instanceof Error ? e.message : e));
 			}
+		} else if (this.llm) {
+			// Chat with the LLM
+			this.push("chat", cmd);
+			this.render();
+			try {
+				// Build context: target info + recent tool output + chat history
+				let contextMsg = "";
+				if (this.target) {
+					contextMsg += `Current target binary: ${this.target}\n`;
+					if (this.recentToolOutput.length > 0) {
+						contextMsg += `Recent tool output:\n${this.recentToolOutput.slice(-15).join("\n")}\n\n`;
+					}
+				}
+				contextMsg += `Available tools: ${Object.entries(this.tools).filter(([,v]) => v).map(([k]) => k).join(", ")}\n`;
+				contextMsg += `Available commands: :load, :analyze, :tools, :probe, :skills, or type a tool name directly.`;
+				contextMsg += `\nIf you need to run a tool, suggest the exact command. Otherwise answer directly.`;
+
+				const messages = [
+					...this.chatHistory,
+					{ role: "user", content: `${contextMsg}\n\nUser: ${cmd}` },
+				];
+
+				const response = await chatWithLLM(this.llm, RE_SYSTEM_PROMPT, messages);
+				this.push("chat", response);
+
+				// Save to history
+				this.chatHistory.push({ role: "user", content: cmd });
+				this.chatHistory.push({ role: "assistant", content: response });
+
+				// Keep history bounded
+				if (this.chatHistory.length > 20) {
+					this.chatHistory = this.chatHistory.slice(-20);
+				}
+			} catch (e) {
+				this.push("err", `LLM error: ${e instanceof Error ? e.message : e}`);
+			}
 		} else {
-			// Pass through to shell
+			// No LLM — pass through to shell as fallback
 			this.push("cmd", `$ ${cmd}`);
 			try {
 				const result = execSync(cmd, { encoding: "utf-8", timeout: 30000, maxBuffer: 5 * 1024 * 1024 });
