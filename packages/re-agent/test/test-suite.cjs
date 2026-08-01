@@ -345,6 +345,8 @@ ok(reimplSrc.includes("SIMD"), "pire-reimpl has SIMD/SSE handling guidance");
 ok(reimplSrc.includes("Time Management"), "pire-reimpl has time management guidance");
 ok(reimplSrc.includes("by turn 25"), "pire-reimpl sets analysis.md deadline");
 ok(reimplSrc.includes("by turn 30"), "pire-reimpl sets reimpl.c deadline");
+ok(reimplSrc.includes("CRLF"), "pire-reimpl has CRLF matching guidance");
+ok(reimplSrc.includes("exit codes"), "pire-reimpl has exit code matching guidance");
 
 // ─── 20. Decompile Tool ────────────────────────────────────────
 

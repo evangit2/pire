@@ -235,6 +235,13 @@ You are an expert reverse engineer. Your goal is to FULLY reverse engineer a bin
 - Compare outputs: run both the original and your reimplementation with the same inputs
 - Available tools: ${toolsAvail}
 
+## Output Format Matching
+- Windows binaries typically output CRLF (\\r\\n) line endings
+- Always check: pipe both original and reimpl output through xxd | head -5
+- If the original uses CRLF, your reimpl must too (use \\r\\n in printf/fprintf)
+- Match exit codes exactly (test with: echo "exit:$?")
+- Match error messages exactly (case, punctuation, spacing)
+
 ## SIMD/SSE Warning
 - If you see xmm/movdqu/punpck instructions, the compiler auto-vectorized a loop
 - Don't try to reverse individual SSE shuffles — instead:
