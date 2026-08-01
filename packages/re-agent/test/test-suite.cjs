@@ -41,6 +41,7 @@ ok(!src.includes("autostart"), "no autostart (not MCP)");
 console.log("\n─ Native Tool Registry ─");
 
 const expectedTools = [
+	"shellTool",
 	"stringsTool", "fileTool", "objdumpTool", "readelfTool", "hexdumpTool", "disasmFuncTool", "r2Tool",
 	"ghidraStatus", "ghidraDecompile", "ghidraListFunctions", "ghidraRename", "ghidraXrefs", "ghidraStrings",
 	"binwalkTool", "liefTool", "angrTool", "capstoneTool", "keystoneTool", "unicornTool",
@@ -58,7 +59,7 @@ ok(src.includes("probeTools"), "probeTools exported");
 const toolArrayMatch = src.match(/export const RE_TOOLS[\s\S]*?\];/);
 if (toolArrayMatch) {
 	const toolCount = (toolArrayMatch[0].match(/^	\w+(Tool|Status|Decompile|ListFunctions|Rename|Xrefs|Strings)/gm) || []).length;
-	ok(toolCount === 23, `RE_TOOLS has 23 tools (got ${toolCount})`);
+	ok(toolCount === 24, `RE_TOOLS has 24 tools (got ${toolCount})`);
 }
 
 // ─── 3. Auto-Detect Wrappers ──────────────────────────────────
@@ -104,11 +105,11 @@ ok(tuiSrc.includes(":help"), "TUI has :help command");
 ok(tuiSrc.includes(":quit"), "TUI has :quit command");
 ok(tuiSrc.includes("RE_TOOLS"), "TUI imports RE_TOOLS");
 ok(tuiSrc.includes("probeTools"), "TUI imports probeTools");
-ok(tuiSrc.includes("runQuickAnalysis"), "TUI runs quick analysis on target");
-ok(tuiSrc.includes("OutputLine"), "TUI has typed output lines");
-ok(tuiSrc.includes(":load"), "TUI supports :load command for mid-session binary loading");
-ok(tuiSrc.includes(":target"), "TUI supports :target command");
-ok(tuiSrc.includes("No target loaded"), "TUI starts without requiring a binary");
+ok(tuiSrc.includes("agentLoop"), "TUI has agentLoop for autonomous tool calling");
+ok(tuiSrc.includes("tool_calls"), "TUI handles tool_calls from LLM");
+ok(tuiSrc.includes("toolToFunction"), "TUI converts tools to function schemas");
+ok(tuiSrc.includes("callLLM"), "TUI calls LLM with tools");
+ok(tuiSrc.includes("Just tell me what to analyze"), "TUI starts with chat prompt, no binary required");
 ok(!tuiSrc.includes("await import("), "no inline dynamic imports in TUI");
 
 // ─── 6. System Prompt ─────────────────────────────────────────
@@ -252,7 +253,7 @@ try {
 console.log("\n─ Probe Tools ─");
 
 // Verify probeTools would return expected keys
-const expectedProbeKeys = ["strings", "file", "objdump", "disasm_func", "readelf", "hexdump", "r2", "ghidra", "binwalk", "lief", "angr", "capstone", "keystone", "unicorn", "yara", "frida", "gdb", "volatility3"];
+const expectedProbeKeys = ["shell", "strings", "file", "objdump", "disasm_func", "readelf", "hexdump", "r2", "ghidra", "binwalk", "lief", "angr", "capstone", "keystone", "unicorn", "yara", "frida", "gdb", "volatility3"];
 for (const key of expectedProbeKeys) {
 	ok(src.includes(`\t\t${key}:`), `probeTools checks ${key}`);
 }
@@ -308,18 +309,17 @@ ok(src.includes("lea -0x30"), "prompt mentions digit check pattern");
 ok(src.includes("Quote exact instructions"), "prompt requires quoting instructions");
 ok(src.includes("focused passes"), "prompt advises focused analysis passes");
 
-// ─── 18. TUI :analyze Command ──────────────────────────────────
+// ─── 18. Agent Loop & Tool Calling ─────────────────────────────
 
-console.log("\n─ TUI :analyze Command ─");
+console.log("\n─ Agent Loop & Tool Calling ─");
 
-ok(tuiSrc.includes(":analyze"), "TUI has :analyze command");
-ok(tuiSrc.includes("runAnalysis"), "TUI has runAnalysis method");
-ok(tuiSrc.includes("Stage 1: Triage"), "TUI analysis runs Stage 1");
-ok(tuiSrc.includes("Stage 2: Structure"), "TUI analysis runs Stage 2");
-ok(tuiSrc.includes("Stage 3: Deep Analysis"), "TUI analysis suggests Stage 3");
-ok(tuiSrc.includes("disasm_func"), "TUI suggests disasm_func in tips");
-ok(tuiSrc.includes("endbr64"), "TUI finds functions via endbr64");
-ok(tuiSrc.includes("functions found"), "TUI reports function count");
+ok(tuiSrc.includes("agentLoop"), "TUI has agentLoop method");
+ok(tuiSrc.includes("MAX_TURNS"), "agent loop has turn limit");
+ok(tuiSrc.includes("tool_calls"), "agent loop handles tool_calls");
+ok(tuiSrc.includes("tool_call_id"), "agent loop returns tool results with tool_call_id");
+ok(tuiSrc.includes("toolToFunction"), "TUI converts tools to OpenAI function format");
+ok(tuiSrc.includes("shell"), "shell tool available for directory/system commands");
+ok(tuiSrc.includes("truncated"), "agent truncates long tool output");
 
 // ─── Summary ───────────────────────────────────────────────────
 

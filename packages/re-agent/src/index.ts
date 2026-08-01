@@ -587,9 +587,25 @@ const disasmFuncTool: AgentTool<{ path: string; startAddress: string; maxBytes?:
 	},
 };
 
+// ─── Shell tool (lets agent run arbitrary commands: ls, find, dpkg, etc.) ───
+
+const shellTool: AgentTool<{ command: string }> = {
+	name: "shell",
+	description: "Run a shell command (ls, find, file, dpkg, apt, etc.). Use for directory listing, file discovery, installing tools, or any system command.",
+	parameters: Type.Object({
+		command: Type.String({ description: "Shell command to execute" }),
+	}),
+	async execute(_id, params) {
+		const result = run(params.command, { timeout: 60000 });
+		return textResult(result.trim() || "(no output)");
+	},
+};
+
 // ─── Tool Registry ─────────────────────────────────────────────
 
 export const RE_TOOLS: AgentTool<any>[] = [
+	// Shell (always available)
+	shellTool,
 	// Core (always available if system tools exist)
 	stringsTool,
 	fileTool,
@@ -625,6 +641,7 @@ export function createReTools(extra: AgentTool<any>[] = []): AgentTool<any>[] {
 /** Probe system for available tools and return status. */
 export function probeTools(): Record<string, boolean> {
 	return {
+		shell: true,  // always available
 		strings: !!which("strings"),
 		file: !!which("file"),
 		objdump: !!which("objdump"),
@@ -727,6 +744,7 @@ Work in stages. Each stage builds on the previous. Don't skip ahead.
 // ─── Exports ───────────────────────────────────────────────────
 
 export {
+	shellTool,
 	stringsTool, fileTool, objdumpTool, readelfTool, hexdumpTool, disasmFuncTool, r2Tool,
 	ghidraStatus, ghidraDecompile, ghidraListFunctions, ghidraRename, ghidraXrefs, ghidraStrings,
 	binwalkTool, liefTool, angrTool, capstoneTool, keystoneTool, unicornTool, yaraTool, fridaTool, gdbTool, volatilityTool,

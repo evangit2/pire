@@ -1,225 +1,199 @@
 /**
- * pire TUI — Chat-style RE agent REPL
+ * pire TUI — Autonomous RE agent chat
  *
- * A simple terminal chat interface. No split panes, no binary required.
- * Just start typing — tools, shell commands, or natural language.
- *
- * Layout:
- *  ┌──────────────────────────────────────────────┐
- *  │ pire v0.2.0  │  target: /bin/ls  │  22 tools  │
- *  ├──────────────────────────────────────────────┤
- *  │ • pire v0.2.0 — Reverse Engineering Agent    │
- *  │ • Target: /bin/ls                            │
- *  │ • 18/23 tools available                      │
- *  │ ⚙ filetype → ELF 64-bit LSB shared object    │
- *  │                                              │
- *  │ > strings /bin/ls                            │
- *  │                                              │
- *  └──────────────────────────────────────────────┘
+ * Just start chatting. The agent can run tools itself.
+ * Say "analyze /bin/ls" and it calls filetype, strings, etc. autonomously.
+ * Point it at a directory, a binary, a URL — it figures out what to do.
  *
  * Commands:
- *  :load <path>   — Load a target binary
- *  :target        — Show current target
- *  :analyze       — Run guided analysis on target
  *  :tools         — List all tools
  *  :probe         — Probe system
  *  :skills        — List skills
  *  :help          — Show commands
  *  :quit          — Exit
- *  <tool> <args>  — Run a tool: e.g. "strings /bin/ls"
- *  <shell cmd>    — Pass-through to shell
  */
 
 import * as readline from "node:readline";
 import { execSync } from "node:child_process";
-import { readdirSync, readFileSync, existsSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { readdirSync, readFileSync, existsSync, statSync } from "node:fs";
+import { join, dirname, basename } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as https from "node:https";
 import * as http from "node:http";
-import { RE_TOOLS, RE_SYSTEM_PROMPT, probeTools } from "./index.js";
+import { RE_TOOLS, RE_SYSTEM_PROMPT, probeTools, type AgentTool } from "./index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const VERSION = "0.3.0";
 
-const VERSION = "0.2.0";
-
-// ANSI helpers
+// ANSI
 const C = {
-	reset: "\x1b[0m",
-	bold: "\x1b[1m",
-	dim: "\x1b[2m",
-	red: "\x1b[31m",
-	green: "\x1b[32m",
-	yellow: "\x1b[33m",
-	blue: "\x1b[34m",
-	cyan: "\x1b[36m",
-	gray: "\x1b[90m",
+	reset: "\x1b[0m", bold: "\x1b[1m", dim: "\x1b[2m",
+	red: "\x1b[31m", green: "\x1b[32m", yellow: "\x1b[33m",
+	blue: "\x1b[34m", cyan: "\x1b[36m", gray: "\x1b[90m",
 };
-
-interface OutputLine { text: string; kind: "cmd" | "out" | "err" | "info" | "tool" | "chat" }
 
 // ─── LLM Config ────────────────────────────────────────────────
 
-interface LLMConfig {
-	baseUrl: string;
-	apiKey: string;
-	model: string;
-}
+interface LLMConfig { baseUrl: string; apiKey: string; model: string }
 
 function loadLLMConfig(): LLMConfig | null {
-	// Try Hermes config files
 	const candidates = [
 		process.env.HERMES_CONFIG,
 		join(process.env.HOME || "/home/evan", ".hermes/config.yaml"),
 		join(process.env.HOME || "/home/evan", ".hermes/profiles/default/config.yaml"),
 	];
-
 	for (const path of candidates) {
 		if (!path || !existsSync(path)) continue;
 		try {
 			const content = readFileSync(path, "utf-8");
-			// Simple YAML extraction — no dependency needed
 			const baseUrl = content.match(/base_url:\s*(.+)/)?.[1]?.trim();
 			const apiKey = content.match(/api_key:\s*(.+)/)?.[1]?.trim();
 			const model = content.match(/^\s*default:\s*(.+)/m)?.[1]?.trim();
-
-			if (baseUrl && apiKey && model) {
-				// Normalize URL — strip trailing slash, ensure /api/v1 path
-				let url = baseUrl.replace(/\/$/, "");
-				if (!url.includes("/api/v1")) {
-					// base_url in hermes config points to /api/v1/ already
-				}
-				return { baseUrl: url, apiKey, model };
-			}
+			if (baseUrl && apiKey && model) return { baseUrl: baseUrl.replace(/\/$/, ""), apiKey, model };
 		} catch {}
 	}
-
-	// Try environment variables
 	if (process.env.OPENAI_API_KEY && process.env.OPENAI_BASE_URL) {
-		return {
-			baseUrl: process.env.OPENAI_BASE_URL,
-			apiKey: process.env.OPENAI_API_KEY,
-			model: process.env.OPENAI_MODEL || "gpt-4",
-		};
+		return { baseUrl: process.env.OPENAI_BASE_URL, apiKey: process.env.OPENAI_API_KEY, model: process.env.OPENAI_MODEL || "gpt-4" };
 	}
-
 	return null;
 }
 
-async function chatWithLLM(config: LLMConfig, systemPrompt: string, messages: { role: string; content: string }[]): Promise<string> {
+// ─── LLM types ─────────────────────────────────────────────────
+
+interface ChatMessage {
+	role: "system" | "user" | "assistant" | "tool";
+	content: string | null;
+	tool_calls?: ToolCall[];
+	tool_call_id?: string;
+}
+
+interface ToolCall {
+	id: string;
+	type: "function";
+	function: { name: string; arguments: string };
+}
+
+// ─── Tool schema conversion ────────────────────────────────────
+
+function toolToFunction(tool: AgentTool<any>) {
+	const schema = tool.parameters as any;
+	const props = schema?.properties ?? {};
+	const required = schema?.required ?? Object.keys(props);
+	return {
+		type: "function" as const,
+		function: {
+			name: tool.name,
+			description: tool.description,
+			parameters: { type: "object", properties: props, required },
+		},
+	};
+}
+
+// ─── LLM call with tool support ────────────────────────────────
+
+interface LLMResponse {
+	content: string | null;
+	tool_calls?: ToolCall[];
+}
+
+async function callLLM(config: LLMConfig, messages: ChatMessage[], tools?: object[]): Promise<LLMResponse> {
 	const url = new URL(config.baseUrl.replace(/\/$/, "") + "/chat/completions");
 	const body = JSON.stringify({
 		model: config.model,
-		messages: [
-			{ role: "system", content: systemPrompt },
-			...messages,
-		],
-		max_tokens: 4096,
+		messages,
+		tools: tools?.length ? tools : undefined,
+		max_tokens: 8000,
 		stream: false,
 	});
 
 	const options: http.RequestOptions = {
 		method: "POST",
-		headers: {
-			"Content-Type": "application/json",
-			"Authorization": `Bearer ${config.apiKey}`,
-		},
+		headers: { "Content-Type": "application/json", "Authorization": `Bearer ${config.apiKey}` },
 	};
 
-	const doRequest = (): Promise<string> => new Promise((resolve, reject) => {
+	const doRequest = (): Promise<LLMResponse> => new Promise((resolve, reject) => {
 		const client = url.protocol === "https:" ? https : http;
 		const req = client.request(url, options, (res) => {
 			let data = "";
 			res.on("data", (chunk) => (data += chunk));
 			res.on("end", () => {
 				if (res.statusCode && res.statusCode >= 500) {
-					reject(new Error(`HTTP ${res.statusCode}: ${data.slice(0, 100)}`));
+					reject(new Error(`HTTP ${res.statusCode}`));
 					return;
 				}
 				try {
 					const json = JSON.parse(data);
 					const msg = json.choices?.[0]?.message;
-					const content = msg?.content ?? msg?.reasoning;
-					if (content) resolve(content);
-					else reject(new Error(`No content in response: ${data.slice(0, 200)}`));
-				} catch (e) {
-					reject(new Error(`Failed to parse LLM response: ${data.slice(0, 200)}`));
+					resolve({
+						content: msg?.content ?? msg?.reasoning ?? null,
+						tool_calls: msg?.tool_calls,
+					});
+				} catch {
+					reject(new Error(`Parse error: ${data.slice(0, 200)}`));
 				}
 			});
 		});
 		req.on("error", reject);
-		req.setTimeout(60000, () => {
-			req.destroy(new Error("Request timeout"));
-		});
+		req.setTimeout(90000, () => req.destroy(new Error("Timeout")));
 		req.write(body);
 		req.end();
 	});
 
-	// Retry on transient failures (502, timeout, etc.)
 	let lastErr: Error | null = null;
-	for (let attempt = 0; attempt < 3; attempt++) {
-		try {
-			return await doRequest();
-		} catch (e) {
-			lastErr = e instanceof Error ? e : new Error(String(e));
-			if (attempt < 2) await new Promise(r => setTimeout(r, 2000 * (attempt + 1)));
-		}
+	for (let i = 0; i < 3; i++) {
+		try { return await doRequest(); }
+		catch (e) { lastErr = e instanceof Error ? e : new Error(String(e)); if (i < 2) await new Promise(r => setTimeout(r, 2000 * (i + 1))); }
 	}
 	throw lastErr;
 }
 
+// ─── TUI ───────────────────────────────────────────────────────
+
 export class PireTUI {
 	private rl: readline.Interface;
-	private target: string;
-	private tools: Record<string, boolean> = {};
-	private output: OutputLine[] = [];
 	private llm: LLMConfig | null = null;
-	private chatHistory: { role: string; content: string }[] = [];
-	private recentToolOutput: string[] = [];  // unflushed context for LLM
+	private tools: Record<string, boolean> = {};
+	private messages: ChatMessage[] = [];
+	private toolMap: Map<string, AgentTool<any>> = new Map();
+	private running = false;
 
 	constructor(target?: string) {
-		this.target = target ?? "";
-		this.rl = readline.createInterface({
-			input: process.stdin,
-			output: process.stdout,
-			terminal: true,
-		});
+		this.rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: true });
+		if (target) {
+			// If target was passed as CLI arg, inject it into the first user message
+			this.messages.push({ role: "user", content: `I want to analyze: ${target}` });
+		}
 	}
 
 	async start() {
-		this.push("info", `pire v${VERSION} — Reverse Engineering Agent`);
-		this.push("info", `Type :help for commands, or just start chatting.`);
+		this.print("info", `pire v${VERSION} — Reverse Engineering Agent`);
+		this.print("info", `Just tell me what to analyze. I'll run the tools myself.`);
 
-		// Load LLM config
 		this.llm = loadLLMConfig();
 		if (this.llm) {
-			this.push("info", `LLM: ${this.llm.model}`);
+			this.print("info", `LLM: ${this.llm.model}`);
 		} else {
-			this.push("err", "No LLM config found. Set HERMES_CONFIG or OPENAI_API_KEY/OPENAI_BASE_URL.");
-			this.push("info", "Tool/shell commands still work. Chat will not.");
+			this.print("err", "No LLM config. Set HERMES_CONFIG or OPENAI_API_KEY/OPENAI_BASE_URL.");
 		}
 
-		// Probe tools
-		this.push("info", "Probing system...");
+		this.print("info", "Probing system...");
 		this.tools = probeTools();
 		const avail = Object.values(this.tools).filter(Boolean).length;
-		const total = Object.keys(this.tools).length;
-		this.push("info", `${avail}/${total} tools available`);
+		this.print("info", `${avail}/${Object.keys(this.tools).length} tools available`);
 
-		if (this.target) {
-			this.push("info", `Target: ${this.target}`);
-			this.runQuickAnalysis();
-		} else {
-			this.push("info", `No target loaded. Use :load <path> to load a binary.`);
+		// Build tool map
+		for (const tool of RE_TOOLS) this.toolMap.set(tool.name, tool);
+
+		// If target was passed, kick off analysis automatically
+		if (this.messages.length > 0) {
+			this.render();
+			await this.agentLoop(this.messages[0].content!);
+			this.messages = []; // consumed
 		}
 
 		this.render();
 		this.rl.setPrompt("");
-		this.rl.on("line", (line) => {
-			// Queue input — don't process while busy
-			this.inputQueue.push(line);
-			this.processQueue();
-		});
+		this.rl.on("line", (line) => { this.inputQueue.push(line); this.processQueue(); });
 		this.rl.on("close", () => this.stop());
 	}
 
@@ -236,164 +210,129 @@ export class PireTUI {
 		this.processing = false;
 	}
 
-	private push(kind: OutputLine["kind"], text: string) {
-		for (const line of text.split("\n")) {
-			this.output.push({ text: line, kind });
-		}
-		// Save tool/output lines for LLM context
-		if (kind === "tool" || kind === "out") {
-			this.recentToolOutput.push(text);
-			if (this.recentToolOutput.length > 50) this.recentToolOutput.shift();
-		}
-		if (this.output.length > 5000) this.output = this.output.slice(-5000);
-	}
+	// ─── Agent loop: call LLM, execute tools, repeat ──────────
 
-	private runQuickAnalysis() {
-		if (!this.target) return;
-		try {
-			const result = execSync(`file "${this.target}"`, { encoding: "utf-8", timeout: 5000 }).trim();
-			this.push("tool", `filetype → ${result}`);
-		} catch {}
-		try {
-			const result = execSync(`strings -a -n 6 "${this.target}" 2>/dev/null | head -20`, { encoding: "utf-8", timeout: 10000 }).trim();
-			this.push("tool", `strings (top 20) →\n${result}`);
-		} catch {}
-	}
-
-	/** Guided multi-stage analysis — runs triage automatically, then suggests next steps. */
-	private async runAnalysis() {
-		if (!this.target) {
-			this.push("err", "No target loaded. Use :load <path> first.");
+	private async agentLoop(userMessage: string) {
+		if (!this.llm) {
+			this.print("err", "No LLM configured.");
 			return;
 		}
-		const target = this.target;
 
-		// Stage 1: Triage
-		this.push("info", "═══ Stage 1: Triage ═══");
+		// Build system prompt with tool availability
+		const availTools = Object.entries(this.tools).filter(([,v]) => v).map(([k]) => k).join(", ");
+		const systemPrompt = `${RE_SYSTEM_PROMPT}
 
-		try {
-			const ft = execSync(`file "${target}"`, { encoding: "utf-8", timeout: 5000 }).trim();
-			this.push("tool", `filetype: ${ft}`);
-		} catch (e) {
-			this.push("err", `filetype failed: ${e}`);
-		}
+You have ${RE_TOOLS.length} tools available. Available on this system: ${availTools}.
 
-		try {
-			const s = execSync(`strings -a -n 6 "${target}" 2>/dev/null | grep -iE '(error|usage|version|secret|password|key|license|flag|http|www|\\.com|\\.org)' | head -30`, { encoding: "utf-8", timeout: 10000 }).trim();
-			this.push("tool", `strings (interesting):\n${s || "(none found)"}`);
-		} catch {
+When the user mentions a path, binary, or directory — run tools on it yourself. Don't ask them to type commands.
+If given a directory, list its contents first (use shell), identify interesting files, then analyze them.
+If given a binary, start with filetype + strings + readelf, then dig deeper.
+Be proactive — run multiple tools in sequence to build a complete picture.`;
+
+		const messages: ChatMessage[] = [
+			{ role: "system", content: systemPrompt },
+			...this.messages,
+			{ role: "user", content: userMessage },
+		];
+
+		// Add to conversation history
+		this.messages.push({ role: "user", content: userMessage });
+
+		const toolSchemas = RE_TOOLS.map(toolToFunction);
+		const MAX_TURNS = 15;
+
+		for (let turn = 0; turn < MAX_TURNS; turn++) {
+			let resp: LLMResponse;
 			try {
-				const s = execSync(`strings -a -n 6 "${target}" 2>/dev/null | head -20`, { encoding: "utf-8", timeout: 10000 }).trim();
-				this.push("tool", `strings (top 20):\n${s}`);
-			} catch {}
-		}
-
-		try {
-			const imports = execSync(`readelf -s "${target}" 2>/dev/null | grep -E 'FUNC|OBJECT' | grep -v UND | head -20`, { encoding: "utf-8", timeout: 5000 }).trim();
-			this.push("tool", `symbols:\n${imports || "(stripped)"}`);
-		} catch {}
-		try {
-			const dyn = execSync(`readelf -d "${target}" 2>/dev/null | grep NEEDED`, { encoding: "utf-8", timeout: 5000 }).trim();
-			this.push("tool", `linked libs:\n${dyn || "(static)"}`);
-		} catch {}
-
-		// Stage 2: Structure
-		this.push("info", "═══ Stage 2: Structure ═══");
-
-		try {
-			const disasm = execSync(`objdump -d "${target}" 2>/dev/null`, { encoding: "utf-8", timeout: 15000 });
-			const funcStarts: string[] = [];
-			for (const line of disasm.split("\n")) {
-				if (line.includes("endbr64") && /^\s+[0-9a-f]+:/.test(line)) {
-					const addr = line.trim().split(":")[0];
-					funcStarts.push(addr);
-				}
+				resp = await callLLM(this.llm, messages, toolSchemas);
+			} catch (e) {
+				this.print("err", `LLM error: ${e instanceof Error ? e.message : e}`);
+				return;
 			}
-			this.push("tool", `functions found (${funcStarts.length}): ${funcStarts.slice(0, 15).join(", ")}${funcStarts.length > 15 ? " ..." : ""}`);
-		} catch (e) {
-			this.push("err", `disassembly failed: ${e}`);
+
+			// If there are tool calls, execute them
+			if (resp.tool_calls && resp.tool_calls.length > 0) {
+				// Show what the agent is doing
+				for (const tc of resp.tool_calls) {
+					const args = JSON.parse(tc.function.arguments);
+					const argStr = Object.entries(args).map(([k,v]) => `${k}=${v}`).join(" ");
+					this.print("tool", `⚙ ${tc.function.name}(${argStr})`);
+				}
+
+				// Add assistant message with tool_calls to conversation
+				const assistantMsg: ChatMessage = {
+					role: "assistant",
+					content: resp.content,
+					tool_calls: resp.tool_calls,
+				};
+				messages.push(assistantMsg);
+
+				// Execute each tool call
+				for (const tc of resp.tool_calls) {
+					const tool = this.toolMap.get(tc.function.name);
+					if (!tool) {
+						messages.push({ role: "tool", tool_call_id: tc.id, content: `Error: unknown tool "${tc.function.name}"` });
+						continue;
+					}
+					let params: Record<string, unknown>;
+					try { params = JSON.parse(tc.function.arguments); }
+					catch { params = {}; }
+
+					try {
+						const result = await tool.execute("pire", params);
+						const text = result.content.map((c: { text: string }) => c.text).join("\n");
+						// Truncate very long output to keep context manageable
+						const truncated = text.length > 8000 ? text.slice(0, 8000) + "\n... (truncated)" : text;
+						messages.push({ role: "tool", tool_call_id: tc.id, content: truncated });
+					} catch (e) {
+						messages.push({ role: "tool", tool_call_id: tc.id, content: `Error: ${e instanceof Error ? e.message : e}` });
+					}
+				}
+				this.render();
+				continue; // Let the LLM see tool results and continue
+			}
+
+			// No tool calls — this is the final response
+			if (resp.content) {
+				this.print("chat", resp.content);
+				this.messages.push({ role: "assistant", content: resp.content });
+			}
+			break;
 		}
 
-		// Stage 3: Suggest next steps
-		this.push("info", "═══ Stage 3: Deep Analysis (suggested commands) ═══");
-		this.push("info", "  disasm_func " + target + " 0x<addr>   — extract a specific function");
-		this.push("info", "  objdump " + target + " -d            — full disassembly");
-		this.push("info", "  r2 " + target + " 'aaa; afl'          — radare2 function list");
-		this.push("info", "  ghidra_decompile <func>         — decompile (if Ghidra running)");
-		this.push("info", "");
-		this.push("info", "Tip: Use disasm_func (not raw objdump) for individual functions.");
-		this.push("info", "     It correctly handles early-exit rets in stripped binaries.");
+		this.render();
 	}
+
+	// ─── Input handling ───────────────────────────────────────
 
 	private async handleInput(line: string) {
 		const cmd = line.trim();
 		if (!cmd) { this.render(); return; }
 
-		if (cmd === ":quit" || cmd === ":q" || cmd === "exit") {
-			this.stop();
-			return;
-		}
+		if (cmd === ":quit" || cmd === ":q" || cmd === "exit") { this.stop(); return; }
 
 		if (cmd === ":help" || cmd === ":h") {
-			this.push("info", "Commands:");
-			this.push("info", "  :load <path>    Load a target binary");
-			this.push("info", "  :target         Show current target");
-			this.push("info", "  :analyze        Run guided analysis on target");
-			this.push("info", "  :tools          List all tools");
-			this.push("info", "  :probe          Re-probe system");
-			this.push("info", "  :skills         List skills");
-			this.push("info", "  :help           Show this help");
-			this.push("info", "  :quit           Exit");
-			this.push("info", "");
-			this.push("info", "Or type a tool name + args, e.g: strings /bin/ls");
-			this.push("info", "  disasm_func <path> <addr> — extract a function");
-			this.push("info", "");
-			this.push("info", "Anything else is passed to the shell.");
+			this.print("info", "Just type naturally — the agent will run tools for you.");
+			this.print("info", "Examples:");
+			this.print("info", "  analyze /bin/ls");
+			this.print("info", "  what's in /opt/game/?");
+			this.print("info", "  disassemble the main function in ./crackme");
+			this.print("info", "");
+			this.print("info", "Commands: :tools :probe :skills :help :quit");
 			this.render();
 			return;
 		}
 
 		if (cmd === ":tools") {
-			for (const tool of RE_TOOLS) {
-				this.push("info", `  ${tool.name.padEnd(20)} ${tool.description.split(".")[0]}`);
-			}
-			this.push("info", `${RE_TOOLS.length} tools registered`);
+			for (const tool of RE_TOOLS) this.print("info", `  ${tool.name.padEnd(20)} ${tool.description.split(".")[0]}`);
+			this.print("info", `${RE_TOOLS.length} tools registered`);
 			this.render();
 			return;
 		}
 
 		if (cmd === ":probe") {
 			this.tools = probeTools();
-			for (const [name, avail] of Object.entries(this.tools)) {
-				this.push("info", `  ${avail ? "✓" : "✗"} ${name}`);
-			}
-			this.render();
-			return;
-		}
-
-		if (cmd === ":target") {
-			this.push("info", `Target: ${this.target || "(none)"}`);
-			this.render();
-			return;
-		}
-
-		if (cmd.startsWith(":load ")) {
-			const path = cmd.slice(6).trim();
-			try {
-				const ft = execSync(`file "${path}"`, { encoding: "utf-8", timeout: 5000 }).trim();
-				this.target = path;
-				this.push("info", `Target loaded: ${path}`);
-				this.push("tool", `filetype → ${ft}`);
-				this.runQuickAnalysis();
-			} catch (e) {
-				this.push("err", `Failed to load: ${e instanceof Error ? e.message : e}`);
-			}
-			this.render();
-			return;
-		}
-
-		if (cmd === ":analyze") {
-			await this.runAnalysis();
+			for (const [name, avail] of Object.entries(this.tools)) this.print("info", `  ${avail ? "✓" : "✗"} ${name}`);
 			this.render();
 			return;
 		}
@@ -407,112 +346,42 @@ export class PireTUI {
 					try {
 						const c = readFileSync(join(skillsDir, s.name, "SKILL.md"), "utf-8");
 						const m = c.match(/^description:\s*(.+)$/m);
-						this.push("info", `  ${s.name.padEnd(40)} ${m?.[1]?.trim() ?? ""}`);
+						this.print("info", `  ${s.name.padEnd(40)} ${m?.[1]?.trim() ?? ""}`);
 					} catch {}
 				}
-				this.push("info", `${skills.length} skills`);
-			} catch { this.push("err", "Skills directory not found"); }
+				this.print("info", `${skills.length} skills`);
+			} catch { this.print("err", "Skills directory not found"); }
 			this.render();
 			return;
 		}
 
-		// Try to match a tool name
-		const parts = cmd.split(/\s+/);
-		const toolName = parts[0];
-		const tool = RE_TOOLS.find(t => t.name === toolName || t.name === toolName.replace(/-/g, "_"));
-		if (tool) {
-			this.push("cmd", `$ ${cmd}`);
-			try {
-				const params: Record<string, unknown> = {};
-				const schema = tool.parameters;
-				const props = (schema as { properties?: Record<string, unknown> }).properties ?? {};
-				const keys = Object.keys(props);
-				const args = parts.slice(1);
-				for (let i = 0; i < keys.length && i < args.length; i++) {
-					const key = keys[i];
-					const prop = props[key] as { type?: string };
-					if (prop?.type === "number") params[key] = Number(args[i]);
-					else if (prop?.type === "boolean") params[key] = args[i] === "true" || args[i] === "1";
-					else params[key] = args[i];
-				}
-				const result = await tool.execute("tui", params);
-				const text = result.content.map((c: { text: string }) => c.text).join("\n");
-				this.push("out", text);
-			} catch (e) {
-				this.push("err", String(e instanceof Error ? e.message : e));
-			}
-		} else if (this.llm) {
-			// Chat with the LLM
-			this.push("chat", cmd);
-			this.render();
-			try {
-				// Build context: target info + recent tool output + chat history
-				let contextMsg = "";
-				if (this.target) {
-					contextMsg += `Current target binary: ${this.target}\n`;
-					if (this.recentToolOutput.length > 0) {
-						contextMsg += `Recent tool output:\n${this.recentToolOutput.slice(-15).join("\n")}\n\n`;
-					}
-				}
-				contextMsg += `Available tools: ${Object.entries(this.tools).filter(([,v]) => v).map(([k]) => k).join(", ")}\n`;
-				contextMsg += `Available commands: :load, :analyze, :tools, :probe, :skills, or type a tool name directly.`;
-				contextMsg += `\nIf you need to run a tool, suggest the exact command. Otherwise answer directly.`;
-
-				const messages = [
-					...this.chatHistory,
-					{ role: "user", content: `${contextMsg}\n\nUser: ${cmd}` },
-				];
-
-				const response = await chatWithLLM(this.llm, RE_SYSTEM_PROMPT, messages);
-				this.push("chat", response);
-
-				// Save to history
-				this.chatHistory.push({ role: "user", content: cmd });
-				this.chatHistory.push({ role: "assistant", content: response });
-
-				// Keep history bounded
-				if (this.chatHistory.length > 20) {
-					this.chatHistory = this.chatHistory.slice(-20);
-				}
-			} catch (e) {
-				this.push("err", `LLM error: ${e instanceof Error ? e.message : e}`);
-			}
-		} else {
-			// No LLM — pass through to shell as fallback
-			this.push("cmd", `$ ${cmd}`);
-			try {
-				const result = execSync(cmd, { encoding: "utf-8", timeout: 30000, maxBuffer: 5 * 1024 * 1024 });
-				this.push("out", result.trim() || "(no output)");
-			} catch (e) {
-				this.push("err", String(e instanceof Error ? e.message : e));
-			}
-		}
+		// Everything else → agent loop
+		this.print("chat", cmd);
 		this.render();
+		await this.agentLoop(cmd);
+	}
+
+	// ─── Output ───────────────────────────────────────────────
+
+	private buffer: { text: string; kind: string }[] = [];
+
+	private print(kind: string, text: string) {
+		for (const line of text.split("\n")) this.buffer.push({ text: line, kind });
 	}
 
 	private render() {
-		const w = Math.min(process.stdout.columns || 80, 120);
-
-		// Print any new output lines since last render
-		const prefixes: Record<OutputLine["kind"], string> = {
-			cmd: `${C.cyan}» ${C.reset}`,
-			out: `${C.dim}  ${C.reset}`,
+		const prefixes: Record<string, string> = {
 			err: `${C.red}! ${C.reset}`,
 			info: `${C.blue}• ${C.reset}`,
 			tool: `${C.green}⚙ ${C.reset}`,
 			chat: `${C.bold}> ${C.reset}`,
 		};
-
-		for (const line of this.output) {
+		for (const line of this.buffer) {
 			const prefix = prefixes[line.kind] ?? "";
 			process.stdout.write(prefix + line.text + C.reset + "\n");
 		}
-		// Clear rendered output
-		this.output = [];
-
-		// Show prompt
-		const targetStr = this.target ? `${C.dim}${this.target}${C.reset}` : "";
-		process.stdout.write(`${C.bold}${C.green}pire${C.reset}${targetStr ? ` ${targetStr}` : ""} > `);
+		this.buffer = [];
+		process.stdout.write(`${C.bold}${C.green}pire${C.reset} > `);
 	}
 
 	stop() {
@@ -521,6 +390,4 @@ export class PireTUI {
 		process.stdout.write(C.reset + "\n");
 		process.exit(0);
 	}
-
-	private running = false;
 }
