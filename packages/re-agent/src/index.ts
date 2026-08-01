@@ -596,8 +596,16 @@ const shellTool: AgentTool<{ command: string }> = {
 		command: Type.String({ description: "Shell command to execute" }),
 	}),
 	async execute(_id, params) {
-		const result = run(params.command, { timeout: 60000 });
-		return textResult(result.trim() || "(no output)");
+		try {
+			const result = run(params.command, { timeout: 60000 });
+			return textResult(result.trim() || "(no output)");
+		} catch (e: any) {
+			// execSync throws on non-zero exit code, but stdout/stderr are still useful
+			const stdout = e.stdout ? e.stdout.toString().trim() : "";
+			const stderr = e.stderr ? e.stderr.toString().trim() : "";
+			const combined = [stdout, stderr].filter(Boolean).join("\n");
+			return textResult(combined || `Command failed with exit code ${e.status ?? "?"}: ${e.message}`);
+		}
 	},
 };
 
