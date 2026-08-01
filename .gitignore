@@ -43,3 +43,10 @@ plans/
 .pi/hf-sessions-backup/
 collect.sh
 skills/
+
+# RE test artifacts (binary test files, outputs)
+targets/xxd/*.bin
+targets/xxd/*.hex
+targets/xxd/*.out
+targets/xxd/*.txt
+targets/xxd/reimpl

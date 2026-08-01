@@ -20,10 +20,10 @@ Give pire a compiled Windows `.exe` and it will:
 ./install.sh
 
 # Run the agent on a binary
-pire targets/cfgmerge/cfgmerge.exe
+pire targets/xxd/xxd.exe
 
 # Or use the reimplementation pipeline directly
-npx tsx packages/re-agent/src/pire-reimpl.ts targets/imggen/imggen.exe
+npx tsx packages/re-agent/src/pire-reimpl.ts targets/xxd/xxd.exe
 ```
 
 ## Requirements
@@ -60,7 +60,15 @@ export OPENAI_BASE_URL="https://api.openai.com/v1"
 export OPENAI_MODEL="gpt-4o"
 ```
 
-Alternatively, set `PIRE_MODEL` to override the model name:
+Alternatively, create `~/.pire/config.yaml`:
+
+```yaml
+base_url: https://api.openai.com/v1
+api_key: your-key-here
+model: gpt-4o
+```
+
+Set `PIRE_MODEL` to override the model at runtime:
 
 ```bash
 export PIRE_MODEL="your-preferred-model"
@@ -71,8 +79,8 @@ export PIRE_MODEL="your-preferred-model"
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `WINEPREFIX` | Wine prefix directory | `~/.wine` |
-| `PIRE_CONFIG` | Path to LLM config file (YAML) | — |
-| `PIRE_MODEL` | Override model name | `gpt-4o` |
+| `PIRE_CONFIG` | Path to LLM config file (YAML) | `~/.pire/config.yaml` |
+| `PIRE_MODEL` | Override model name | From config |
 | `OPENAI_API_KEY` | LLM API key | — |
 | `OPENAI_BASE_URL` | LLM API base URL | — |
 | `OPENAI_MODEL` | Model name | `gpt-4o` |
@@ -121,18 +129,103 @@ The agent has access to 25+ RE tools:
 | `nm` | Symbol table listing |
 | ... | and more |
 
-## Test targets
+## Case Study: Reimplementing xxd
 
-The repo includes several compiled Windows binaries for testing:
+To demonstrate pire's capabilities on a real-world target, we ran it against [**ckormanyos/xxd**](https://github.com/ckormanyos/xxd) v1.2 — a public hex dump utility with both a Windows binary and open source available for verification.
 
-| Target | Difficulty | Description |
-|--------|-----------|-------------|
-| `targets/cfgmerge/cfgmerge.exe` | Medium | INI config file parser (count, get, set, checksum) |
-| `targets/imggen/imggen.exe` | Hard | BMP image generator (solid, gradient, checker, rect, circle, noise) |
+### The target
 
-### Successful reimplementations
+- **Binary**: `xxd.exe` — 21KB PE32+ executable, MSVC-compiled, 68 functions, 173 strings
+- **Source**: 1,188 lines of C (available at the upstream repo for ground-truth verification)
+- **Complexity**: Multiple output modes (hex dump, plain hex, C include, binary digits), 15+ command-line flags with interacting behavior (`-l`, `-g`, `-c`, `-s`, `-p`, `-i`, `-b`, `-r`, `-e`, `-E`, `-a`, `-u`, `-d`, `-o`, `-n`)
 
-- **cfgmerge.exe** — Fully reimplemented. All 4 commands (count, get, set, checksum) match byte-for-byte, including CRLF line endings and exit codes.
+### How pire was invoked
+
+```bash
+WINEPREFIX=~/.wine64 npx tsx packages/re-agent/src/pire-reimpl.ts targets/xxd/xxd.exe
+```
+
+That's it — a single command. No manual hints, no human-in-the-loop. The agent receives the binary path and an 80-turn budget.
+
+### The prompt
+
+The agent is given a system prompt establishing it as an expert reverse engineer with a structured workflow:
+
+> You are an expert reverse engineer. Your goal is to FULLY reverse engineer a binary and produce a working open-source reimplementation.
+
+The prompt defines a 7-phase workflow:
+
+1. **Triage** (turns 1–5): Run `filetype`, `strings`, `r2` to understand the binary
+2. **Black-box testing** (turns 5–15): Run the binary with various inputs under Wine, observe outputs
+3. **Deep analysis** (turns 10–25): Disassemble key functions, understand the algorithm
+4. **Write analysis.md** (by turn 25): Document findings
+5. **Write reimpl.c** (by turn 30): Write a C source file replicating the binary's behavior
+6. **Test** (turns 30+): Compile with `gcc` and compare outputs against the original
+7. **Iterate** (remaining turns): Fix and retest
+
+The prompt enforces hard deadlines:
+- Turn 25: Must write `analysis.md`
+- Turn 30: Must write `reimpl.c`
+- Turn 40: Non-`write_file` tool calls are blocked — only writing and testing allowed
+- Turn 80: Final deadline
+
+Key guidance in the prompt:
+- Match CRLF line endings (`\r\n`) since Windows binaries produce them
+- Match exit codes exactly
+- If SIMD/SSE instructions are found, use black-box testing rather than tracing `xmm` registers
+- Focus on behavior, not instruction-for-instruction matching
+
+### What the agent did (80 turns)
+
+**Turns 1–3 — Triage**: The agent ran `filetype` to identify the PE32+ binary, extracted 173 strings (including the version string and PDB path), and ran `ls` to understand the directory layout. It immediately started running the binary under Wine with a simple `echo "Hello World" > test.txt` input.
+
+**Turns 3–17 — Black-box testing**: This was the most intensive phase. The agent systematically tested every flag:
+- Output modes: `-i` (C include), `-ps` (plain hex), `-b` (binary digits), `-e` (little-endian), `-E` (EBCDIC)
+- Modifiers: `-l` (length), `-g` (group size: 1, 2, 4, 8), `-c` (columns: 1, 4, 8, 16, 32, 256, 257), `-s` (seek: positive, negative, `+2`), `-o` (display offset), `-u` (uppercase), `-d` (decimal), `-a` (autoskip), `-n` (variable name), `-C` (capitalize)
+- Edge cases: empty files, `-l 0`, `-c 0`, `-c 257` (error), `-g 0`, `-g 3` (non-power-of-2 with `-e`), stdin input, nonexistent files, output to file
+- Binary data: 256-byte sequential data, null-heavy files, mixed binary content
+- Flag interactions: `-b -i` (incompatible), `-b -r` (incompatible), `-e -i` (incompatible), `-ps -r` (reverse), `-b -c 4`, `-i -c 5`, `-d -a`
+- Reverse mode: piping hexdump → reverse → original
+
+**Turns 17–58 — Disassembly & analysis**: The agent used Radare2 to disassemble key functions, understand the hex formatting logic, group/byte swapping for little-endian mode, the autoskip (`*`) compression algorithm, and the C include variable name generation from filenames. It identified the version string, PDB path, and compiler (MSVC).
+
+**Turn 59 — Analysis written**: The agent wrote `analysis.md` (5,089 bytes) documenting all flags, behaviors, edge cases, and algorithms.
+
+**Turns 60–67 — Reimplementation**: The agent wrote `reimpl.c` (21,851 bytes) — a complete C implementation covering all output modes and flags. It compiled successfully with `gcc` and began differential testing.
+
+**Turns 67–80 — Testing & iteration**: The agent ran differential tests comparing original vs reimplementation output:
+- Plain hex dump: matched
+- `-ps` plain hex: matched
+- `-i` C include: matched
+- `-b` binary digits: matched
+- 256-byte binary: matched
+- Multiple flag combinations: matched
+
+The agent continued testing edge cases through the final turn, verifying byte-level output with `xxd | head` and `cat -A` comparisons.
+
+### Post-run verification
+
+After the agent completed, we ran an additional 28 differential tests covering all output modes, flag combinations, binary files, and edge cases. Three minor issues were found and fixed:
+
+1. **`-p` alias**: The original accepts both `-p` and `-ps` as synonyms; the reimpl only handled `-ps`
+2. **`-i` trailing comma**: The original omits the comma after the last byte; the reimpl was adding one
+3. **`-b` default columns**: Binary mode defaults to 6 columns, not 16
+
+After these fixes, **all 28 tests produce byte-identical output**.
+
+### Results
+
+| Metric | Value |
+|--------|-------|
+| Binary size | 21 KB |
+| Source lines (original) | 1,188 |
+| Functions analyzed | 68 |
+| Agent turns used | 80 / 80 |
+| Reimpl size | 21,851 bytes |
+| Analysis size | 5,089 bytes |
+| Differential tests | 28 / 28 byte-identical |
+
+The reimplementation and analysis files are in `targets/xxd/`.
 
 ## Testing
 
@@ -168,10 +261,9 @@ pire/
 │   ├── server/            # Local server
 │   └── ghidra-mcp/        # Ghidra MCP integration
 ├── targets/               # Test binaries
-│   ├── cfgmerge/
-│   └── imggen/
+│   └── xxd/               # Real-world target (ckormanyos/xxd v1.2)
 ├── install.sh             # Cross-platform installer
-└── .github/workflows/ci.yml  # CI pipeline
+└── .github/workflows/     # CI + release pipelines
 ```
 
 ## How it works
