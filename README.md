@@ -1,163 +1,195 @@
 # pire
 
-**Pi + Reverse Engineering** — a fork of the [Pi](https://github.com/earendil-works/pi) agent framework, specialized for analyzing closed-source binaries.
+Autonomous reverse-engineering agent that analyzes Windows PE binaries and produces clean C reimplementations.
 
-## Architecture
+## What it does
 
-pire replaces Pi's MCP server model with **native agent tools** — Ghidra and Radare2 are not external MCP servers, they're built into the agent as first-class tools with crash recovery and auto-start. All other RE tools (binwalk, angr, capstone, etc.) are lazy auto-detecting wrappers that gracefully degrade if the underlying binary/module isn't installed.
+Give pire a compiled Windows `.exe` and it will:
 
-### Native Tools (22 total)
+1. **Triage** — identify file type, extract strings, map sections
+2. **Black-box test** — run the binary under Wine with various inputs, observe outputs
+3. **Disassemble & decompile** — use Radare2 to trace through functions and understand algorithms
+4. **Document** — write a detailed `analysis.md` describing the binary's behavior
+5. **Reimplement** — write a portable C source file (`reimpl.c`) that matches the original's behavior
+6. **Verify** — compile the reimplementation, run differential tests against the original
 
-**Core (always available via system tools):**
-- `strings` — Extract printable strings
-- `filetype` — Identify file type/architecture
-- `objdump` — Disassemble ELF/PE sections
-- `readelf` — ELF headers, symbols, relocations
-- `hexdump` — Raw hex dump
-- `r2` — Radare2 commands (aaa; afl, pdf @ main, iz)
-
-**Ghidra (native bridge, crash-resilient, auto-starts):**
-- `ghidra_status` — Check connectivity
-- `ghidra_decompile` — Decompile functions
-- `ghidra_functions` — List all functions
-- `ghidra_rename` — Rename functions/variables
-- `ghidra_xrefs` — Cross-references to address
-- `ghidra_strings` — Search strings in project
-
-**Disassembly & Emulation:**
-- `capstone` — Multi-arch disassembly
-- `keystone` — Multi-arch assembly (instructions → bytes)
-- `unicorn` — CPU emulation (load + step through code)
-- `angr` — Symbolic execution (CFG, path finding, constraints)
-
-**Binary Parsing & Forensics:**
-- `lief` — Parse ELF/PE/Mach-O (imports, exports, sections, headers)
-- `binwalk` — Firmware/embedded file extraction
-- `yara` — Pattern matching / signature scanning
-- `volatility` — Memory forensics
-
-**Dynamic Analysis:**
-- `frida` — Dynamic instrumentation (spawn, attach, trace)
-- `gdb` — Scripted debugging
-
-### Crash Recovery
-
-The `GhidraBridge` class:
-- Health-checks via `/health` before every API call
-- Auto-starts the bundled bridge script if the server is down
-- Tracks restart count (max 3 attempts before giving up)
-- Reads `GHIDRA_SERVER_URL` env var for custom endpoints
-
-### Auto-Detection
-
-Every wrapper checks at execute time:
-- CLI tools: `which(binwalk)` etc.
-- Python modules: `python3 -c "import capstone"`
-- Returns install instructions if missing, never crashes
-
-## TUI
-
-Lean RE dashboard — not a full coding agent TUI. Launch with `pire <binary>`:
-
-```
-┌──────────────────────────────────────────────┐
-│ pire v0.2.0  │  target: /bin/ls  │  22 tools  │
-├──────────────┼───────────────────────────────┤
-│ Tools        │  Output                        │
-│ ✓ strings    │  filetype → ELF 64-bit LSB     │
-│ ✓ filetype   │  strings → /lib64/ld-linux...   │
-│ ✓ r2         │                                │
-│ ✗ binwalk    │                                │
-│ ✓ capstone   │                                │
-├──────────────┴───────────────────────────────┤
-│ > strings /bin/ls                            │
-└──────────────────────────────────────────────┘
-```
-
-TUI commands: `:tools`, `:probe`, `:skills`, `:help`, `:quit`, or type any tool name + args.
-
-## Quick Start
+## Quick start
 
 ```bash
 # Install dependencies
-npm install --ignore-scripts
+./install.sh
 
-# Build Pi core packages
-npm run build
+# Run the agent on a binary
+pire targets/cfgmerge/cfgmerge.exe
 
-# Start TUI on a binary
-npx tsx packages/re-agent/src/cli.ts /bin/ls
-
-# Or use CLI flags
-npx tsx packages/re-agent/src/cli.ts --tools
-npx tsx packages/re-agent/src/cli.ts --probe
-npx tsx packages/re-agent/src/cli.ts --skills
+# Or use the reimplementation pipeline directly
+npx tsx packages/re-agent/src/pire-reimpl.ts targets/imggen/imggen.exe
 ```
 
-### Using Ghidra
+## Requirements
 
-1. Open your binary in Ghidra
-2. Start the Ghidra MCP plugin (BridgeMCPghidraScript)
-3. pire auto-detects the bridge at `http://127.0.0.1:8089/`
+- **Node.js** 22+
+- **Radare2** 6.0+
+- **Wine** (with a 64-bit prefix)
+- **MinGW-w64** cross-compiler (`x86_64-w64-mingw32-gcc`)
+- **GCC** (native, for compiling reimplementations)
+- An LLM API endpoint (OpenAI-compatible)
 
-Or set `GHIDRA_SERVER_URL` to point to a remote bridge.
-
-### Optional Tool Installation
+## Install
 
 ```bash
-# Python RE tools (pick what you need)
-pip install lief capstone keystone-engine unicorn yara-python
-pip install angr                    # heavy — symbolic execution
-pip install frida-tools             # dynamic instrumentation
-pip install volatility3             # memory forensics
-pip install binwalk                 # firmware extraction
-
-# System tools
-sudo apt install gdb radare2 binwalk
+git clone https://github.com/evangit2/pire.git
+cd pire
+./install.sh
 ```
 
-## Test Suite
+The install script supports Ubuntu/Debian, Fedora, Arch Linux, and macOS (via Homebrew).
+
+## Configuration
+
+pire reads LLM configuration from one of these locations (in order):
+
+1. `HERMES_CONFIG` environment variable (path to a YAML config file)
+2. `~/.hermes/config.yaml`
+3. `~/.hermes/profiles/default/config.yaml`
+4. `OPENAI_API_KEY` + `OPENAI_BASE_URL` + `OPENAI_MODEL` environment variables
+
+Example config (`~/.hermes/config.yaml`):
+
+```yaml
+model:
+  base_url: "http://localhost:8080/v1"
+  api_key: "your-key-here"
+  model: "your-model-name"
+```
+
+## Usage
+
+### Interactive TUI
 
 ```bash
-# All tests
-npm test --workspace @earendil-works/pi-re-agent
-
-# Individual suites
-node packages/re-agent/test/test-suite.cjs    # Source structure + tool registry (69 tests)
-node packages/re-agent/test/test-models.cjs   # Real model inference via Hermes (6 tests)
-node packages/re-agent/test/test-e2e.cjs      # End-to-end binary analysis (17 tests)
+pire
 ```
 
-The model tests use providers from `~/.hermes/config.yaml` — GLM-5.2 via VT ARC. The e2e test compiles a real test binary with a XOR-encrypted flag, runs tools on it, then asks the model to identify the encryption and key.
+Launches a chat-first terminal interface. Load a binary with `:load <path>`.
 
-## Project Structure
+### Autonomous reimplementation
+
+```bash
+pire <binary.exe>
+```
+
+Runs the full RE pipeline autonomously. Output files are written to the binary's directory:
+
+- `analysis.md` — detailed analysis of the binary's behavior
+- `reimpl.c` — C source reimplementation
+
+### Environment variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `WINEPREFIX` | Wine prefix directory | `~/.wine` |
+| `HERMES_CONFIG` | Path to LLM config file | `~/.hermes/config.yaml` |
+| `OPENAI_API_KEY` | LLM API key (if not using Hermes config) | — |
+| `OPENAI_BASE_URL` | LLM API base URL | — |
+| `OPENAI_MODEL` | Model name | `gpt-4` |
+
+## Tools
+
+The agent has access to 25+ RE tools:
+
+| Tool | Description |
+|------|-------------|
+| `filetype` | Identify file type |
+| `strings` | Extract ASCII/UTF-16 strings |
+| `sections` | List PE sections |
+| `imports` | List imported functions |
+| `exports` | List exported functions |
+| `disasm` | Disassemble at an address |
+| `disasm_func` | Disassemble a function |
+| `decompile` | Radare2 pseudo-C decompilation (pdc) |
+| `r2` | Run arbitrary Radare2 commands |
+| `hexdump` | Hex dump at an address |
+| `shell` | Run shell commands (wine, gcc, diff, etc.) |
+| `write_file` | Save files (source code, analysis) |
+| `readelf` | ELF header analysis |
+| `objdump` | Object file disassembly |
+| `nm` | Symbol table listing |
+| ... | and more |
+
+## Test targets
+
+The repo includes several compiled Windows binaries for testing:
+
+| Target | Difficulty | Description |
+|--------|-----------|-------------|
+| `targets/cfgmerge/cfgmerge.exe` | Medium | INI config file parser (count, get, set, checksum) |
+| `targets/imggen/imggen.exe` | Hard | BMP image generator (solid, gradient, checker, rect, circle, noise) |
+| `targets/cfgcrypt/cfgcrypt.exe` | Expert | XOR stream cipher with key mixing (SIMD-vectorized) |
+
+### Successful reimplementations
+
+- **cfgmerge.exe** — Fully reimplemented. All 4 commands (count, get, set, checksum) match byte-for-byte, including CRLF line endings and exit codes.
+
+## Testing
+
+```bash
+# Run the full test suite (203 tests)
+node packages/re-agent/test/test-suite.cjs
+```
+
+Tests cover:
+- Tool registration and lazy loading
+- System prompt structure and guidance
+- Agent loop mechanics (max turns, deadline enforcement)
+- Decompile tool integration
+- SIMD/SSE handling guidance
+- CRLF/exit code matching guidance
+- Model provider configuration
+
+## Architecture
 
 ```
 pire/
 ├── packages/
-│   ├── ai/                 # LLM provider abstraction
-│   ├── agent/              # Agent core
-│   ├── tui/                # Pi TUI framework (upstream)
-│   ├── client/             # Client library
-│   ├── server/             # Server mode
-│   ├── coding-agent/       # Coding agent
-│   ├── protocol/           # Wire protocol
-│   ├── storage/sqlite-node/# Storage
-│   ├── ghidra-mcp/         # Ghidra MCP bridge script
-│   └── re-agent/           # pire — native RE tools, TUI, CLI
-│       └── src/
-│           ├── index.ts    # Tool definitions, GhidraBridge, system prompt
-│           ├── cli.ts      # CLI entry point
-│           └── tui.ts      # Lean RE dashboard TUI
-├── skills/                 # 25 RE skills
-└── package.json
+│   ├── re-agent/          # Core RE agent
+│   │   ├── src/
+│   │   │   ├── index.ts       # Tool registry (25+ tools)
+│   │   │   ├── pire-reimpl.ts # Autonomous RE pipeline
+│   │   │   ├── cli.ts         # CLI entry point
+│   │   │   └── tui.ts         # Interactive TUI
+│   │   └── test/
+│   │       └── test-suite.cjs # CI test suite
+│   ├── coding-agent/      # General-purpose coding agent
+│   ├── ai/                # LLM abstraction layer
+│   ├── client/            # API client
+│   ├── server/            # Local server
+│   └── ghidra-mcp/        # Ghidra MCP integration
+├── targets/               # Test binaries
+│   ├── cfgmerge/
+│   ├── imggen/
+│   └── cfgcrypt/
+├── install.sh             # Cross-platform installer
+└── .github/workflows/ci.yml  # CI pipeline
 ```
 
-## Attribution
+## How it works
 
-Based on [Pi](https://github.com/earendil-works/pi) by earendil-works.
-Ghidra MCP bridge by [LaurieWired](https://github.com/LaurieWired/GhidraMCP).
+The agent uses an LLM-powered loop with hard tool-call deadlines:
+
+1. **Turns 1-25**: Triage, black-box testing, disassembly, decompilation
+2. **Turn 25**: Soft deadline — write `analysis.md`
+3. **Turn 30**: Soft deadline — write `reimpl.c`
+4. **Turn 40**: Hard deadline — non-`write_file` tool calls are blocked
+5. **Turns 40-80**: Compile, test, iterate on the reimplementation
+6. **Turn 80**: Final deadline
+
+The agent streams LLM responses to avoid proxy token caps, and includes guidance for:
+- SIMD/SSE instruction handling (use black-box testing instead of tracing xmm registers)
+- CRLF line ending matching (Windows binaries use `\r\n`)
+- Exit code matching
+- Error message exact matching
 
 ## License
 
-Inherits Pi's license. See original repository for details.
+MIT

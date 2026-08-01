@@ -39,8 +39,8 @@ interface LLMConfig { baseUrl: string; apiKey: string; model: string }
 function loadLLMConfig(): LLMConfig | null {
 	const candidates = [
 		process.env.HERMES_CONFIG,
-		join(process.env.HOME || "/home/evan", ".hermes/config.yaml"),
-		join(process.env.HOME || "/home/evan", ".hermes/profiles/default/config.yaml"),
+		join(process.env.HOME || "/tmp", ".hermes/config.yaml"),
+		join(process.env.HOME || "/tmp", ".hermes/profiles/default/config.yaml"),
 	];
 	for (const path of candidates) {
 		if (!path || !existsSync(path)) continue;

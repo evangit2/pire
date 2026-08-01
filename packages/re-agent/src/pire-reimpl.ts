@@ -28,8 +28,8 @@ interface LLMConfig { baseUrl: string; apiKey: string; model: string }
 function loadLLMConfig(): LLMConfig | null {
 	const candidates = [
 		process.env.HERMES_CONFIG,
-		join(process.env.HOME || "/home/evan", ".hermes/config.yaml"),
-		join(process.env.HOME || "/home/evan", ".hermes/profiles/default/config.yaml"),
+		join(process.env.HOME || "/tmp", ".hermes/config.yaml"),
+		join(process.env.HOME || "/tmp", ".hermes/profiles/default/config.yaml"),
 	];
 	for (const path of candidates) {
 		if (!path || !existsSync(path)) continue;
@@ -230,7 +230,7 @@ You are an expert reverse engineer. Your goal is to FULLY reverse engineer a bin
 - You have a shell tool — use it to run wine, gcc, diff, etc.
 - You have a write_file tool — use it to save source code
 - You have a decompile tool — use it for r2 pseudo-C decompilation (pdc) at any address
-- The original binary can be run with: WINEPREFIX=/home/evan/.wine64 wine ${binaryPath} <args>
+- The original binary can be run with: WINEPREFIX=${process.env.WINEPREFIX || "$HOME/.wine"} wine ${binaryPath} <args>
 - Your reimplementation should be compiled with: gcc -o reimpl reimpl.c
 - Compare outputs: run both the original and your reimplementation with the same inputs
 - Available tools: ${toolsAvail}
@@ -262,7 +262,7 @@ Steps:
 2. Understand the complete algorithm
 3. Write your analysis to ${join(dirname(binaryPath), "analysis.md")}
 4. Write a C reimplementation to ${join(dirname(binaryPath), "reimpl.c")}
-5. Compile it with gcc and test it against the original (using WINEPREFIX=/home/evan/.wine64 wine for the original)
+5. Compile it with gcc and test it against the original (using WINEPREFIX=${process.env.WINEPREFIX || "$HOME/.wine"} wine for the original)
 6. Test with multiple inputs — both valid and invalid
 7. Iterate until your reimplementation matches the original's behavior
 

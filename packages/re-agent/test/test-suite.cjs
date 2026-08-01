@@ -3,6 +3,7 @@
 
 const fs = require("fs");
 const path = require("path");
+const { join } = path;
 const { execSync } = require("child_process");
 
 const root = path.resolve(__dirname, "..", "..", "..");
@@ -194,9 +195,7 @@ ok(src.includes("ks.asm"), "keystone assembles instructions");
 
 console.log("\n─ Model Provider Config ─");
 
-const hermesConfig = "/home/evan/.hermes/config.yaml";
-ok(fs.existsSync(hermesConfig), "Hermes config exists");
-
+const hermesConfig = join(process.env.HOME || "/tmp", ".hermes", "config.yaml");
 if (fs.existsSync(hermesConfig)) {
 	const cfg = fs.readFileSync(hermesConfig, "utf-8");
 	ok(cfg.includes("api_key:"), "Hermes config has API key");
