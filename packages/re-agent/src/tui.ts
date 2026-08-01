@@ -23,7 +23,7 @@ import * as http from "node:http";
 import { RE_TOOLS, RE_SYSTEM_PROMPT, probeTools, type AgentTool } from "./index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const VERSION = "0.3.0";
+const VERSION = "0.7.1";
 
 // ANSI
 const C = {
@@ -47,12 +47,12 @@ function loadLLMConfig(): LLMConfig | null {
 			const content = readFileSync(path, "utf-8");
 			const baseUrl = content.match(/base_url:\s*(.+)/)?.[1]?.trim();
 			const apiKey = content.match(/api_key:\s*(.+)/)?.[1]?.trim();
-			const model = content.match(/^\s*default:\s*(.+)/m)?.[1]?.trim();
+			const model = content.match(/^model:\s*(.+)/m)?.[1]?.trim();
 			if (baseUrl && apiKey && model) return { baseUrl: baseUrl.replace(/\/$/, ""), apiKey, model };
 		} catch {}
 	}
 	if (process.env.OPENAI_API_KEY && process.env.OPENAI_BASE_URL) {
-		return { baseUrl: process.env.OPENAI_BASE_URL, apiKey: process.env.OPENAI_API_KEY, model: process.env.OPENAI_MODEL || "gpt-4" };
+		return { baseUrl: process.env.OPENAI_BASE_URL, apiKey: process.env.OPENAI_API_KEY, model: process.env.OPENAI_MODEL || process.env.PIRE_MODEL || "gpt-4o" };
 	}
 	return null;
 }
@@ -193,8 +193,8 @@ export class PireTUI {
 		this.render();
 		this.rl.setPrompt("");
 		this.rl.on("line", (line) => { this.inputQueue.push(line); this.processQueue(); });
-		this.rl.on("close", () => this.stop());
-	}
+		this.rl.on("close", () => { /* don't exit while processing */ });
+		}
 
 	private inputQueue: string[] = [];
 	private processing = false;

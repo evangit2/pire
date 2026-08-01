@@ -41,7 +41,7 @@ function loadLLMConfig(): LLMConfig | null {
 		} catch {}
 	}
 	if (process.env.OPENAI_API_KEY && process.env.OPENAI_BASE_URL) {
-		return { baseUrl: process.env.OPENAI_BASE_URL, apiKey: process.env.OPENAI_API_KEY, model: process.env.OPENAI_MODEL || "gpt-4" };
+		return { baseUrl: process.env.OPENAI_BASE_URL, apiKey: process.env.OPENAI_API_KEY, model: process.env.OPENAI_MODEL || process.env.PIRE_MODEL || "gpt-4o" };
 	}
 	return null;
 }
