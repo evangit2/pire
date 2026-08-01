@@ -1,0 +1,1119 @@
+package com.xebyte.core;
+
+import ghidra.app.decompiler.DecompileResults;
+import ghidra.program.model.address.Address;
+import ghidra.program.model.address.AddressSetView;
+import ghidra.program.model.data.DataType;
+import ghidra.program.model.data.StringDataType;
+import ghidra.program.model.lang.OperandType;
+import ghidra.program.model.listing.*;
+import ghidra.program.model.scalar.Scalar;
+import ghidra.program.model.symbol.*;
+import ghidra.util.Msg;
+import ghidra.util.task.ConsoleTaskMonitor;
+
+import javax.swing.SwingUtilities;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.util.*;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+/**
+ * Service for function hashing, documentation export/import, and cross-version matching.
+ * Extracted from GhidraMCPPlugin as part of v4.0.0 refactor.
+ */
+@McpToolGroup(value = "documentation", description = "Function hashing, cross-binary documentation, undocumented function discovery")
+public class DocumentationHashService {
+
+    private final ProgramProvider programProvider;
+    private final ThreadingStrategy threadingStrategy;
+    private final BinaryComparisonService binaryComparisonService;
+    private FunctionService functionService;
+
+    public DocumentationHashService(ProgramProvider programProvider, ThreadingStrategy threadingStrategy,
+                                     BinaryComparisonService binaryComparisonService) {
+        this.programProvider = programProvider;
+        this.threadingStrategy = threadingStrategy;
+        this.binaryComparisonService = binaryComparisonService;
+    }
+
+    /**
+     * Set the FunctionService (needed for decompilation in getFunctionDocumentation).
+     */
+    public void setFunctionService(FunctionService functionService) {
+        this.functionService = functionService;
+    }
+
+    // -----------------------------------------------------------------------
+    // Function Hash Methods
+    // -----------------------------------------------------------------------
+
+    /**
+     * Compute a normalized opcode hash for a function.
+     * The hash normalizes:
+     * - Absolute addresses (call targets, jump targets, data refs) are replaced with placeholders
+     * - Register-based operations are preserved
+     * - Instruction mnemonics and operand types are included
+     *
+     * This allows matching identical functions that are located at different addresses.
+     */
+    @McpTool(path = "/get_function_hash", description = "Compute normalized opcode hash for function. On programs with multiple address spaces (e.g., embedded targets), prefix addresses with the space name (mem:1000) to avoid ambiguous resolution.", category = "documentation")
+    public Response getFunctionHash(
+            @Param(value = "address", paramType = "address",
+                   description = "Address in the program. Accepts 0x<hex> (default space) or <space>:<hex> "
+                               + "(e.g., mem:1000, code:ff00). Note: some programs — particularly "
+                               + "embedded/microcontroller targets — are not address-space-agnostic; "
+                               + "use get_address_spaces to discover spaces before assuming a plain hex "
+                               + "address is unambiguous.") String functionAddress,
+            @Param(value = "program", description = "Target program name (omit to use the active program — always specify when multiple programs are open)", defaultValue = "") String programName) {
+        ServiceUtils.ProgramOrError pe = ServiceUtils.getProgramOrError(programProvider, programName);
+        if (pe.hasError()) return pe.error();
+        Program program = pe.program();
+
+        try {
+            Address addr = ServiceUtils.parseAddress(program, functionAddress);
+            if (addr == null) {
+                return Response.err(ServiceUtils.getLastParseError());
+            }
+
+            Function func = program.getFunctionManager().getFunctionAt(addr);
+            if (func == null) {
+                return Response.err("No function at address: " + functionAddress);
+            }
+
+            String hash = computeNormalizedFunctionHash(program, func);
+            int instructionCount = countFunctionInstructions(program, func);
+            long functionSize = func.getBody().getNumAddresses();
+
+            Map<String, Object> hashResult = new LinkedHashMap<>();
+            hashResult.put("function_name", func.getName());
+            hashResult.putAll(ServiceUtils.addressToJson(addr, program));
+            hashResult.put("hash", hash);
+            hashResult.put("instruction_count", instructionCount);
+            hashResult.put("size_bytes", functionSize);
+            hashResult.put("has_custom_name", !ServiceUtils.isAutoGeneratedName(func.getName()));
+            hashResult.put("program", program.getName());
+            return Response.ok(hashResult);
+        } catch (Exception e) {
+            return Response.err("Failed to compute hash: " + e.getMessage());
+        }
+    }
+
+    // Backward compatibility overload
+    public Response getFunctionHash(String functionAddress) {
+        return getFunctionHash(functionAddress, null);
+    }
+
+    /**
+     * Compute a normalized hash from function instructions.
+     * This ignores absolute addresses but preserves the logical structure.
+     */
+    private String computeNormalizedFunctionHash(Program program, Function func) {
+        StringBuilder normalized = new StringBuilder();
+        Listing listing = program.getListing();
+        AddressSetView functionBody = func.getBody();
+        InstructionIterator instructions = listing.getInstructions(functionBody, true);
+
+        Address funcStart = func.getEntryPoint();
+
+        while (instructions.hasNext()) {
+            Instruction instr = instructions.next();
+
+            // Add mnemonic
+            normalized.append(instr.getMnemonicString()).append(" ");
+
+            // Process each operand
+            int numOperands = instr.getNumOperands();
+            for (int i = 0; i < numOperands; i++) {
+                int opType = instr.getOperandType(i);
+
+                // Check if this operand contains an address reference
+                boolean isAddressRef = (opType & OperandType.ADDRESS) != 0 ||
+                                       (opType & OperandType.CODE) != 0 ||
+                                       (opType & OperandType.DATA) != 0;
+
+                if (isAddressRef) {
+                    // For address references, use relative offset from function start if within function,
+                    // otherwise use a generic placeholder
+                    Reference[] refs = instr.getOperandReferences(i);
+                    if (refs.length > 0) {
+                        Address targetAddr = refs[0].getToAddress();
+                        if (functionBody.contains(targetAddr)) {
+                            // Internal reference - use relative offset
+                            long relOffset = targetAddr.subtract(funcStart);
+                            normalized.append("REL+").append(relOffset);
+                        } else {
+                            // External reference - use generic marker with reference type
+                            RefType refType = refs[0].getReferenceType();
+                            if (refType.isCall()) {
+                                normalized.append("CALL_EXT");
+                            } else if (refType.isData()) {
+                                normalized.append("DATA_EXT");
+                            } else {
+                                normalized.append("EXT_REF");
+                            }
+                        }
+                    } else {
+                        normalized.append("ADDR");
+                    }
+                } else if ((opType & OperandType.REGISTER) != 0) {
+                    // Keep register names as-is (they're part of the function's logic)
+                    normalized.append(instr.getDefaultOperandRepresentation(i));
+                } else if ((opType & OperandType.SCALAR) != 0) {
+                    // For small constants (likely magic numbers or offsets), keep the value
+                    // For large constants (likely addresses), normalize
+                    Object[] opObjects = instr.getOpObjects(i);
+                    if (opObjects.length > 0 && opObjects[0] instanceof Scalar) {
+                        Scalar scalar = (Scalar) opObjects[0];
+                        long value = scalar.getValue();
+                        // Keep small constants (< 0x10000), normalize large ones
+                        if (Math.abs(value) < 0x10000) {
+                            normalized.append("IMM:").append(value);
+                        } else {
+                            normalized.append("IMM_LARGE");
+                        }
+                    } else {
+                        normalized.append(instr.getDefaultOperandRepresentation(i));
+                    }
+                } else {
+                    // Other operand types - use default representation
+                    normalized.append(instr.getDefaultOperandRepresentation(i));
+                }
+
+                if (i < numOperands - 1) {
+                    normalized.append(",");
+                }
+            }
+
+            normalized.append(";");
+        }
+
+        // Compute SHA-256 hash of the normalized representation
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hashBytes = digest.digest(normalized.toString().getBytes(StandardCharsets.UTF_8));
+            StringBuilder hexString = new StringBuilder();
+            for (byte b : hashBytes) {
+                String hex = Integer.toHexString(0xff & b);
+                if (hex.length() == 1) hexString.append('0');
+                hexString.append(hex);
+            }
+            return hexString.toString();
+        } catch (java.security.NoSuchAlgorithmException e) {
+            // Fallback to simple string hash
+            return Integer.toHexString(normalized.toString().hashCode());
+        }
+    }
+
+    /**
+     * Count instructions in a function
+     */
+    private int countFunctionInstructions(Program program, Function func) {
+        Listing listing = program.getListing();
+        AddressSetView functionBody = func.getBody();
+        InstructionIterator instructions = listing.getInstructions(functionBody, true);
+        int count = 0;
+        while (instructions.hasNext()) {
+            instructions.next();
+            count++;
+        }
+        return count;
+    }
+
+    // -----------------------------------------------------------------------
+    // Bulk Function Hash Methods
+    // -----------------------------------------------------------------------
+
+    /**
+     * Get hashes for multiple functions efficiently
+     */
+    @McpTool(path = "/get_bulk_function_hashes", description = "Get hashes for multiple or all functions", category = "documentation")
+    public Response getBulkFunctionHashes(
+            @Param(value = "offset", defaultValue = "0") int offset,
+            @Param(value = "limit", defaultValue = "100") int limit,
+            @Param(value = "filter", description = "Name filter") String filter,
+            @Param(value = "program", description = "Target program name (omit to use the active program — always specify when multiple programs are open)", defaultValue = "") String programName) {
+        ServiceUtils.ProgramOrError pe = ServiceUtils.getProgramOrError(programProvider, programName);
+        if (pe.hasError()) return pe.error();
+        Program program = pe.program();
+
+        try {
+            FunctionManager funcMgr = program.getFunctionManager();
+            int total = 0;
+            int skipped = 0;
+            int added = 0;
+            List<Map<String, Object>> functionsList = new ArrayList<>();
+
+            for (Function func : funcMgr.getFunctions(true)) {
+                // Apply filter
+                boolean isDocumented = !ServiceUtils.isAutoGeneratedName(func.getName()) &&
+                                       !func.getName().startsWith("switch");
+
+                if ("documented".equals(filter) && !isDocumented) continue;
+                if ("undocumented".equals(filter) && isDocumented) continue;
+
+                total++;
+
+                if (skipped < offset) {
+                    skipped++;
+                    continue;
+                }
+
+                if (added >= limit) continue; // Still counting total
+
+                String hash = computeNormalizedFunctionHash(program, func);
+                int instructionCount = countFunctionInstructions(program, func);
+
+                functionsList.add(JsonHelper.mapOf(
+                    "name", func.getName(),
+                    "address", func.getEntryPoint().toString(),
+                    "hash", hash,
+                    "instruction_count", instructionCount,
+                    "has_custom_name", isDocumented
+                ));
+
+                added++;
+            }
+
+            return Response.ok(JsonHelper.mapOf(
+                "program", program.getName(),
+                "functions", functionsList,
+                "offset", offset,
+                "limit", limit,
+                "returned", added,
+                "total_matching", total
+            ));
+        } catch (Exception e) {
+            return Response.err("Failed to get bulk hashes: " + e.getMessage());
+        }
+    }
+
+    // Backward compatibility overload
+    public Response getBulkFunctionHashes(int offset, int limit, String filter) {
+        return getBulkFunctionHashes(offset, limit, filter, null);
+    }
+
+    // -----------------------------------------------------------------------
+    // Function Documentation Export/Import
+    // -----------------------------------------------------------------------
+
+    /**
+     * Export all documentation for a function (for use in cross-binary propagation)
+     */
+    public Response getFunctionDocumentation(String functionAddress) {
+        return getFunctionDocumentation(functionAddress, null);
+    }
+
+    @McpTool(path = "/get_function_documentation", description = "Export all documentation for a function. On programs with multiple address spaces (e.g., embedded targets), prefix addresses with the space name (mem:1000) to avoid ambiguous resolution.", category = "documentation")
+    public Response getFunctionDocumentation(
+            @Param(value = "address", paramType = "address",
+                   description = "Address in the program. Accepts 0x<hex> (default space) or <space>:<hex> "
+                               + "(e.g., mem:1000, code:ff00). Note: some programs — particularly "
+                               + "embedded/microcontroller targets — are not address-space-agnostic; "
+                               + "use get_address_spaces to discover spaces before assuming a plain hex "
+                               + "address is unambiguous.") String functionAddress,
+            @Param(value = "program", description = "Target program name (omit to use the active program — always specify when multiple programs are open)", defaultValue = "") String programName) {
+        ServiceUtils.ProgramOrError pe = ServiceUtils.getProgramOrError(programProvider, programName);
+        if (pe.hasError()) return pe.error();
+        Program program = pe.program();
+
+        try {
+            Address addr = ServiceUtils.parseAddress(program, functionAddress);
+            if (addr == null) {
+                return Response.err(ServiceUtils.getLastParseError());
+            }
+
+            Function func = program.getFunctionManager().getFunctionAt(addr);
+            if (func == null) {
+                return Response.err("No function at address: " + functionAddress);
+            }
+
+            // Compute hash for matching
+            String hash = computeNormalizedFunctionHash(program, func);
+
+            // Parameters
+            List<Map<String, Object>> paramsList = new ArrayList<>();
+            Parameter[] params = func.getParameters();
+            for (Parameter p : params) {
+                paramsList.add(JsonHelper.mapOf(
+                    "ordinal", p.getOrdinal(),
+                    "name", p.getName(),
+                    "type", p.getDataType().getName(),
+                    "comment", p.getComment()
+                ));
+            }
+
+            // Local variables (from decompilation if available)
+            List<Map<String, Object>> localVarsList = new ArrayList<>();
+            if (functionService == null) {
+                Msg.warn(this, "FunctionService not available, skipping local variable extraction for " + func.getName());
+            }
+            DecompileResults decompResults = functionService != null ? functionService.decompileFunction(func, program) : null;
+            if (decompResults != null && decompResults.decompileCompleted()) {
+                ghidra.program.model.pcode.HighFunction highFunc = decompResults.getHighFunction();
+                if (highFunc != null) {
+                    Iterator<ghidra.program.model.pcode.HighSymbol> symbols = highFunc.getLocalSymbolMap().getSymbols();
+                    while (symbols.hasNext()) {
+                        ghidra.program.model.pcode.HighSymbol sym = symbols.next();
+                        if (sym.isParameter()) continue; // Skip parameters, handled above
+
+                        String storage = null;
+                        ghidra.program.model.pcode.HighVariable highVar = sym.getHighVariable();
+                        if (highVar != null && highVar.getRepresentative() != null) {
+                            storage = highVar.getRepresentative().toString();
+                        }
+
+                        localVarsList.add(JsonHelper.mapOf(
+                            "name", sym.getName(),
+                            "type", sym.getDataType().getName(),
+                            "storage", storage
+                        ));
+                    }
+                }
+            }
+
+            // Inline comments (EOL and PRE comments within function body)
+            List<Map<String, Object>> commentsList = new ArrayList<>();
+            AddressSetView functionBody = func.getBody();
+            Listing listing = program.getListing();
+            Address funcStart = func.getEntryPoint();
+
+            for (Address cAddr : functionBody.getAddresses(true)) {
+                String eolComment = listing.getComment(CodeUnit.EOL_COMMENT, cAddr);
+                String preComment = listing.getComment(CodeUnit.PRE_COMMENT, cAddr);
+
+                if (eolComment != null || preComment != null) {
+                    long relOffset = cAddr.subtract(funcStart);
+                    commentsList.add(JsonHelper.mapOf(
+                        "relative_offset", relOffset,
+                        "eol_comment", eolComment,
+                        "pre_comment", preComment
+                    ));
+                }
+            }
+
+            // Labels within function
+            List<Map<String, Object>> labelsList = new ArrayList<>();
+            SymbolTable symTable = program.getSymbolTable();
+            for (Address lAddr : functionBody.getAddresses(true)) {
+                Symbol[] symbols = symTable.getSymbols(lAddr);
+                for (Symbol sym : symbols) {
+                    if (sym.getSymbolType() == SymbolType.LABEL && !sym.getName().equals(func.getName())) {
+                        long relOffset = lAddr.subtract(funcStart);
+                        labelsList.add(JsonHelper.mapOf(
+                            "relative_offset", relOffset,
+                            "name", sym.getName()
+                        ));
+                    }
+                }
+            }
+
+            // Completeness score - simplified version without full analysis
+            double completenessScore = calculateSimpleCompletenessScore(func);
+
+            return Response.ok(JsonHelper.mapOf(
+                "hash", hash,
+                "source_program", program.getName(),
+                "source_address", addr.toString(),
+                "function_name", func.getName(),
+                "return_type", func.getReturnType().getName(),
+                "calling_convention", func.getCallingConventionName() != null ? func.getCallingConventionName() : "",
+                "plate_comment", func.getComment(),
+                "parameters", paramsList,
+                "local_variables", localVarsList,
+                "comments", commentsList,
+                "labels", labelsList,
+                "completeness_score", completenessScore
+            ));
+
+        } catch (Exception e) {
+            return Response.err("Failed to export documentation: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Simple completeness score calculation for documentation export.
+     * A simplified version that doesn't require the full analysis infrastructure.
+     */
+    private double calculateSimpleCompletenessScore(Function func) {
+        double score = 100.0;
+
+        if (ServiceUtils.isAutoGeneratedName(func.getName())) score -= 30;
+        if (func.getComment() == null) score -= 20;
+
+        // Check parameters
+        for (Parameter param : func.getParameters()) {
+            if (param.getName().startsWith("param_")) {
+                score -= 5;
+            }
+            if (param.getDataType().getName().startsWith("undefined")) {
+                score -= 5;
+            }
+        }
+
+        return Math.max(0, score);
+    }
+
+    /**
+     * Apply documentation from a source function to a target function.
+     * Expects JSON body with: target_address, source_documentation (from getFunctionDocumentation)
+     */
+    public Response applyFunctionDocumentation(String jsonBody) {
+        return applyFunctionDocumentation(jsonBody, null);
+    }
+
+    @McpTool(path = "/apply_function_documentation", method = "POST", description = "Import documentation to a target function. On programs with multiple address spaces (e.g., embedded targets), prefix addresses with the space name (mem:1000) to avoid ambiguous resolution.", category = "documentation")
+    public Response applyFunctionDocumentation(
+            @Param(value = "json_body", source = ParamSource.BODY) String jsonBody,
+            @Param(value = "program", description = "Target program name", defaultValue = "") String programName) {
+        ServiceUtils.ProgramOrError pe = ServiceUtils.getProgramOrError(programProvider, programName);
+        if (pe.hasError()) return pe.error();
+        Program program = pe.program();
+
+        try {
+            // Parse JSON manually (simple parsing for this format)
+            String targetAddress = ServiceUtils.extractJsonString(jsonBody, "target_address");
+            String functionName = ServiceUtils.extractJsonString(jsonBody, "function_name");
+            String returnType = ServiceUtils.extractJsonString(jsonBody, "return_type");
+            String callingConvention = ServiceUtils.extractJsonString(jsonBody, "calling_convention");
+            String plateComment = ServiceUtils.extractJsonString(jsonBody, "plate_comment");
+
+            if (targetAddress == null) {
+                return Response.err("target_address is required");
+            }
+
+            Address addr = ServiceUtils.parseAddress(program, targetAddress);
+            if (addr == null) {
+                return Response.err(ServiceUtils.getLastParseError());
+            }
+
+            Function func = program.getFunctionManager().getFunctionAt(addr);
+            if (func == null) {
+                return Response.err("No function at target address: " + targetAddress);
+            }
+
+            final AtomicBoolean success = new AtomicBoolean(false);
+            final AtomicReference<String> errorMsg = new AtomicReference<>(null);
+            final AtomicInteger changesApplied = new AtomicInteger(0);
+
+            try {
+                SwingUtilities.invokeAndWait(() -> {
+                    int tx = program.startTransaction("Apply Function Documentation");
+                    try {
+                        // Apply function name
+                        if (functionName != null && !functionName.isEmpty() && !functionName.equals(func.getName())) {
+                            try {
+                                func.setName(functionName, SourceType.USER_DEFINED);
+                                changesApplied.incrementAndGet();
+                            } catch (Exception e) {
+                                Msg.warn(this, "Could not set function name: " + e.getMessage());
+                            }
+                        }
+
+                        // Apply plate comment
+                        if (plateComment != null && !plateComment.isEmpty()) {
+                            func.setComment(plateComment);
+                            changesApplied.incrementAndGet();
+                        }
+
+                        // Apply calling convention
+                        if (callingConvention != null && !callingConvention.isEmpty()) {
+                            try {
+                                func.setCallingConvention(callingConvention);
+                                changesApplied.incrementAndGet();
+                            } catch (Exception e) {
+                                Msg.warn(this, "Could not set calling convention: " + e.getMessage());
+                            }
+                        }
+
+                        // Apply return type
+                        if (returnType != null && !returnType.isEmpty()) {
+                            DataType dt = ServiceUtils.findDataTypeByNameInAllCategories(program.getDataTypeManager(), returnType);
+                            if (dt != null) {
+                                try {
+                                    func.setReturnType(dt, SourceType.USER_DEFINED);
+                                    changesApplied.incrementAndGet();
+                                } catch (Exception e) {
+                                    Msg.warn(this, "Could not set return type: " + e.getMessage());
+                                }
+                            }
+                        }
+
+                        // Apply parameter names and types from JSON array
+                        String paramsJson = ServiceUtils.extractJsonArray(jsonBody, "parameters");
+                        if (paramsJson != null) {
+                            applyParameterDocumentation(func, program, paramsJson, changesApplied);
+                        }
+
+                        // Apply comments from JSON array
+                        String commentsJson = ServiceUtils.extractJsonArray(jsonBody, "comments");
+                        if (commentsJson != null) {
+                            applyCommentsDocumentation(func, program, commentsJson, changesApplied);
+                        }
+
+                        // Apply labels from JSON array
+                        String labelsJson = ServiceUtils.extractJsonArray(jsonBody, "labels");
+                        if (labelsJson != null) {
+                            applyLabelsDocumentation(func, program, labelsJson, changesApplied);
+                        }
+
+                        success.set(true);
+                    } catch (Exception e) {
+                        errorMsg.set(e.getMessage());
+                    } finally {
+                        program.endTransaction(tx, success.get());
+                    }
+                });
+            } catch (Exception e) {
+                return Response.err("Failed to apply documentation: " + e.getMessage());
+            }
+
+            if (success.get()) {
+                Map<String, Object> applyResult = new LinkedHashMap<>();
+                applyResult.put("success", true);
+                applyResult.put("changes_applied", changesApplied.get());
+                applyResult.put("function", func.getName());
+                applyResult.putAll(ServiceUtils.addressToJson(addr, program));
+                return Response.ok(applyResult);
+            } else {
+                return Response.err(errorMsg.get() != null ? errorMsg.get() : "Unknown error");
+            }
+
+        } catch (Exception e) {
+            return Response.err("Failed to parse documentation JSON: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Apply parameter documentation from JSON
+     */
+    private void applyParameterDocumentation(Function func, Program program, String paramsJson, AtomicInteger changesApplied) {
+        // Parse simple array format: [{"ordinal": 0, "name": "...", "type": "..."}, ...]
+        Pattern p = Pattern.compile(
+            "\\{\\s*\"ordinal\"\\s*:\\s*(\\d+).*?\"name\"\\s*:\\s*\"([^\"]*)\".*?\"type\"\\s*:\\s*\"([^\"]*)\"");
+        Matcher m = p.matcher(paramsJson);
+
+        Parameter[] params = func.getParameters();
+        while (m.find()) {
+            try {
+                int ordinal = Integer.parseInt(m.group(1));
+                String name = m.group(2);
+                String typeName = m.group(3);
+
+                if (ordinal < params.length) {
+                    Parameter param = params[ordinal];
+
+                    // Set name if different and not generic
+                    if (!name.startsWith("param_") && !name.equals(param.getName())) {
+                        try {
+                            param.setName(name, SourceType.USER_DEFINED);
+                            changesApplied.incrementAndGet();
+                        } catch (Exception e) {
+                            Msg.warn(this, "Could not set parameter name: " + e.getMessage());
+                        }
+                    }
+
+                    // Set type if different
+                    if (!typeName.startsWith("undefined") && !typeName.equals(param.getDataType().getName())) {
+                        DataType dt = ServiceUtils.findDataTypeByNameInAllCategories(program.getDataTypeManager(), typeName);
+                        if (dt != null) {
+                            try {
+                                param.setDataType(dt, SourceType.USER_DEFINED);
+                                changesApplied.incrementAndGet();
+                            } catch (Exception e) {
+                                Msg.warn(this, "Could not set parameter type: " + e.getMessage());
+                            }
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                // Skip this parameter
+            }
+        }
+    }
+
+    /**
+     * Apply inline comments from JSON
+     */
+    private void applyCommentsDocumentation(Function func, Program program, String commentsJson, AtomicInteger changesApplied) {
+        // Parse: [{"relative_offset": 0, "eol_comment": "...", "pre_comment": "..."}, ...]
+        Pattern p = Pattern.compile(
+            "\\{\\s*\"relative_offset\"\\s*:\\s*(\\d+)");
+        Matcher m = p.matcher(commentsJson);
+
+        Address funcStart = func.getEntryPoint();
+        Listing listing = program.getListing();
+
+        while (m.find()) {
+            try {
+                long relOffset = Long.parseLong(m.group(1));
+                Address commentAddr = funcStart.add(relOffset);
+
+                // Extract comments for this entry
+                int entryStart = m.start();
+                int entryEnd = commentsJson.indexOf('}', entryStart);
+                if (entryEnd < 0) continue;
+                String entry = commentsJson.substring(entryStart, entryEnd + 1);
+
+                String eolComment = ServiceUtils.extractJsonString(entry, "eol_comment");
+                String preComment = ServiceUtils.extractJsonString(entry, "pre_comment");
+
+                CodeUnit cu = listing.getCodeUnitAt(commentAddr);
+                if (cu != null) {
+                    if (eolComment != null && !eolComment.isEmpty()) {
+                        cu.setComment(CodeUnit.EOL_COMMENT, eolComment);
+                        changesApplied.incrementAndGet();
+                    }
+                    if (preComment != null && !preComment.isEmpty()) {
+                        cu.setComment(CodeUnit.PRE_COMMENT, preComment);
+                        changesApplied.incrementAndGet();
+                    }
+                }
+            } catch (Exception e) {
+                // Skip this comment
+            }
+        }
+    }
+
+    /**
+     * Apply labels from JSON
+     */
+    private void applyLabelsDocumentation(Function func, Program program, String labelsJson, AtomicInteger changesApplied) {
+        // Parse: [{"relative_offset": 0, "name": "..."}, ...]
+        Pattern p = Pattern.compile(
+            "\\{\\s*\"relative_offset\"\\s*:\\s*(\\d+).*?\"name\"\\s*:\\s*\"([^\"]*)\"");
+        Matcher m = p.matcher(labelsJson);
+
+        Address funcStart = func.getEntryPoint();
+        SymbolTable symTable = program.getSymbolTable();
+
+        while (m.find()) {
+            try {
+                long relOffset = Long.parseLong(m.group(1));
+                String labelName = m.group(2);
+
+                Address labelAddr = funcStart.add(relOffset);
+
+                // Check if label already exists
+                Symbol existing = symTable.getPrimarySymbol(labelAddr);
+                if (existing == null || existing.getSymbolType() != SymbolType.LABEL ||
+                    !existing.getName().equals(labelName)) {
+                    try {
+                        symTable.createLabel(labelAddr, labelName, SourceType.USER_DEFINED);
+                        changesApplied.incrementAndGet();
+                    } catch (Exception e) {
+                        Msg.warn(this, "Could not create label: " + e.getMessage());
+                    }
+                }
+            } catch (Exception e) {
+                // Skip this label
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Cross-Version Matching Tools
+    // -----------------------------------------------------------------------
+
+    /**
+     * Compare documentation status across all open programs.
+     * Returns documented/undocumented function counts for each program.
+     */
+    public Response compareProgramsDocumentation() {
+        return compareProgramsDocumentation(null);
+    }
+
+    @McpTool(path = "/compare_programs_documentation", description = "Compare documented vs undocumented counts", category = "documentation")
+    public Response compareProgramsDocumentation(
+            @Param(value = "program", description = "Target program name (omit to use the active program — always specify when multiple programs are open)", defaultValue = "") String programName) {
+        try {
+            Program[] allPrograms = programProvider.getAllOpenPrograms();
+            ServiceUtils.ProgramOrError pe = ServiceUtils.getProgramOrError(programProvider, programName);
+            Program currentProgram = pe.program(); // may be null if no program loaded, that's ok here
+
+            if (allPrograms == null || allPrograms.length == 0) {
+                return Response.err("No programs are open");
+            }
+
+            List<Map<String, Object>> programsList = new ArrayList<>();
+            for (Program prog : allPrograms) {
+                int documented = 0;
+                int undocumented = 0;
+                int total = 0;
+
+                FunctionManager funcMgr = prog.getFunctionManager();
+                for (Function func : funcMgr.getFunctions(true)) {
+                    total++;
+                    if (ServiceUtils.isAutoGeneratedName(func.getName())) {
+                        undocumented++;
+                    } else {
+                        documented++;
+                    }
+                }
+
+                double docPercent = total > 0 ? (documented * 100.0 / total) : 0;
+
+                programsList.add(JsonHelper.mapOf(
+                    "name", prog.getName(),
+                    "path", prog.getDomainFile().getPathname(),
+                    "is_current", prog == currentProgram,
+                    "total_functions", total,
+                    "documented", documented,
+                    "undocumented", undocumented,
+                    "documentation_percent", Double.parseDouble(String.format("%.1f", docPercent))
+                ));
+            }
+
+            return Response.ok(JsonHelper.mapOf(
+                "programs", programsList,
+                "count", allPrograms.length
+            ));
+
+        } catch (Exception e) {
+            return Response.err(e.getMessage());
+        }
+    }
+
+    /**
+     * Find undocumented (FUN_*) functions that reference a given string address.
+     * This filters get_xrefs_to results to only return FUN_* functions.
+     */
+    @McpTool(path = "/find_undocumented_by_string", description = "Find FUN_* functions referencing a string. On programs with multiple address spaces (e.g., embedded targets), prefix addresses with the space name (mem:1000) to avoid ambiguous resolution.", category = "documentation")
+    public Response findUndocumentedByString(
+            @Param(value = "address", paramType = "address",
+                   description = "Address in the program. Accepts 0x<hex> (default space) or <space>:<hex> "
+                               + "(e.g., mem:1000, code:ff00). Note: some programs — particularly "
+                               + "embedded/microcontroller targets — are not address-space-agnostic; "
+                               + "use get_address_spaces to discover spaces before assuming a plain hex "
+                               + "address is unambiguous.") String stringAddress,
+            @Param(value = "program", description = "Target program name (omit to use the active program — always specify when multiple programs are open)", defaultValue = "") String programName) {
+        if (stringAddress == null || stringAddress.isEmpty()) {
+            return Response.err("String address is required");
+        }
+
+        ServiceUtils.ProgramOrError pe = ServiceUtils.getProgramOrError(programProvider, programName);
+        if (pe.hasError()) return pe.error();
+        Program program = pe.program();
+
+        try {
+            Address addr = ServiceUtils.parseAddress(program, stringAddress);
+            if (addr == null) {
+                return Response.err(ServiceUtils.getLastParseError());
+            }
+
+            ReferenceManager refMgr = program.getReferenceManager();
+            FunctionManager funcMgr = program.getFunctionManager();
+
+            // Get references to this address
+            ReferenceIterator refIter = refMgr.getReferencesTo(addr);
+
+            Set<String> seenFunctions = new HashSet<>();
+            List<Map<String, Object>> undocumentedList = new ArrayList<>();
+            int undocCount = 0;
+            int docCount = 0;
+
+            while (refIter.hasNext()) {
+                Reference ref = refIter.next();
+                Address fromAddr = ref.getFromAddress();
+
+                // Find the function containing this reference
+                Function func = funcMgr.getFunctionContaining(fromAddr);
+                if (func != null) {
+                    String funcName = func.getName();
+
+                    // Only add each function once
+                    if (!seenFunctions.contains(funcName)) {
+                        seenFunctions.add(funcName);
+
+                        if (ServiceUtils.isAutoGeneratedName(funcName)) {
+                            undocCount++;
+                            undocumentedList.add(JsonHelper.mapOf(
+                                "name", funcName,
+                                "address", func.getEntryPoint().toString(),
+                                "ref_address", fromAddr.toString(),
+                                "ref_type", ref.getReferenceType().getName()
+                            ));
+                        } else {
+                            docCount++;
+                        }
+                    }
+                }
+            }
+
+            return Response.ok(JsonHelper.mapOf(
+                "string_address", stringAddress,
+                "undocumented_functions", undocumentedList,
+                "undocumented_count", undocCount,
+                "documented_count", docCount,
+                "total_referencing_functions", seenFunctions.size()
+            ));
+
+        } catch (Exception e) {
+            return Response.err(e.getMessage());
+        }
+    }
+
+    /**
+     * Generate a report of all strings matching a pattern (e.g., ".cpp") and their referencing FUN_* functions.
+     * This helps identify undocumented functions that can be matched using string anchors.
+     */
+    @McpTool(path = "/batch_string_anchor_report", description = "Report of source file strings and their FUN_* functions", category = "documentation")
+    public Response batchStringAnchorReport(
+            @Param(value = "pattern", defaultValue = ".cpp", description = "File pattern (e.g. .cpp)") String pattern,
+            @Param(value = "program", description = "Target program name (omit to use the active program — always specify when multiple programs are open)", defaultValue = "") String programName) {
+        ServiceUtils.ProgramOrError pe = ServiceUtils.getProgramOrError(programProvider, programName);
+        if (pe.hasError()) return pe.error();
+        Program program = pe.program();
+
+        try {
+            Listing listing = program.getListing();
+            ReferenceManager refMgr = program.getReferenceManager();
+            FunctionManager funcMgr = program.getFunctionManager();
+
+            int totalUndocumented = 0;
+            List<Map<String, Object>> anchorsList = new ArrayList<>();
+
+            // Iterate through all defined strings in the program
+            DataIterator dataIter = listing.getDefinedData(true);
+            while (dataIter.hasNext()) {
+                Data data = dataIter.next();
+
+                // Check if this is a string type
+                if (data.getDataType() instanceof StringDataType ||
+                    data.getDataType().getName().toLowerCase().contains("string")) {
+
+                    Object value = data.getValue();
+                    if (value instanceof String) {
+                        String strValue = (String) value;
+
+                        // Check if string matches the pattern
+                        if (strValue.toLowerCase().contains(pattern.toLowerCase())) {
+                            Address strAddr = data.getAddress();
+
+                            // Find FUN_* functions referencing this string
+                            ReferenceIterator refIter = refMgr.getReferencesTo(strAddr);
+                            List<Map<String, Object>> undocFuncsList = new ArrayList<>();
+                            List<String> docFuncsList = new ArrayList<>();
+                            Set<String> undocFuncKeys = new LinkedHashSet<>();
+                            Set<String> docFuncKeys = new LinkedHashSet<>();
+
+                            while (refIter.hasNext()) {
+                                Reference ref = refIter.next();
+                                Function func = funcMgr.getFunctionContaining(ref.getFromAddress());
+                                if (func != null) {
+                                    String funcName = func.getName();
+                                    if (ServiceUtils.isAutoGeneratedName(funcName)) {
+                                        String key = funcName + "@" + func.getEntryPoint().toString();
+                                        if (!undocFuncKeys.contains(key)) {
+                                            undocFuncKeys.add(key);
+                                            undocFuncsList.add(JsonHelper.mapOf(
+                                                "name", funcName,
+                                                "address", func.getEntryPoint().toString()
+                                            ));
+                                        }
+                                    } else {
+                                        if (!docFuncKeys.contains(funcName)) {
+                                            docFuncKeys.add(funcName);
+                                            docFuncsList.add(funcName);
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Only include strings that have at least one referencing function
+                            if (!undocFuncsList.isEmpty() || !docFuncsList.isEmpty()) {
+                                totalUndocumented += undocFuncsList.size();
+
+                                anchorsList.add(JsonHelper.mapOf(
+                                    "string", strValue,
+                                    "address", strAddr.toString(),
+                                    "undocumented", undocFuncsList,
+                                    "documented", docFuncsList,
+                                    "undocumented_count", undocFuncsList.size(),
+                                    "documented_count", docFuncsList.size()
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+
+            return Response.ok(JsonHelper.mapOf(
+                "pattern", pattern,
+                "anchors", anchorsList,
+                "total_anchors", anchorsList.size(),
+                "total_undocumented_functions", totalUndocumented
+            ));
+
+        } catch (Exception e) {
+            return Response.err(e.getMessage());
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Fuzzy Matching & Diff Handlers (delegates to BinaryComparisonService)
+    // -----------------------------------------------------------------------
+
+    /**
+     * Get the function signature (feature vector) for a function at the given address.
+     */
+    @McpTool(path = "/get_function_signature", description = "Get function signature for cross-binary comparison. On programs with multiple address spaces (e.g., embedded targets), prefix addresses with the space name (mem:1000) to avoid ambiguous resolution.", category = "documentation")
+    public Response handleGetFunctionSignature(
+            @Param(value = "address", paramType = "address",
+                   description = "Address in the program. Accepts 0x<hex> (default space) or <space>:<hex> "
+                               + "(e.g., mem:1000, code:ff00). Note: some programs — particularly "
+                               + "embedded/microcontroller targets — are not address-space-agnostic; "
+                               + "use get_address_spaces to discover spaces before assuming a plain hex "
+                               + "address is unambiguous.") String addressStr,
+            @Param(value = "program", description = "Target program name (omit to use the active program — always specify when multiple programs are open)", defaultValue = "") String programName) {
+        ServiceUtils.ProgramOrError pe = ServiceUtils.getProgramOrError(programProvider, programName);
+        if (pe.hasError()) return pe.error();
+        Program program = pe.program();
+
+        try {
+            Address addr = ServiceUtils.parseAddress(program, addressStr);
+            if (addr == null) return Response.err(ServiceUtils.getLastParseError());
+
+            Function func = program.getFunctionManager().getFunctionAt(addr);
+            if (func == null) return Response.err("No function at address: " + addressStr);
+
+            BinaryComparisonService.FunctionSignature sig =
+                BinaryComparisonService.computeFunctionSignature(program, func, new ConsoleTaskMonitor());
+            return Response.text(sig.toJson());
+        } catch (Exception e) {
+            return Response.err(e.getMessage());
+        }
+    }
+
+    /**
+     * Find functions in target program similar to the source function.
+     */
+    @McpTool(path = "/find_similar_functions_fuzzy", description = "Cross-binary fuzzy function matching. On programs with multiple address spaces (e.g., embedded targets), prefix addresses with the space name (mem:1000) to avoid ambiguous resolution.", category = "documentation")
+    public Response handleFindSimilarFunctionsFuzzy(
+            @Param(value = "address", paramType = "address",
+                   description = "Address in the program. Accepts 0x<hex> (default space) or <space>:<hex> "
+                               + "(e.g., mem:1000, code:ff00). Note: some programs — particularly "
+                               + "embedded/microcontroller targets — are not address-space-agnostic; "
+                               + "use get_address_spaces to discover spaces before assuming a plain hex "
+                               + "address is unambiguous.") String addressStr,
+            @Param(value = "source_program", description = "Source program name") String sourceProgramName,
+            @Param(value = "target_program", description = "Target program name") String targetProgramName,
+            @Param(value = "threshold", defaultValue = "0.7", description = "Similarity threshold") double threshold,
+            @Param(value = "limit", defaultValue = "20") int limit) {
+        // Source program: use sourceProgramName if given, otherwise current program
+        ServiceUtils.ProgramOrError srcPe = ServiceUtils.getProgramOrError(programProvider, sourceProgramName);
+        if (srcPe.hasError()) return srcPe.error();
+        Program srcProgram = srcPe.program();
+
+        // Target program is required
+        if (targetProgramName == null || targetProgramName.trim().isEmpty()) {
+            return Response.err("target_program parameter is required");
+        }
+        ServiceUtils.ProgramOrError tgtPe = ServiceUtils.getProgramOrError(programProvider, targetProgramName);
+        if (tgtPe.hasError()) return tgtPe.error();
+        Program tgtProgram = tgtPe.program();
+
+        try {
+            Address addr = ServiceUtils.parseAddress(srcProgram, addressStr);
+            if (addr == null) return Response.err(ServiceUtils.getLastParseError());
+
+            Function srcFunc = srcProgram.getFunctionManager().getFunctionAt(addr);
+            if (srcFunc == null) return Response.err("No function at address: " + addressStr);
+
+            return BinaryComparisonService.findSimilarFunctionsJson(
+                srcProgram, srcFunc, tgtProgram, threshold, limit, new ConsoleTaskMonitor());
+        } catch (Exception e) {
+            return Response.err(e.getMessage());
+        }
+    }
+
+    /**
+     * Bulk fuzzy match: find best match for each source function in target program.
+     */
+    @McpTool(path = "/bulk_fuzzy_match", description = "Bulk cross-binary function matching", category = "documentation")
+    public Response handleBulkFuzzyMatch(
+            @Param(value = "source_program", description = "Source program name") String sourceProgramName,
+            @Param(value = "target_program", description = "Target program name") String targetProgramName,
+            @Param(value = "threshold", defaultValue = "0.7", description = "Similarity threshold") double threshold,
+            @Param(value = "offset", defaultValue = "0") int offset,
+            @Param(value = "limit", defaultValue = "50") int limit,
+            @Param(value = "filter", description = "Name filter") String filter) {
+        if (sourceProgramName == null || sourceProgramName.trim().isEmpty()) {
+            return Response.err("source_program parameter is required");
+        }
+        ServiceUtils.ProgramOrError srcPe = ServiceUtils.getProgramOrError(programProvider, sourceProgramName);
+        if (srcPe.hasError()) return srcPe.error();
+        Program srcProgram = srcPe.program();
+
+        if (targetProgramName == null || targetProgramName.trim().isEmpty()) {
+            return Response.err("target_program parameter is required");
+        }
+        ServiceUtils.ProgramOrError tgtPe = ServiceUtils.getProgramOrError(programProvider, targetProgramName);
+        if (tgtPe.hasError()) return tgtPe.error();
+        Program tgtProgram = tgtPe.program();
+
+        try {
+            return BinaryComparisonService.bulkFuzzyMatchJson(
+                srcProgram, tgtProgram, threshold, offset, limit, filter, new ConsoleTaskMonitor());
+        } catch (Exception e) {
+            return Response.err(e.getMessage());
+        }
+    }
+
+    /**
+     * Compute a structured diff between two functions.
+     */
+    @McpTool(path = "/diff_functions", description = "Compute structured diff between two functions. On programs with multiple address spaces (e.g., embedded targets), prefix addresses with the space name (mem:1000) to avoid ambiguous resolution.", category = "documentation")
+    public Response handleDiffFunctions(
+            @Param(value = "address_a", paramType = "address",
+                   description = "Address in the program. Accepts 0x<hex> (default space) or <space>:<hex> "
+                               + "(e.g., mem:1000, code:ff00). Note: some programs — particularly "
+                               + "embedded/microcontroller targets — are not address-space-agnostic; "
+                               + "use get_address_spaces to discover spaces before assuming a plain hex "
+                               + "address is unambiguous.") String addressA,
+            @Param(value = "address_b", paramType = "address",
+                   description = "Address in the program. Accepts 0x<hex> (default space) or <space>:<hex> "
+                               + "(e.g., mem:1000, code:ff00). Note: some programs — particularly "
+                               + "embedded/microcontroller targets — are not address-space-agnostic; "
+                               + "use get_address_spaces to discover spaces before assuming a plain hex "
+                               + "address is unambiguous.") String addressB,
+            @Param(value = "program_a", description = "First program name") String programAName,
+            @Param(value = "program_b", description = "Second program name") String programBName) {
+        // Program A
+        ServiceUtils.ProgramOrError peA = ServiceUtils.getProgramOrError(programProvider, programAName);
+        if (peA.hasError()) return peA.error();
+        Program progA = peA.program();
+
+        // Program B defaults to Program A if not specified
+        Program progB;
+        if (programBName == null || programBName.trim().isEmpty()) {
+            progB = progA;
+        } else {
+            ServiceUtils.ProgramOrError peB = ServiceUtils.getProgramOrError(programProvider, programBName);
+            if (peB.hasError()) return peB.error();
+            progB = peB.program();
+        }
+
+        try {
+            Address addrA = ServiceUtils.parseAddress(progA, addressA);
+            if (addrA == null) return Response.err(ServiceUtils.getLastParseError());
+
+            Address addrB = ServiceUtils.parseAddress(progB, addressB);
+            if (addrB == null) return Response.err(ServiceUtils.getLastParseError());
+
+            Function funcA = progA.getFunctionManager().getFunctionAt(addrA);
+            if (funcA == null) return Response.err("No function at address_a: " + addressA);
+
+            Function funcB = progB.getFunctionManager().getFunctionAt(addrB);
+            if (funcB == null) return Response.err("No function at address_b: " + addressB);
+
+            return BinaryComparisonService.diffFunctionsJson(progA, funcA, progB, funcB, new ConsoleTaskMonitor());
+        } catch (Exception e) {
+            return Response.err(e.getMessage());
+        }
+    }
+}

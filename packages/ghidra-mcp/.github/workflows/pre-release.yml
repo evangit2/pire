@@ -1,0 +1,193 @@
+name: Create Pre-Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Pre-release version (e.g., 3.2.0-beta.1)'
+        required: true
+      branch:
+        description: 'Branch to create pre-release from'
+        required: true
+        default: 'main'
+
+env:
+  GHIDRA_VERSION: 12.0.3
+  GHIDRA_DATE: 20260210
+
+jobs:
+  create-prerelease:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ github.event.inputs.branch }}
+        fetch-depth: 0
+
+    - name: Set up JDK 21
+      uses: actions/setup-java@v4
+      with:
+        java-version: '21'
+        distribution: 'temurin'
+        cache: maven
+
+    - name: Validate version format
+      run: |
+        VERSION="${{ github.event.inputs.version }}"
+        if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-(alpha|beta|rc)\.[0-9]+$ ]]; then
+          echo "Invalid pre-release version format: $VERSION"
+          echo "Expected format: X.Y.Z-{alpha|beta|rc}.N (e.g., 3.2.0-beta.1)"
+          exit 1
+        fi
+        echo "Version format valid: $VERSION"
+
+    - name: Download Ghidra
+      run: |
+        echo "Downloading Ghidra ${{ env.GHIDRA_VERSION }}..."
+        wget --no-verbose -O ghidra.zip https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_${{ env.GHIDRA_VERSION }}_build/ghidra_${{ env.GHIDRA_VERSION }}_PUBLIC_${{ env.GHIDRA_DATE }}.zip
+        7z x -bd ghidra.zip
+
+    - name: Install Ghidra JARs to Maven local repository
+      run: |
+        GHIDRA_DIR="ghidra_${{ env.GHIDRA_VERSION }}_PUBLIC"
+        GV="${{ env.GHIDRA_VERSION }}"
+        echo "Installing Ghidra JARs from ${GHIDRA_DIR}..."
+
+        # Framework JARs
+        mvn -q install:install-file -Dfile="${GHIDRA_DIR}/Ghidra/Framework/Generic/lib/Generic.jar"           -DgroupId=ghidra -DartifactId=Generic           -Dversion=${GV} -Dpackaging=jar
+        mvn -q install:install-file -Dfile="${GHIDRA_DIR}/Ghidra/Framework/SoftwareModeling/lib/SoftwareModeling.jar" -DgroupId=ghidra -DartifactId=SoftwareModeling -Dversion=${GV} -Dpackaging=jar
+        mvn -q install:install-file -Dfile="${GHIDRA_DIR}/Ghidra/Framework/Project/lib/Project.jar"           -DgroupId=ghidra -DartifactId=Project           -Dversion=${GV} -Dpackaging=jar
+        mvn -q install:install-file -Dfile="${GHIDRA_DIR}/Ghidra/Framework/Docking/lib/Docking.jar"           -DgroupId=ghidra -DartifactId=Docking           -Dversion=${GV} -Dpackaging=jar
+        mvn -q install:install-file -Dfile="${GHIDRA_DIR}/Ghidra/Framework/Utility/lib/Utility.jar"           -DgroupId=ghidra -DartifactId=Utility           -Dversion=${GV} -Dpackaging=jar
+        mvn -q install:install-file -Dfile="${GHIDRA_DIR}/Ghidra/Framework/Gui/lib/Gui.jar"                   -DgroupId=ghidra -DartifactId=Gui               -Dversion=${GV} -Dpackaging=jar
+        mvn -q install:install-file -Dfile="${GHIDRA_DIR}/Ghidra/Framework/FileSystem/lib/FileSystem.jar"     -DgroupId=ghidra -DartifactId=FileSystem         -Dversion=${GV} -Dpackaging=jar
+        mvn -q install:install-file -Dfile="${GHIDRA_DIR}/Ghidra/Framework/Graph/lib/Graph.jar"               -DgroupId=ghidra -DartifactId=Graph              -Dversion=${GV} -Dpackaging=jar
+        mvn -q install:install-file -Dfile="${GHIDRA_DIR}/Ghidra/Framework/DB/lib/DB.jar"                     -DgroupId=ghidra -DartifactId=DB                 -Dversion=${GV} -Dpackaging=jar
+        mvn -q install:install-file -Dfile="${GHIDRA_DIR}/Ghidra/Framework/Emulation/lib/Emulation.jar"       -DgroupId=ghidra -DartifactId=Emulation          -Dversion=${GV} -Dpackaging=jar
+        mvn -q install:install-file -Dfile="${GHIDRA_DIR}/Ghidra/Framework/Help/lib/Help.jar"                 -DgroupId=ghidra -DartifactId=Help               -Dversion=${GV} -Dpackaging=jar
+
+        # Feature JARs
+        mvn -q install:install-file -Dfile="${GHIDRA_DIR}/Ghidra/Features/Base/lib/Base.jar"                  -DgroupId=ghidra -DartifactId=Base               -Dversion=${GV} -Dpackaging=jar
+        mvn -q install:install-file -Dfile="${GHIDRA_DIR}/Ghidra/Features/Decompiler/lib/Decompiler.jar"      -DgroupId=ghidra -DartifactId=Decompiler         -Dversion=${GV} -Dpackaging=jar
+        mvn -q install:install-file -Dfile="${GHIDRA_DIR}/Ghidra/Features/PDB/lib/PDB.jar"                    -DgroupId=ghidra -DartifactId=PDB                -Dversion=${GV} -Dpackaging=jar
+        mvn -q install:install-file -Dfile="${GHIDRA_DIR}/Ghidra/Features/FunctionID/lib/FunctionID.jar"      -DgroupId=ghidra -DartifactId=FunctionID         -Dversion=${GV} -Dpackaging=jar
+
+        echo "Installed 15 Ghidra JARs to Maven local repository"
+
+    - name: Build with Maven
+      run: |
+        echo "Building GhidraMCP pre-release..."
+        mvn clean package assembly:single -DskipTests
+        echo "Build complete."
+        ls -la target/GhidraMCP-*.zip 2>/dev/null || ls -la target/*.zip
+
+    - name: Create pre-release tag
+      run: |
+        VERSION="${{ github.event.inputs.version }}"
+        TAG="v${VERSION}"
+
+        if git rev-parse "$TAG" >/dev/null 2>&1; then
+          echo "Tag $TAG already exists!"
+          exit 1
+        fi
+
+        git config user.name "GitHub Actions"
+        git config user.email "actions@github.com"
+        git tag -a "$TAG" -m "Pre-release $VERSION from branch ${{ github.event.inputs.branch }}"
+        git push origin "$TAG"
+        echo "Created and pushed tag: $TAG"
+
+    - name: Prepare pre-release artifacts
+      run: |
+        VERSION="${{ github.event.inputs.version }}"
+        echo "Preparing pre-release artifacts..."
+        mkdir -p release
+
+        # Copy main plugin ZIP
+        if [ -f "target/GhidraMCP-${VERSION}.zip" ]; then
+          cp target/GhidraMCP-${VERSION}.zip release/
+        else
+          ZIP_FILE=$(find target/ -name "GhidraMCP-*.zip" | head -1)
+          if [ -n "$ZIP_FILE" ]; then
+            cp "$ZIP_FILE" release/GhidraMCP-${VERSION}.zip
+          else
+            echo "ERROR: No zip file found in target directory!"
+            exit 1
+          fi
+        fi
+
+        # Copy essential files
+        cp bridge_mcp_ghidra.py release/
+        cp requirements.txt release/
+        cp README.md release/
+        [ -f LICENSE ] && cp LICENSE release/
+
+        echo "Pre-release artifacts prepared:"
+        ls -la release/
+
+    - name: Generate pre-release notes
+      run: |
+        VERSION="${{ github.event.inputs.version }}"
+        BRANCH="${{ github.event.inputs.branch }}"
+        MCP_TOOLS=$(grep -c '@mcp.tool()' bridge_mcp_ghidra.py 2>/dev/null || echo "unknown")
+
+        cat > release_notes.md << GENEOF
+        # GhidraMCP ${VERSION} Pre-Release
+
+        **This is a pre-release version for testing purposes.**
+
+        - **Version:** ${VERSION}
+        - **Source Branch:** ${BRANCH}
+        - **MCP Tools:** ${MCP_TOOLS}
+        - **Build Date:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+
+        ## Recent Changes
+
+        GENEOF
+
+        git log --oneline --no-merges -15 >> release_notes.md
+
+        cat >> release_notes.md << GENEOF
+
+        ## Installation
+
+        Same as stable releases:
+        1. In Ghidra: **File > Install Extensions > Add** and select the ZIP
+        2. Restart Ghidra, enable plugin
+        3. \`pip install -r requirements.txt\`
+        4. \`python bridge_mcp_ghidra.py\`
+
+        ---
+
+        **Pre-release: use for testing only.**
+        GENEOF
+
+    - name: Create GitHub Pre-Release
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: "v${{ github.event.inputs.version }}"
+        name: "GhidraMCP ${{ github.event.inputs.version }} (Pre-Release)"
+        body_path: release_notes.md
+        files: |
+          release/*
+        draft: false
+        prerelease: true
+        generate_release_notes: false
+        fail_on_unmatched_files: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Pre-release summary
+      run: |
+        VERSION="${{ github.event.inputs.version }}"
+        BRANCH="${{ github.event.inputs.branch }}"
+        echo "## Pre-Release Created" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Version:** ${VERSION}" >> $GITHUB_STEP_SUMMARY
+        echo "**Branch:** ${BRANCH}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "[Download Pre-Release](https://github.com/${{ github.repository }}/releases/tag/v${VERSION})" >> $GITHUB_STEP_SUMMARY
