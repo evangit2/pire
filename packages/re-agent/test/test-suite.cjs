@@ -195,12 +195,11 @@ ok(src.includes("ks.asm"), "keystone assembles instructions");
 
 console.log("\n─ Model Provider Config ─");
 
-const hermesConfig = join(process.env.HOME || "/tmp", ".hermes", "config.yaml");
-if (fs.existsSync(hermesConfig)) {
-	const cfg = fs.readFileSync(hermesConfig, "utf-8");
-	ok(cfg.includes("api_key:"), "Hermes config has API key");
-	ok(cfg.includes("base_url:") || cfg.includes("api:"), "Hermes config has endpoint URL");
-	ok(cfg.includes("GLM-5.2") || cfg.includes("gpt-oss"), "Hermes config has model name");
+const pireConfig = process.env.PIRE_CONFIG || join(process.env.HOME || "/tmp", ".pire", "config.yaml");
+if (fs.existsSync(pireConfig)) {
+	const cfg = fs.readFileSync(pireConfig, "utf-8");
+	ok(cfg.includes("api_key:"), "LLM config has API key");
+	ok(cfg.includes("base_url:") || cfg.includes("api:"), "LLM config has endpoint URL");
 }
 
 // ─── 13. Package Config ───────────────────────────────────────

@@ -43,25 +43,39 @@ cd pire
 ./install.sh
 ```
 
-The install script supports Ubuntu/Debian, Fedora, Arch Linux, and macOS (via Homebrew).
+The install script supports Ubuntu/Debian, Fedora/RHEL, Arch Linux, and macOS (via Homebrew).
 
 ## Configuration
 
-pire reads LLM configuration from one of these locations (in order):
+pire reads LLM configuration from one of these methods (in order):
 
-1. `HERMES_CONFIG` environment variable (path to a YAML config file)
-2. `~/.hermes/config.yaml`
-3. `~/.hermes/profiles/default/config.yaml`
-4. `OPENAI_API_KEY` + `OPENAI_BASE_URL` + `OPENAI_MODEL` environment variables
+1. `PIRE_CONFIG` environment variable (path to a YAML config file)
+2. `OPENAI_API_KEY` + `OPENAI_BASE_URL` + `OPENAI_MODEL` environment variables
 
-Example config (`~/.hermes/config.yaml`):
+Example using environment variables:
 
-```yaml
-model:
-  base_url: "http://localhost:8080/v1"
-  api_key: "your-key-here"
-  model: "your-model-name"
+```bash
+export OPENAI_API_KEY="your-key-here"
+export OPENAI_BASE_URL="https://api.openai.com/v1"
+export OPENAI_MODEL="gpt-4o"
 ```
+
+Alternatively, set `PIRE_MODEL` to override the model name:
+
+```bash
+export PIRE_MODEL="your-preferred-model"
+```
+
+### Environment variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `WINEPREFIX` | Wine prefix directory | `~/.wine` |
+| `PIRE_CONFIG` | Path to LLM config file (YAML) | — |
+| `PIRE_MODEL` | Override model name | `gpt-4o` |
+| `OPENAI_API_KEY` | LLM API key | — |
+| `OPENAI_BASE_URL` | LLM API base URL | — |
+| `OPENAI_MODEL` | Model name | `gpt-4o` |
 
 ## Usage
 
@@ -83,16 +97,6 @@ Runs the full RE pipeline autonomously. Output files are written to the binary's
 
 - `analysis.md` — detailed analysis of the binary's behavior
 - `reimpl.c` — C source reimplementation
-
-### Environment variables
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `WINEPREFIX` | Wine prefix directory | `~/.wine` |
-| `HERMES_CONFIG` | Path to LLM config file | `~/.hermes/config.yaml` |
-| `OPENAI_API_KEY` | LLM API key (if not using Hermes config) | — |
-| `OPENAI_BASE_URL` | LLM API base URL | — |
-| `OPENAI_MODEL` | Model name | `gpt-4` |
 
 ## Tools
 
@@ -125,7 +129,6 @@ The repo includes several compiled Windows binaries for testing:
 |--------|-----------|-------------|
 | `targets/cfgmerge/cfgmerge.exe` | Medium | INI config file parser (count, get, set, checksum) |
 | `targets/imggen/imggen.exe` | Hard | BMP image generator (solid, gradient, checker, rect, circle, noise) |
-| `targets/cfgcrypt/cfgcrypt.exe` | Expert | XOR stream cipher with key mixing (SIMD-vectorized) |
 
 ### Successful reimplementations
 
@@ -134,7 +137,7 @@ The repo includes several compiled Windows binaries for testing:
 ## Testing
 
 ```bash
-# Run the full test suite (203 tests)
+# Run the full test suite
 node packages/re-agent/test/test-suite.cjs
 ```
 
@@ -145,7 +148,6 @@ Tests cover:
 - Decompile tool integration
 - SIMD/SSE handling guidance
 - CRLF/exit code matching guidance
-- Model provider configuration
 
 ## Architecture
 
@@ -167,8 +169,7 @@ pire/
 │   └── ghidra-mcp/        # Ghidra MCP integration
 ├── targets/               # Test binaries
 │   ├── cfgmerge/
-│   ├── imggen/
-│   └── cfgcrypt/
+│   └── imggen/
 ├── install.sh             # Cross-platform installer
 └── .github/workflows/ci.yml  # CI pipeline
 ```
@@ -184,7 +185,7 @@ The agent uses an LLM-powered loop with hard tool-call deadlines:
 5. **Turns 40-80**: Compile, test, iterate on the reimplementation
 6. **Turn 80**: Final deadline
 
-The agent streams LLM responses to avoid proxy token caps, and includes guidance for:
+The agent streams LLM responses and includes guidance for:
 - SIMD/SSE instruction handling (use black-box testing instead of tracing xmm registers)
 - CRLF line ending matching (Windows binaries use `\r\n`)
 - Exit code matching

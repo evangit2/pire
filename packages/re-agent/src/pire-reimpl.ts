@@ -27,9 +27,8 @@ interface LLMConfig { baseUrl: string; apiKey: string; model: string }
 
 function loadLLMConfig(): LLMConfig | null {
 	const candidates = [
-		process.env.HERMES_CONFIG,
-		join(process.env.HOME || "/tmp", ".hermes/config.yaml"),
-		join(process.env.HOME || "/tmp", ".hermes/profiles/default/config.yaml"),
+		process.env.PIRE_CONFIG,
+		join(process.env.HOME || "/tmp", ".pire/config.yaml"),
 	];
 	for (const path of candidates) {
 		if (!path || !existsSync(path)) continue;
@@ -191,7 +190,7 @@ async function main() {
 	}
 
 	// Use non-thinking model for speed (thinking model takes too long per turn)
-	const model = process.env.PIRE_MODEL || "GLM-5.2-non-thinking";
+	const model = process.env.PIRE_MODEL || "gpt-4o";
 	config.model = model;
 
 	console.log(`pire-reimpl — Full RE + Reimplementation`);

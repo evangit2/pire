@@ -169,8 +169,10 @@ fi
 info "Installation complete!"
 echo ""
 echo "  Next steps:"
-echo "    1. Configure your LLM endpoint in ~/.hermes/config.yaml"
-echo "       (or set OPENAI_API_KEY and OPENAI_BASE_URL env vars)"
+echo "    1. Set your LLM API credentials:"
+echo "       export OPENAI_API_KEY=\"your-key\""
+echo "       export OPENAI_BASE_URL=\"https://api.openai.com/v1\""
+echo "       export OPENAI_MODEL=\"gpt-4o\""
 echo "    2. Run: pire targets/cfgmerge/cfgmerge.exe"
 echo ""
 

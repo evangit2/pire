@@ -38,9 +38,8 @@ interface LLMConfig { baseUrl: string; apiKey: string; model: string }
 
 function loadLLMConfig(): LLMConfig | null {
 	const candidates = [
-		process.env.HERMES_CONFIG,
-		join(process.env.HOME || "/tmp", ".hermes/config.yaml"),
-		join(process.env.HOME || "/tmp", ".hermes/profiles/default/config.yaml"),
+		process.env.PIRE_CONFIG,
+		join(process.env.HOME || "/tmp", ".pire/config.yaml"),
 	];
 	for (const path of candidates) {
 		if (!path || !existsSync(path)) continue;
@@ -173,7 +172,7 @@ export class PireTUI {
 		if (this.llm) {
 			this.print("info", `LLM: ${this.llm.model}`);
 		} else {
-			this.print("err", "No LLM config. Set HERMES_CONFIG or OPENAI_API_KEY/OPENAI_BASE_URL.");
+			this.print("err", "No LLM config. Set PIRE_CONFIG or OPENAI_API_KEY/OPENAI_BASE_URL.");
 		}
 
 		this.print("info", "Probing system...");

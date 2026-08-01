@@ -2,7 +2,7 @@
 /**
  * pire model inference test harness
  *
- * Tests real model inference through Hermes-configured providers.
+ * Tests real model inference through configured LLM providers.
  * Verifies that the LLM can:
  * 1. Understand the RE system prompt
  * 2. Choose appropriate tools
@@ -13,9 +13,8 @@
  * Usage:
  *   node packages/re-agent/test/test-models.cjs                 — run all model tests
  *   node packages/re-agent/test/test-models.cjs --quick          — single model, single test
- *   node packages/re-agent/test/test-models.cjs --provider=vt-arc — specific provider
  *
- * Reads API config from ~/.hermes/config.yaml
+ * Reads API config from ~/.pire/config.yaml or PIRE_CONFIG env var
  */
 
 const fs = require("fs");
@@ -26,7 +25,7 @@ const http = require("http");
 
 // ─── Config ────────────────────────────────────────────────────
 
-const CONFIG_PATH = path.join(process.env.HOME, ".hermes", "config.yaml");
+const CONFIG_PATH = process.env.PIRE_CONFIG || path.join(process.env.HOME, ".pire", "config.yaml");
 
 function loadConfig() {
 	const raw = fs.readFileSync(CONFIG_PATH, "utf-8");

@@ -22,7 +22,7 @@ const SRC = path.join(TMP, "test.c");
 // ─── Config ────────────────────────────────────────────────────
 
 function loadProvider() {
-	const cfg = fs.readFileSync(path.join(process.env.HOME, ".hermes", "config.yaml"), "utf-8");
+	const cfg = fs.readFileSync(process.env.PIRE_CONFIG || path.join(process.env.HOME, ".pire", "config.yaml"), "utf-8");
 	const getUrl = (m) => m ? cfg.match(new RegExp(`\\b${m}:\\s*(.+)`))?.[1]?.trim().replace(/['"]/g, "") : null;
 	return {
 		url: cfg.match(/base_url:\s*(.+)/)?.[1]?.trim().replace(/['"]/g, "").replace(/\/$/, "") + "/chat/completions",
