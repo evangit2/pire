@@ -42,7 +42,7 @@ console.log("\n─ Native Tool Registry ─");
 
 const expectedTools = [
 	"shellTool",
-	"stringsTool", "fileTool", "objdumpTool", "readelfTool", "hexdumpTool", "disasmFuncTool", "r2Tool",
+	"stringsTool", "fileTool", "objdumpTool", "readelfTool", "hexdumpTool", "disasmFuncTool", "r2Tool", "decompileTool",
 	"ghidraStatus", "ghidraDecompile", "ghidraListFunctions", "ghidraRename", "ghidraXrefs", "ghidraStrings",
 	"binwalkTool", "liefTool", "angrTool", "capstoneTool", "keystoneTool", "unicornTool",
 	"yaraTool", "fridaTool", "gdbTool", "volatilityTool",
@@ -59,7 +59,7 @@ ok(src.includes("probeTools"), "probeTools exported");
 const toolArrayMatch = src.match(/export const RE_TOOLS[\s\S]*?\];/);
 if (toolArrayMatch) {
 	const toolCount = (toolArrayMatch[0].match(/^	\w+(Tool|Status|Decompile|ListFunctions|Rename|Xrefs|Strings)/gm) || []).length;
-	ok(toolCount === 24, `RE_TOOLS has 24 tools (got ${toolCount})`);
+	ok(toolCount === 25, `RE_TOOLS has 25 tools (got ${toolCount})`);
 }
 
 // ─── 3. Auto-Detect Wrappers ──────────────────────────────────
@@ -253,7 +253,7 @@ try {
 console.log("\n─ Probe Tools ─");
 
 // Verify probeTools would return expected keys
-const expectedProbeKeys = ["shell", "strings", "file", "objdump", "disasm_func", "readelf", "hexdump", "r2", "ghidra", "binwalk", "lief", "angr", "capstone", "keystone", "unicorn", "yara", "frida", "gdb", "volatility3"];
+const expectedProbeKeys = ["shell", "strings", "file", "objdump", "disasm_func", "readelf", "hexdump", "r2", "decompile", "ghidra", "binwalk", "lief", "angr", "capstone", "keystone", "unicorn", "yara", "frida", "gdb", "volatility3"];
 for (const key of expectedProbeKeys) {
 	ok(src.includes(`\t\t${key}:`), `probeTools checks ${key}`);
 }
@@ -320,6 +320,37 @@ ok(tuiSrc.includes("tool_call_id"), "agent loop returns tool results with tool_c
 ok(tuiSrc.includes("toolToFunction"), "TUI converts tools to OpenAI function format");
 ok(tuiSrc.includes("shell"), "shell tool available for directory/system commands");
 ok(tuiSrc.includes("truncated"), "agent truncates long tool output");
+
+// ─── 19. pire-reimpl Pipeline ──────────────────────────────────
+
+console.log("\n─ pire-reimpl Pipeline ─");
+
+const reimplSrc = fs.readFileSync(path.join(__dirname, "../src/pire-reimpl.ts"), "utf-8");
+
+ok(reimplSrc.includes("import { RE_TOOLS"), "pire-reimpl imports RE_TOOLS");
+ok(reimplSrc.includes("import { Type }"), "pire-reimpl imports typebox");
+ok(reimplSrc.includes("writeFileTool"), "pire-reimpl defines writeFileTool");
+ok(reimplSrc.includes("writeFileSync"), "writeFileTool uses writeFileSync");
+ok(reimplSrc.includes("toolToFunction"), "pire-reimpl has toolToFunction");
+ok(reimplSrc.includes("callLLM"), "pire-reimpl has callLLM");
+ok(reimplSrc.includes("stream: true"), "pire-reimpl uses streaming");
+ok(reimplSrc.includes("delta.tool_calls"), "pire-reimpl handles streaming tool calls");
+ok(reimplSrc.includes("delta.content"), "pire-reimpl handles streaming content");
+ok(reimplSrc.includes("MAX_TURNS"), "pire-reimpl has turn limit");
+ok(reimplSrc.includes("analysis.md"), "pire-reimpl writes analysis.md");
+ok(reimplSrc.includes("reimpl"), "pire-reimpl writes reimplementation");
+ok(reimplSrc.includes("WINEPREFIX"), "pire-reimpl mentions WINEPREFIX for wine");
+ok(reimplSrc.includes("decompile"), "pire-reimpl system prompt mentions decompile");
+
+// ─── 20. Decompile Tool ────────────────────────────────────────
+
+console.log("\n─ Decompile Tool ─");
+
+ok(src.includes("decompileTool"), "decompileTool defined");
+ok(src.includes('name: "decompile"'), "decompile tool has correct name");
+ok(src.includes("pdc"), "decompile tool uses r2 pdc command");
+ok(src.includes("decompileTool"), "decompileTool in RE_TOOLS");
+ok(src.includes("decompile:"), "probeTools checks decompile");
 
 // ─── Summary ───────────────────────────────────────────────────
 

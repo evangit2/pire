@@ -80,31 +80,68 @@ async function callLLM(config: LLMConfig, messages: ChatMessage[], tools?: objec
 		model: config.model,
 		messages,
 		tools: tools?.length ? tools : undefined,
-		max_tokens: 4096,
-		stream: false,
+		max_tokens: 8192,
+		stream: true,
 	});
 
 	const options: http.RequestOptions = {
 		method: "POST",
-		headers: { "Content-Type": "application/json", "Authorization": `Bearer ${config.apiKey}` },
+		headers: {
+			"Content-Type": "application/json",
+			"Authorization": `Bearer ${config.apiKey}`,
+		},
 	};
 
 	const doRequest = (): Promise<{ content: string | null; tool_calls?: ToolCall[] }> => new Promise((resolve, reject) => {
 		const client = url.protocol === "https:" ? https : http;
 		const req = client.request(url, options, (res) => {
-			let data = "";
-			res.on("data", (chunk) => (data += chunk));
+			if (res.statusCode && res.statusCode >= 500) { reject(new Error(`HTTP ${res.statusCode}`)); return; }
+
+			let content = "";
+			let toolCalls: { id: string; type: "function"; function: { name: string; arguments: string } }[] = [];
+			let buffer = "";
+
+			res.on("data", (chunk: Buffer) => {
+				buffer += chunk.toString();
+				const lines = buffer.split("\n");
+				buffer = lines.pop() || "";
+
+				for (const line of lines) {
+					const trimmed = line.trim();
+					if (!trimmed || !trimmed.startsWith("data: ")) continue;
+					const data = trimmed.slice(6);
+					if (data === "[DONE]") continue;
+
+					try {
+						const json = JSON.parse(data);
+						const delta = json.choices?.[0]?.delta;
+						if (!delta) continue;
+
+						if (delta.content) content += delta.content;
+						if (delta.tool_calls) {
+							for (const tc of delta.tool_calls) {
+								const idx = tc.index ?? 0;
+								if (!toolCalls[idx]) {
+									toolCalls[idx] = { id: tc.id || "", type: "function" as const, function: { name: "", arguments: "" } };
+								}
+								if (tc.id) toolCalls[idx].id = tc.id;
+								if (tc.function?.name) toolCalls[idx].function.name += tc.function.name;
+								if (tc.function?.arguments) toolCalls[idx].function.arguments += tc.function.arguments;
+							}
+						}
+					} catch { /* skip malformed */ }
+				}
+			});
+
 			res.on("end", () => {
-				if (res.statusCode && res.statusCode >= 500) { reject(new Error(`HTTP ${res.statusCode}`)); return; }
-				try {
-					const json = JSON.parse(data);
-					const msg = json.choices?.[0]?.message;
-					resolve({ content: msg?.content ?? msg?.reasoning ?? null, tool_calls: msg?.tool_calls });
-				} catch { reject(new Error(`Parse error: ${data.slice(0, 200)}`)); }
+				resolve({
+					content: content || null,
+					tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
+				});
 			});
 		});
 		req.on("error", reject);
-		req.setTimeout(120000, () => req.destroy(new Error("Timeout")));
+		req.setTimeout(180000, () => req.destroy(new Error("Timeout")));
 		req.write(body);
 		req.end();
 	});
@@ -185,6 +222,7 @@ You are an expert reverse engineer. Your goal is to FULLY reverse engineer a bin
 ## Key Rules
 - You have a shell tool — use it to run wine, gcc, diff, etc.
 - You have a write_file tool — use it to save source code
+- You have a decompile tool — use it for r2 pseudo-C decompilation (pdc) at any address
 - The original binary can be run with: WINEPREFIX=/home/evan/.wine64 wine ${binaryPath} <args>
 - Your reimplementation should be compiled with: gcc -o reimpl reimpl.c
 - Compare outputs: run both the original and your reimplementation with the same inputs

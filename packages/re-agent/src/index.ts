@@ -58,11 +58,12 @@ function pythonModule(name: string): boolean {
 	}
 }
 
-function run(cmd: string, opts: { timeout?: number; maxBuffer?: number } = {}): string {
+function run(cmd: string, opts: { timeout?: number; maxBuffer?: number; cwd?: string } = {}): string {
 	return execSync(cmd, {
 		encoding: "utf-8",
 		timeout: opts.timeout ?? 30000,
 		maxBuffer: opts.maxBuffer ?? 10 * 1024 * 1024,
+		cwd: opts.cwd,
 	});
 }
 
@@ -271,6 +272,20 @@ const r2Tool: AgentTool<{ path: string; command: string }> = {
 	}),
 	async execute(_id, params) {
 		return textResult(await r2Session.run(params.path, params.command));
+	},
+};
+
+// ─── r2 Pseudo-Decompiler ─────────────────────────────────────
+
+const decompileTool: AgentTool<{ path: string; address: string }> = {
+	name: "decompile",
+	description: "Decompile a function at an address using radare2's pdc (pseudo-C). Requires r2 with analysis (aaa) already run.",
+	parameters: Type.Object({
+		path: Type.String({ description: "Path to the binary" }),
+		address: Type.String({ description: "Function address (hex, e.g. 0x1400016b0)" }),
+	}),
+	async execute(_id, params) {
+		return textResult(await r2Session.run(params.path, `aaa; s ${params.address}; pdc`));
 	},
 };
 
@@ -622,6 +637,7 @@ export const RE_TOOLS: AgentTool<any>[] = [
 	hexdumpTool,
 	disasmFuncTool,
 	r2Tool,
+	decompileTool,
 	// Ghidra (native, crash-resilient)
 	ghidraStatus,
 	ghidraDecompile,
@@ -657,6 +673,7 @@ export function probeTools(): Record<string, boolean> {
 		readelf: !!which("readelf"),
 		hexdump: !!which("hexdump"),
 		r2: !!which("r2") || !!which("radare2"),
+		decompile: !!which("r2") || !!which("radare2"),
 		ghidra: ghidra.getStatus().alive,
 		binwalk: !!which("binwalk"),
 		lief: pythonModule("lief"),
@@ -753,7 +770,7 @@ Work in stages. Each stage builds on the previous. Don't skip ahead.
 
 export {
 	shellTool,
-	stringsTool, fileTool, objdumpTool, readelfTool, hexdumpTool, disasmFuncTool, r2Tool,
+	stringsTool, fileTool, objdumpTool, readelfTool, hexdumpTool, disasmFuncTool, r2Tool, decompileTool,
 	ghidraStatus, ghidraDecompile, ghidraListFunctions, ghidraRename, ghidraXrefs, ghidraStrings,
 	binwalkTool, liefTool, angrTool, capstoneTool, keystoneTool, unicornTool, yaraTool, fridaTool, gdbTool, volatilityTool,
 };
