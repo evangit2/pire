@@ -3,11 +3,12 @@
  * pire CLI entry point
  *
  * Usage:
- *   pire [binary]            — Start interactive RE TUI session
- *   pire --tools             — List available RE tools
- *   pire --skills            — List available RE skills
- *   pire --probe             — Probe system for installed tools
- *   pire --version           — Print version
+ *   pire                      — Start interactive chat session (no binary needed)
+ *   pire <binary>             — Start with a target binary loaded
+ *   pire --tools              — List available RE tools
+ *   pire --skills             — List available RE skills
+ *   pire --probe              — Probe system for installed tools
+ *   pire --version            — Print version
  */
 
 import { RE_TOOLS, RE_SYSTEM_PROMPT, probeTools } from "./index.js";
@@ -85,24 +86,29 @@ function showVersion() {
 
 const args = process.argv.slice(2);
 
-if (args.length === 0 || args[0] === "--help" || args[0] === "-h") {
-	console.log(`pire — Pi + Reverse Engineering
+if (args[0] === "--help" || args[0] === "-h") {
+	console.log(`pire — Reverse Engineering Agent
 
 Usage:
-  pire [binary]     Start interactive RE TUI session on a binary
-  pire --tools      List available RE tools
-  pire --skills     List available RE skills
-  pire --probe      Probe system for installed tools
-  pire --version    Print version
+  pire                      Start interactive chat session
+  pire <binary>             Start with a target binary loaded
+  pire --tools              List available RE tools
+  pire --skills             List available RE skills
+  pire --probe              Probe system for installed tools
+  pire --version            Print version
 
-TUI Commands:
-  :tools            List all tools
-  :probe            Re-probe system
-  :skills           List skills
-  :help             Show commands
-  :quit             Exit
-  <tool> <args>     Run a tool (e.g. "strings /bin/ls")
-  <shell cmd>       Pass-through to shell
+Chat Commands:
+  :tools                    List all tools
+  :probe                    Re-probe system
+  :skills                   List skills
+  :load <path>              Load a target binary
+  :target                   Show current target
+  :analyze                  Run guided analysis on target
+  :help                     Show commands
+  :quit                     Exit
+  <tool> <args>             Run a tool (e.g. "strings /bin/ls")
+  <shell cmd>               Pass-through to shell
+  Anything else             Chat with the RE agent
 `);
 	process.exit(0);
 }
@@ -122,11 +128,11 @@ switch (args[0]) {
 		showVersion();
 		break;
 	default:
-		if (args[0].startsWith("-")) {
+		if (args[0]?.startsWith("-")) {
 			console.error(`Unknown option: ${args[0]}`);
 			process.exit(1);
 		}
-		// Start TUI with optional binary target
+		// Start chat REPL — with optional binary target
 		const tui = new PireTUI(args[0]);
 		tui.start();
 		break;

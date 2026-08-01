@@ -106,7 +106,9 @@ ok(tuiSrc.includes("RE_TOOLS"), "TUI imports RE_TOOLS");
 ok(tuiSrc.includes("probeTools"), "TUI imports probeTools");
 ok(tuiSrc.includes("runQuickAnalysis"), "TUI runs quick analysis on target");
 ok(tuiSrc.includes("OutputLine"), "TUI has typed output lines");
-ok(tuiSrc.includes("scrollOffset"), "TUI supports scroll offset");
+ok(tuiSrc.includes(":load"), "TUI supports :load command for mid-session binary loading");
+ok(tuiSrc.includes(":target"), "TUI supports :target command");
+ok(tuiSrc.includes("No target loaded"), "TUI starts without requiring a binary");
 ok(!tuiSrc.includes("await import("), "no inline dynamic imports in TUI");
 
 // ─── 6. System Prompt ─────────────────────────────────────────

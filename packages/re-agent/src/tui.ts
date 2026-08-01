@@ -1,35 +1,33 @@
 /**
- * pire TUI — Lean RE session dashboard
+ * pire TUI — Chat-style RE agent REPL
  *
- * A minimal terminal UI for reverse engineering sessions. Not a full
- * coding agent TUI — just a focused workspace for binary analysis.
+ * A simple terminal chat interface. No split panes, no binary required.
+ * Just start typing — tools, shell commands, or natural language.
  *
  * Layout:
  *  ┌──────────────────────────────────────────────┐
  *  │ pire v0.2.0  │  target: /bin/ls  │  22 tools  │
- *  ├──────────────┬───────────────────────────────┤
- *  │ Tools        │  Output                        │
- *  │ ✓ strings    │                                │
- *  │ ✓ filetype   │  $ filetype /bin/ls            │
- *  │ ✓ r2         │  ELF 64-bit LSB shared object  │
- *  │ ✗ binwalk    │                                │
- *  │ ✓ capstone   │  $ strings /bin/ls | head       │
- *  │              │  /lib64/ld-linux-x86-64.so.2   │
- *  │              │  libc.so.6                     │
- *  ├──────────────┴───────────────────────────────┤
- *  │ > filetype /bin/ls                           │
+ *  ├──────────────────────────────────────────────┤
+ *  │ • pire v0.2.0 — Reverse Engineering Agent    │
+ *  │ • Target: /bin/ls                            │
+ *  │ • 18/23 tools available                      │
+ *  │ ⚙ filetype → ELF 64-bit LSB shared object    │
+ *  │                                              │
+ *  │ > strings /bin/ls                            │
+ *  │                                              │
  *  └──────────────────────────────────────────────┘
  *
  * Commands:
- *  <tab>         — Cycle focus (tools → output → input)
- *  <up>/<down>   — Scroll output
- *  :analyze      — Run guided multi-stage analysis on target
- *  :tools        — List all tools
- *  :probe        — Probe system
- *  :skills       — List skills
- *  :help         — Show commands
- *  :quit         — Exit
- *  <any tool>    — Run a tool: e.g. "strings /bin/ls"
+ *  :load <path>   — Load a target binary
+ *  :target        — Show current target
+ *  :analyze       — Run guided analysis on target
+ *  :tools         — List all tools
+ *  :probe         — Probe system
+ *  :skills        — List skills
+ *  :help          — Show commands
+ *  :quit          — Exit
+ *  <tool> <args>  — Run a tool: e.g. "strings /bin/ls"
+ *  <shell cmd>    — Pass-through to shell
  */
 
 import * as readline from "node:readline";
@@ -54,38 +52,28 @@ const C = {
 	blue: "\x1b[34m",
 	cyan: "\x1b[36m",
 	gray: "\x1b[90m",
-	bg: "\x1b[48;5;236m",
-	clear: "\x1b[2J\x1b[H",
-	clearLine: "\x1b[2K",
-	hideCursor: "\x1b[?25l",
-	showCursor: "\x1b[?25h",
 };
 
-interface OutputLine { text: string; kind: "cmd" | "out" | "err" | "info" | "tool" }
+interface OutputLine { text: string; kind: "cmd" | "out" | "err" | "info" | "tool" | "chat" }
 
 export class PireTUI {
 	private rl: readline.Interface;
 	private target: string;
 	private tools: Record<string, boolean> = {};
 	private output: OutputLine[] = [];
-	private scrollOffset = 0;
-	private input = "";
-	private focus: "input" | "tools" | "output" = "input";
-	private running = false;
 
 	constructor(target?: string) {
 		this.target = target ?? "";
 		this.rl = readline.createInterface({
 			input: process.stdin,
 			output: process.stdout,
-			terminal: false,
+			terminal: true,
 		});
 	}
 
 	async start() {
-		this.running = true;
 		this.push("info", `pire v${VERSION} — Reverse Engineering Agent`);
-		this.push("info", `Target: ${this.target || "(none)"}`);
+		this.push("info", `Type :help for commands, or just start chatting.`);
 
 		// Probe tools
 		this.push("info", "Probing system...");
@@ -95,7 +83,10 @@ export class PireTUI {
 		this.push("info", `${avail}/${total} tools available`);
 
 		if (this.target) {
+			this.push("info", `Target: ${this.target}`);
 			this.runQuickAnalysis();
+		} else {
+			this.push("info", `No target loaded. Use :load <path> to load a binary.`);
 		}
 
 		this.render();
@@ -108,8 +99,7 @@ export class PireTUI {
 		for (const line of text.split("\n")) {
 			this.output.push({ text: line, kind });
 		}
-		if (this.output.length > 1000) this.output = this.output.slice(-1000);
-		this.scrollOffset = 0;
+		if (this.output.length > 5000) this.output = this.output.slice(-5000);
 	}
 
 	private runQuickAnalysis() {
@@ -127,7 +117,7 @@ export class PireTUI {
 	/** Guided multi-stage analysis — runs triage automatically, then suggests next steps. */
 	private async runAnalysis() {
 		if (!this.target) {
-			this.push("err", "No target set. Start with: pire <binary>");
+			this.push("err", "No target loaded. Use :load <path> first.");
 			return;
 		}
 		const target = this.target;
@@ -135,7 +125,6 @@ export class PireTUI {
 		// Stage 1: Triage
 		this.push("info", "═══ Stage 1: Triage ═══");
 
-		// filetype
 		try {
 			const ft = execSync(`file "${target}"`, { encoding: "utf-8", timeout: 5000 }).trim();
 			this.push("tool", `filetype: ${ft}`);
@@ -143,7 +132,6 @@ export class PireTUI {
 			this.push("err", `filetype failed: ${e}`);
 		}
 
-		// strings (filtered for interesting content)
 		try {
 			const s = execSync(`strings -a -n 6 "${target}" 2>/dev/null | grep -iE '(error|usage|version|secret|password|key|license|flag|http|www|\\.com|\\.org)' | head -30`, { encoding: "utf-8", timeout: 10000 }).trim();
 			this.push("tool", `strings (interesting):\n${s || "(none found)"}`);
@@ -154,7 +142,6 @@ export class PireTUI {
 			} catch {}
 		}
 
-		// readelf — imports & sections
 		try {
 			const imports = execSync(`readelf -s "${target}" 2>/dev/null | grep -E 'FUNC|OBJECT' | grep -v UND | head -20`, { encoding: "utf-8", timeout: 5000 }).trim();
 			this.push("tool", `symbols:\n${imports || "(stripped)"}`);
@@ -167,7 +154,6 @@ export class PireTUI {
 		// Stage 2: Structure
 		this.push("info", "═══ Stage 2: Structure ═══");
 
-		// Find function boundaries in .text
 		try {
 			const disasm = execSync(`objdump -d "${target}" 2>/dev/null`, { encoding: "utf-8", timeout: 15000 });
 			const funcStarts: string[] = [];
@@ -203,15 +189,20 @@ export class PireTUI {
 		}
 
 		if (cmd === ":help" || cmd === ":h") {
-			this.push("info", "Commands: :analyze :tools :probe :skills :help :quit");
+			this.push("info", "Commands:");
+			this.push("info", "  :load <path>    Load a target binary");
+			this.push("info", "  :target         Show current target");
+			this.push("info", "  :analyze        Run guided analysis on target");
+			this.push("info", "  :tools          List all tools");
+			this.push("info", "  :probe          Re-probe system");
+			this.push("info", "  :skills         List skills");
+			this.push("info", "  :help           Show this help");
+			this.push("info", "  :quit           Exit");
+			this.push("info", "");
 			this.push("info", "Or type a tool name + args, e.g: strings /bin/ls");
 			this.push("info", "  disasm_func <path> <addr> — extract a function");
-			this.render();
-			return;
-		}
-
-		if (cmd === ":analyze") {
-			await this.runAnalysis();
+			this.push("info", "");
+			this.push("info", "Anything else is passed to the shell.");
 			this.render();
 			return;
 		}
@@ -230,6 +221,33 @@ export class PireTUI {
 			for (const [name, avail] of Object.entries(this.tools)) {
 				this.push("info", `  ${avail ? "✓" : "✗"} ${name}`);
 			}
+			this.render();
+			return;
+		}
+
+		if (cmd === ":target") {
+			this.push("info", `Target: ${this.target || "(none)"}`);
+			this.render();
+			return;
+		}
+
+		if (cmd.startsWith(":load ")) {
+			const path = cmd.slice(6).trim();
+			try {
+				const ft = execSync(`file "${path}"`, { encoding: "utf-8", timeout: 5000 }).trim();
+				this.target = path;
+				this.push("info", `Target loaded: ${path}`);
+				this.push("tool", `filetype → ${ft}`);
+				this.runQuickAnalysis();
+			} catch (e) {
+				this.push("err", `Failed to load: ${e instanceof Error ? e.message : e}`);
+			}
+			this.render();
+			return;
+		}
+
+		if (cmd === ":analyze") {
+			await this.runAnalysis();
 			this.render();
 			return;
 		}
@@ -263,7 +281,6 @@ export class PireTUI {
 				const schema = tool.parameters;
 				const props = (schema as { properties?: Record<string, unknown> }).properties ?? {};
 				const keys = Object.keys(props);
-				// Map positional args to tool parameters
 				const args = parts.slice(1);
 				for (let i = 0; i < keys.length && i < args.length; i++) {
 					const key = keys[i];
@@ -293,87 +310,35 @@ export class PireTUI {
 
 	private render() {
 		const w = Math.min(process.stdout.columns || 80, 120);
-		const h = process.stdout.rows || 24;
-		const lines: string[] = [];
 
-		// Header bar
-		const targetStr = this.target ? `target: ${this.target}` : "no target";
-		const toolCount = `${RE_TOOLS.length} tools`;
-		const headerLeft = `${C.bold}pire v${VERSION}${C.reset}`;
-		const headerMid = `${C.dim}${targetStr}${C.reset}`;
-		const headerRight = `${C.dim}${toolCount}${C.reset}`;
-		const padLen = Math.max(0, w - targetStr.length - toolCount.length - 12);
-		lines.push(`${headerLeft}  ${C.gray}${"─".repeat(Math.floor(padLen / 2))}${C.reset}  ${headerMid}  ${C.gray}${"─".repeat(Math.ceil(padLen / 2))}${C.reset}  ${headerRight}`);
+		// Print any new output lines since last render
+		const prefixes: Record<OutputLine["kind"], string> = {
+			cmd: `${C.cyan}» ${C.reset}`,
+			out: `${C.dim}  ${C.reset}`,
+			err: `${C.red}! ${C.reset}`,
+			info: `${C.blue}• ${C.reset}`,
+			tool: `${C.green}⚙ ${C.reset}`,
+			chat: `${C.bold}> ${C.reset}`,
+		};
 
-		// Tools sidebar (left column, 20 chars wide)
-		const toolLines: string[] = [];
-		toolLines.push(`${C.bold}${C.dim}Tools${C.reset}`);
-		for (const [name, avail] of Object.entries(this.tools)) {
-			const mark = avail ? `${C.green}✓${C.reset}` : `${C.gray}✗${C.reset}`;
-			const nameStr = avail ? name : `${C.gray}${name}${C.reset}`;
-			toolLines.push(` ${mark} ${nameStr}`);
+		for (const line of this.output) {
+			const prefix = prefixes[line.kind] ?? "";
+			process.stdout.write(prefix + line.text + C.reset + "\n");
 		}
+		// Clear rendered output
+		this.output = [];
 
-		// Output area (right column)
-		const outputLines: string[] = [];
-		const outputHeight = h - 4 - Math.max(0, toolLines.length - (h - 4));
-		const visibleOutput = this.output.slice(-(outputHeight));
-
-		for (const line of visibleOutput) {
-			const prefix = {
-				cmd: `${C.cyan}» ${C.reset}`,
-				out: `${C.dim}  ${C.reset}`,
-				err: `${C.red}! ${C.reset}`,
-				info: `${C.blue}• ${C.reset}`,
-				tool: `${C.green}⚙ ${C.reset}`,
-			}[line.kind];
-			const wrapped = this.wrap(prefix + line.text, w - 22);
-			outputLines.push(...wrapped);
-		}
-
-		// Build body with sidebar
-		const bodyHeight = h - 3; // header + input + border
-		const leftWidth = 20;
-		for (let i = 0; i < bodyHeight; i++) {
-			const left = (toolLines[i] ?? "").padEnd(leftWidth).slice(0, leftWidth);
-			const right = outputLines[i] ?? "";
-			lines.push(`${left}${C.gray}│${C.reset} ${right}`);
-		}
-
-		// Input line
-		lines.push(`${C.gray}${"─".repeat(w)}${C.reset}`);
-		lines.push(`${C.bold}> ${C.reset}${this.input}${C.dim}█${C.reset}`);
-
-		// Render
-		process.stdout.write(C.clear);
-		process.stdout.write(lines.join("\n"));
-		process.stdout.write(`\r`);
-	}
-
-	private wrap(text: string, width: number): string[] {
-		// Strip ANSI for width calculation but keep for display
-		const stripped = text.replace(/\x1b\[[0-9;]*m/g, "");
-		if (stripped.length <= width) return [text];
-		const lines: string[] = [];
-		let current = text;
-		while (current) {
-			const strippedCurrent = current.replace(/\x1b\[[0-9;]*m/g, "");
-			if (strippedCurrent.length <= width) { lines.push(current); break; }
-			// Find a break point
-			let breakAt = width;
-			const spaceIdx = strippedCurrent.lastIndexOf(" ", width);
-			if (spaceIdx > 0) breakAt = spaceIdx;
-			lines.push(current.slice(0, breakAt));
-			current = current.slice(breakAt).trimStart();
-		}
-		return lines;
+		// Show prompt
+		const targetStr = this.target ? `${C.dim}${this.target}${C.reset}` : "";
+		process.stdout.write(`${C.bold}${C.green}pire${C.reset}${targetStr ? ` ${targetStr}` : ""} > `);
 	}
 
 	stop() {
 		this.running = false;
 		this.rl.close();
-		process.stdout.write(C.showCursor + C.reset);
-		process.stdout.write("\n");
+		process.stdout.write(C.reset + "\n");
 		process.exit(0);
 	}
+
+	private running = false;
 }
