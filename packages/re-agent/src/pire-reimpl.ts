@@ -36,7 +36,7 @@ function loadLLMConfig(): LLMConfig | null {
 			const content = readFileSync(path, "utf-8");
 			const baseUrl = content.match(/base_url:\s*(.+)/)?.[1]?.trim();
 			const apiKey = content.match(/api_key:\s*(.+)/)?.[1]?.trim();
-			const model = content.match(/^\s*default:\s*(.+)/m)?.[1]?.trim();
+			const model = content.match(/^model:\s*(.+)/m)?.[1]?.trim();
 			if (baseUrl && apiKey && model) return { baseUrl: baseUrl.replace(/\/$/, ""), apiKey, model };
 		} catch {}
 	}
@@ -189,8 +189,7 @@ async function main() {
 		process.exit(1);
 	}
 
-	// Use non-thinking model for speed (thinking model takes too long per turn)
-	const model = process.env.PIRE_MODEL || "gpt-4o";
+	const model = process.env.PIRE_MODEL || config.model;
 	config.model = model;
 
 	console.log(`pire-reimpl — Full RE + Reimplementation`);
