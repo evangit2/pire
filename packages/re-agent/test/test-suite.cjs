@@ -341,6 +341,10 @@ ok(reimplSrc.includes("analysis.md"), "pire-reimpl writes analysis.md");
 ok(reimplSrc.includes("reimpl"), "pire-reimpl writes reimplementation");
 ok(reimplSrc.includes("WINEPREFIX"), "pire-reimpl mentions WINEPREFIX for wine");
 ok(reimplSrc.includes("decompile"), "pire-reimpl system prompt mentions decompile");
+ok(reimplSrc.includes("SIMD"), "pire-reimpl has SIMD/SSE handling guidance");
+ok(reimplSrc.includes("Time Management"), "pire-reimpl has time management guidance");
+ok(reimplSrc.includes("by turn 25"), "pire-reimpl sets analysis.md deadline");
+ok(reimplSrc.includes("by turn 30"), "pire-reimpl sets reimpl.c deadline");
 
 // ─── 20. Decompile Tool ────────────────────────────────────────
 

@@ -212,12 +212,19 @@ async function main() {
 You are an expert reverse engineer. Your goal is to FULLY reverse engineer a binary and produce a working open-source reimplementation.
 
 ## Workflow
-1. **Triage**: Run filetype, strings, readelf/objdump to understand the binary
-2. **Deep Analysis**: Disassemble key functions, understand the algorithm
-3. **Document**: Write your findings to a file called analysis.md
-4. **Reimplement**: Write a C source file that replicates the binary's behavior
-5. **Test**: Compile your reimplementation and compare its output against the original binary
-6. **Iterate**: If tests fail, fix your code and retest
+1. **Triage** (turns 1-5): Run filetype, strings, r2 to understand the binary
+2. **Black-box testing** (turns 5-15): Run the binary with various inputs, observe outputs
+3. **Deep Analysis** (turns 10-25): Disassemble key functions, understand the algorithm
+4. **Write analysis.md** (by turn 25): Document your findings
+5. **Write reimpl.c** (by turn 30): Write a C source file that replicates the binary's behavior
+6. **Test** (turns 30+): Compile and compare outputs against the original binary
+7. **Iterate** (remaining turns): Fix and retest
+
+## CRITICAL: Time Management
+- You MUST write analysis.md by turn 25 and reimpl.c by turn 30
+- Do NOT spend more than 15 turns on black-box testing
+- Start writing code early — you can always fix it later with more testing
+- A working reimplementation with minor bugs is better than perfect analysis with no code
 
 ## Key Rules
 - You have a shell tool — use it to run wine, gcc, diff, etc.
@@ -226,8 +233,15 @@ You are an expert reverse engineer. Your goal is to FULLY reverse engineer a bin
 - The original binary can be run with: WINEPREFIX=/home/evan/.wine64 wine ${binaryPath} <args>
 - Your reimplementation should be compiled with: gcc -o reimpl reimpl.c
 - Compare outputs: run both the original and your reimplementation with the same inputs
-- Be thorough — understand every check and branch before writing code
 - Available tools: ${toolsAvail}
+
+## SIMD/SSE Warning
+- If you see xmm/movdqu/punpck instructions, the compiler auto-vectorized a loop
+- Don't try to reverse individual SSE shuffles — instead:
+  1. Identify the high-level operation (it's usually a loop over bytes/ints)
+  2. Write a simple C loop version and test it against the binary
+  3. Use black-box testing (input→output) to verify, not instruction-level tracing
+- Focus on behavior, not instruction-for-instruction matching
 
 ## Output
 Write your reimplementation to: ${join(dirname(binaryPath), "reimpl.c")}
@@ -252,7 +266,9 @@ Go!`;
 		{ role: "user", content: userMessage },
 	];
 
-	const MAX_TURNS = 50;
+	const MAX_TURNS = 80;
+	const reimplPath = join(dirname(binaryPath), "reimpl.c");
+	const analysisPath = join(dirname(binaryPath), "analysis.md");
 
 	for (let turn = 0; turn < MAX_TURNS; turn++) {
 		console.log(`\n--- Turn ${turn + 1}/${MAX_TURNS} ---`);
@@ -265,7 +281,57 @@ Go!`;
 			break;
 		}
 
+		// ─── Deadline enforcement ───────────────────────────────
+		// Inject reminders to force the agent to start writing
+		// (runs every turn, before tool processing, so it actually fires)
+		const analysisExists = existsSync(analysisPath);
+		const reimplExists = existsSync(reimplPath);
+		if (turn === 24 && !analysisExists) {
+			const msg = "⚠️ DEADLINE: You are at turn 25. You MUST write analysis.md NOW using write_file. Stop testing and write your analysis immediately.";
+			messages.push({ role: "user", content: msg });
+			console.log(`  ${msg}`);
+		}
+		if (turn === 29 && !reimplExists) {
+			const msg = "⚠️ DEADLINE: You are at turn 30. You MUST write reimpl.c NOW using write_file. Write your best C reimplementation immediately — you can test and fix it in remaining turns.";
+			messages.push({ role: "user", content: msg });
+			console.log(`  ${msg}`);
+		}
+		if (turn === 39 && !reimplExists) {
+			const msg = "⚠️ URGENT: You are at turn 40. You have NOT written reimpl.c yet. Write it NOW. Do not run any more shell commands. Call write_file with your C source code immediately.";
+			messages.push({ role: "user", content: msg });
+			console.log(`  ${msg}`);
+		}
+		if (turn === 49 && !reimplExists) {
+			const msg = "⚠️ FINAL DEADLINE: You are at turn 50. Write reimpl.c IMMEDIATELY. Even if imperfect, a partial reimplementation is better than none. Use write_file now.";
+			messages.push({ role: "user", content: msg });
+			console.log(`  ${msg}`);
+		}
+		if (turn === 69 && !reimplExists) {
+			const msg = "⚠️ LAST CHANCE: Turn 70. Write reimpl.c RIGHT NOW with write_file. Do not call any other tool.";
+			messages.push({ role: "user", content: msg });
+			console.log(`  ${msg}`);
+		}
+
 		if (resp.tool_calls && resp.tool_calls.length > 0) {
+			// ─── Hard deadline: block non-write_file calls past turn 40 ──
+			if (turn >= 39 && !reimplExists) {
+				const nonWriteCalls = resp.tool_calls.filter((tc: any) => tc.function.name !== "write_file");
+				if (nonWriteCalls.length > 0) {
+					for (const tc of nonWriteCalls) {
+						messages.push({ role: "tool", tool_call_id: tc.id, content: "BLOCKED: You are past the write deadline (turn 40). You MUST call write_file to write reimpl.c before doing anything else. No other tools are allowed." });
+					}
+					// Still allow write_file calls through
+					const writeCalls = resp.tool_calls.filter((tc: any) => tc.function.name === "write_file");
+					if (writeCalls.length === 0) {
+						messages.push({ role: "assistant", content: resp.content, tool_calls: resp.tool_calls });
+						console.log("  ⚠️ Blocked non-write_file calls (past deadline)");
+						continue;
+					}
+					// Process only the write_file calls
+					resp.tool_calls = writeCalls;
+				}
+			}
+
 			for (const tc of resp.tool_calls) {
 				let args: Record<string, unknown> = {};
 				try { args = JSON.parse(tc.function.arguments); } catch {}
@@ -314,8 +380,6 @@ Go!`;
 	}
 
 	// Check results
-	const reimplPath = join(dirname(binaryPath), "reimpl.c");
-	const analysisPath = join(dirname(binaryPath), "analysis.md");
 	console.log("\n=== Results ===");
 	console.log(`Analysis: ${existsSync(analysisPath) ? "✓ " + analysisPath : "✗ not written"}`);
 	console.log(`Reimplementation: ${existsSync(reimplPath) ? "✓ " + reimplPath : "✗ not written"}`);
