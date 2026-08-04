@@ -17,7 +17,7 @@
 #           Windows (Git Bash/MSYS2)
 # ============================================================================
 
-set -e
+set +e
 
 # ── Helpers ───────────────────────────────────────────────────
 # Use printf with escape codes in the format string (not echo -e,
@@ -300,19 +300,30 @@ pkg_install() {
 }
 
 pip_install() {
-	# Try python3 -m pip first (most reliable), then pip3, then pip
-	# stdin redirected from /dev/null so pip doesn't eat the rest of
-	# the script when run via `curl | sh`
-	if python3 -m pip --version >/dev/null 2>&1; then
-		python3 -m pip install --user -q "$@" </dev/null 2>/dev/null || log_warn "pip install failed: $*"
-	elif has pip3; then
-		pip3 install --user -q "$@" </dev/null 2>/dev/null || log_warn "pip install failed: $*"
-	elif has pip; then
-		pip install --user -q "$@" </dev/null 2>/dev/null || log_warn "pip install failed: $*"
+	# Find a python3 that actually has pip. The first python3 on PATH
+	# might be a venv without pip (e.g. Hermes, poetry, etc).
+	PIPRE_PY=""
+	if [ -x /usr/bin/python3 ] && /usr/bin/python3 -m pip --version >/dev/null 2>&1; then
+		PIPRE_PY="/usr/bin/python3"
+	elif command -v python3 >/dev/null 2>&1 && python3 -m pip --version >/dev/null 2>&1; then
+		PIPRE_PY="python3"
+	elif command -v python >/dev/null 2>&1 && python -m pip --version >/dev/null 2>&1; then
+		PIPRE_PY="python"
+	fi
+
+	if [ -n "$PIPRE_PY" ]; then
+		$PIPRE_PY -m pip install --user -q "$@" </dev/null 2>/dev/null || log_warn "pip install failed: $*"
 	else
 		# Try to bootstrap pip via ensurepip, then retry
-		if python3 -m ensurepip --user </dev/null >/dev/null 2>&1; then
-			python3 -m pip install --user -q "$@" </dev/null 2>/dev/null || log_warn "pip install failed: $*"
+		PIPRE_BS=""
+		for p in /usr/bin/python3 python3 python; do
+			if command -v "$p" >/dev/null 2>&1 && "$p" -m ensurepip --user </dev/null >/dev/null 2>&1; then
+				PIPRE_BS="$p"
+				break
+			fi
+		done
+		if [ -n "$PIPRE_BS" ]; then
+			"$PIPRE_BS" -m pip install --user -q "$@" </dev/null 2>/dev/null || log_warn "pip install failed: $*"
 		else
 			log_warn "pip not found, skipping: $*"
 		fi
@@ -328,8 +339,8 @@ case "$OS" in
 		sudo apt-get update -qq </dev/null >/dev/null 2>&1
 		log_step "Installing core packages..."
 		pkg_install nodejs npm git build-essential radare2 binutils file python3-pip python3-venv
-		# Bootstrap pip if apt didn't provide it
-		python3 -m pip --version >/dev/null 2>&1 || python3 -m ensurepip --user </dev/null >/dev/null 2>&1
+		# Bootstrap pip if apt didn't provide it (use system python, not venv)
+		/usr/bin/python3 -m pip --version >/dev/null 2>&1 || /usr/bin/python3 -m ensurepip --user </dev/null >/dev/null 2>&1
 		;;
 	fedora)
 		log_step "Installing core packages..."
