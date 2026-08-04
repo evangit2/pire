@@ -20,7 +20,7 @@ jobs:
       - name: Install build deps
         run: |
           brew install cmake
-          python3 -m pip install --upgrade pip wheel setuptools
+          python3 -m pip install --user --break-system-packages --upgrade pip wheel setuptools
 
       - name: Build wheel
         run: |
