@@ -207,7 +207,7 @@ if (fs.existsSync(pireConfig)) {
 console.log("\n─ Package Config ─");
 
 const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf-8"));
-ok(pkg.version === "0.8.0", `version is 0.8.0 (got ${pkg.version})`);
+ok(pkg.version === "0.83.0", `version is 0.83.0 (got ${pkg.version})`);
 ok(pkg.bin && pkg.bin.pire, "has pire bin entry");
 ok(pkg.scripts.test.includes("test-suite.cjs"), "test script runs test-suite");
 ok(pkg.scripts.test.includes("test-models.cjs"), "test script runs test-models");
@@ -425,16 +425,16 @@ ok(tuiSrc.includes("loadedTarget"), "TUI tracks loaded target");
 ok(tuiSrc.includes("MAX_TURNS = 40"), "TUI has 40 turn limit");
 ok(tuiSrc.includes("onContent"), "TUI streams content to stdout");
 ok(tuiSrc.includes("VERSION"), "TUI has version constant");
-ok(tuiSrc.includes("0.8.0"), "TUI version is 0.8.0");
+ok(tuiSrc.includes("0.83.0"), "TUI version is 0.83.0");
 
 // ─── 25. Version Alignment ────────────────────────────────────
 
 console.log("\n─ Version Alignment ─");
 
 const rootPkg = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "..", "..", "package.json"), "utf-8"));
-ok(rootPkg.version === "0.8.0", `root package.json version is 0.8.0 (got ${rootPkg.version})`);
-ok(pkg.version === "0.8.0", `re-agent package.json version is 0.8.0 (got ${pkg.version})`);
-ok(tuiSrc.includes("0.8.0"), `tui.ts VERSION is 0.8.0`);
+ok(rootPkg.version === "0.83.0", `root package.json version is 0.83.0 (got ${rootPkg.version})`);
+ok(pkg.version === "0.83.0", `re-agent package.json version is 0.83.0 (got ${pkg.version})`);
+ok(tuiSrc.includes("0.83.0"), `tui.ts VERSION is 0.83.0`);
 
 // ─── 26. Skills Not Gitignored ────────────────────────────────
 
