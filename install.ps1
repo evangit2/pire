@@ -164,7 +164,7 @@ if ($All) {
     Write-Host "  Advanced tools (optional):"
     Write-Host ""
 
-    if (Prompt-YesNo "  Ghidra (decompiler — ~400MB download)" "n") {
+    if (Prompt-YesNo "  Ghidra (decompiler — ~400MB download)" "y") {
         $InstallGhidra = $true
         Write-Host "    [OK] Ghidra" -ForegroundColor Green
     } else { Write-Host "    [X] Ghidra" -ForegroundColor Red }

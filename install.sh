@@ -229,7 +229,7 @@ else
 	echo "  Advanced tools (optional):"
 	echo ""
 
-	if prompt_yesno "  Ghidra (decompiler — ~400MB download)" "n"; then
+	if prompt_yesno "  Ghidra (decompiler — ~400MB download)" "y"; then
 		INSTALL_GHIDRA=1
 		printf '    \033[0;32m✓\033[0m Ghidra\n'
 	else
