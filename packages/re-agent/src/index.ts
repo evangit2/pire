@@ -20,7 +20,21 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // ─── Platform helpers ──────────────────────────────────────────
 const IS_WIN = process.platform === "win32";
 const DEVNULL = IS_WIN ? "2>nul" : "2>/dev/null";
-const PYTHON = IS_WIN ? "python" : "python3";
+// Prefer Homebrew Python on macOS (Xcode CLT Python has ancient pip)
+function findPython(): string {
+	if (IS_WIN) return "python";
+	const candidates = process.platform === "darwin"
+		? ["/opt/homebrew/bin/python3", "/usr/local/bin/python3", "python3"]
+		: ["python3"];
+	for (const p of candidates) {
+		try {
+			require("child_process").execFileSync(p, ["--version"], { stdio: "ignore" });
+			return p;
+		} catch {}
+	}
+	return "python3";
+}
+const PYTHON = findPython();
 const NULL_DEVICE = IS_WIN ? "NUL" : "/dev/null";
 
 // ─── Types ─────────────────────────────────────────────────────

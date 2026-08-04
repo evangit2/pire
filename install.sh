@@ -375,16 +375,22 @@ run_with_timeout() {
 
 pip_install() {
 	PIPRE_PY=""
-	if [ -x /usr/bin/python3 ] && /usr/bin/python3 -m pip --version >/dev/null 2>&1; then
-		PIPRE_PY="/usr/bin/python3"
-	elif command -v python3 >/dev/null 2>&1 && python3 -m pip --version >/dev/null 2>&1; then
-		PIPRE_PY="python3"
-	elif command -v python >/dev/null 2>&1 && python -m pip --version >/dev/null 2>&1; then
-		PIPRE_PY="python"
-	fi
+	# On macOS, prefer Homebrew Python over Xcode CLT Python.
+	# Xcode CLT ships an ancient pip that doesn't support --break-system-packages.
+	for p in \
+		/opt/homebrew/bin/python3 \
+		/usr/local/bin/python3 \
+		/usr/bin/python3 \
+		python3 python
+	do
+		if command -v "$p" >/dev/null 2>&1 && "$p" -m pip --version >/dev/null 2>&1; then
+			PIPRE_PY="$p"
+			break
+		fi
+	done
 
 	if [ -z "$PIPRE_PY" ]; then
-		for p in /usr/bin/python3 python3 python; do
+		for p in /opt/homebrew/bin/python3 /usr/local/bin/python3 /usr/bin/python3 python3 python; do
 			if command -v "$p" >/dev/null 2>&1 && "$p" -m ensurepip --user </dev/null >/dev/null 2>&1; then
 				PIPRE_PY="$p"
 				break
@@ -396,10 +402,16 @@ pip_install() {
 		return 1
 	fi
 
+	# Export the resolved Python path so other functions use the same one
+	PIRE_PYTHON="$PIPRE_PY"
+	export PIRE_PYTHON
+
 	# --break-system-packages is a pip flag (not OS-specific).
-	# Homebrew Python on macOS is also PEP 668 externally-managed.
-	# Always include it; pip ignores it if there's no EXTERNALLY-MANAGED file.
-	PIPRE_FLAGS="--user --break-system-packages"
+	# Only use it if this pip actually supports it (pip >= 23.0).
+	PIPRE_FLAGS="--user"
+	if "$PIPRE_PY" -m pip install --help 2>/dev/null | grep -q -- '--break-system-packages'; then
+		PIPRE_FLAGS="$PIPRE_FLAGS --break-system-packages"
+	fi
 
 	# Write output to a temp file, NOT $(...) — command substitution
 	# uses a pipe; if child processes (gcc, cc, ld) survive the timeout,
@@ -673,7 +685,7 @@ install_frida() {
 		debian) pkg_install python3-frida 2>/dev/null ;;
 		arch)   pkg_install frida-tools 2>/dev/null ;;
 	esac
-	if has frida || has frida-ps || python3 -c "import frida" 2>/dev/null; then
+	if has frida || has frida-ps || "${PIRE_PYTHON:-python3}" -c "import frida" 2>/dev/null; then
 		echo "$ST_DONE" > "$TMPDIR_PIRE/frida.status"
 	else
 		echo "$ST_FAILED" > "$TMPDIR_PIRE/frida.status"
@@ -794,7 +806,7 @@ install_yara() {
 install_volatility() {
 	echo "$ST_RUNNING" > "$TMPDIR_PIRE/volatility.status"
 	pip_install volatility3
-	if command -v vol 2>/dev/null || command -v vol3 2>/dev/null || python3 -c "import volatility3" 2>/dev/null || python -c "import volatility3" 2>/dev/null; then
+	if command -v vol 2>/dev/null || command -v vol3 2>/dev/null || "${PIRE_PYTHON:-python3}" -c "import volatility3" 2>/dev/null; then
 		echo "$ST_DONE" > "$TMPDIR_PIRE/volatility.status"
 	else
 		echo "$ST_FAILED" > "$TMPDIR_PIRE/volatility.status"
@@ -831,7 +843,9 @@ install_python_tools() {
 	fi
 	# angr is heavy — try binary wheel first, fall back to source
 	pip_install "angr" 2>/dev/null || true
-	if python3 -c "import capstone" 2>/dev/null || python -c "import capstone" 2>/dev/null; then
+	# Verify using the same Python that pip_install selected
+	VERIFY_PY="${PIRE_PYTHON:-python3}"
+	if "$VERIFY_PY" -c "import capstone" 2>/dev/null; then
 		echo "$ST_DONE" > "$TMPDIR_PIRE/python_tools.status"
 	else
 		echo "$ST_FAILED" > "$TMPDIR_PIRE/python_tools.status"
