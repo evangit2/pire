@@ -396,12 +396,10 @@ pip_install() {
 		return 1
 	fi
 
-	# Determine pip flags — --break-system-packages is only valid on
-	# Debian/Ubuntu (PEP 668). macOS and other platforms reject it.
-	PIPRE_FLAGS="--user"
-	if [ "$OS" = "debian" ] || [ "$OS" = "fedora" ] || [ "$OS" = "arch" ] || [ "$OS" = "suse" ]; then
-		PIPRE_FLAGS="--user --break-system-packages"
-	fi
+	# --break-system-packages is a pip flag (not OS-specific).
+	# Homebrew Python on macOS is also PEP 668 externally-managed.
+	# Always include it; pip ignores it if there's no EXTERNALLY-MANAGED file.
+	PIPRE_FLAGS="--user --break-system-packages"
 
 	# Write output to a temp file, NOT $(...) — command substitution
 	# uses a pipe; if child processes (gcc, cc, ld) survive the timeout,
@@ -428,15 +426,13 @@ pip_install() {
 		rm -f "$PIPRE_LOG" 2>/dev/null
 		return 0
 	fi
-	# Fallback: try without --break-system-packages
-	if [ "$PIPRE_FLAGS" != "--user" ]; then
-		run_with_timeout "$PIPRE_PY" -m pip install --user "$@" </dev/null >"$PIPRE_LOG" 2>&1
-		PIPRE_RC=$?
-		if [ $PIPRE_RC -eq 0 ]; then
-			grep -v "already satisfied" "$PIPRE_LOG" | tail -3
-			rm -f "$PIPRE_LOG" 2>/dev/null
-			return 0
-		fi
+	# Fallback: try system-wide (without --user)
+	run_with_timeout "$PIPRE_PY" -m pip install --break-system-packages "$@" </dev/null >"$PIPRE_LOG" 2>&1
+	PIPRE_RC=$?
+	if [ $PIPRE_RC -eq 0 ]; then
+		grep -v "already satisfied" "$PIPRE_LOG" | tail -3
+		rm -f "$PIPRE_LOG" 2>/dev/null
+		return 0
 	fi
 	tail -3 "$PIPRE_LOG" 2>/dev/null
 	rm -f "$PIPRE_LOG" 2>/dev/null
