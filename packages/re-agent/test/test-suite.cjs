@@ -89,7 +89,11 @@ ok(!cliSrc.includes("--mcp"), "CLI no longer has --mcp flag");
 ok(cliSrc.includes("--tools"), "CLI has --tools flag");
 ok(cliSrc.includes("--skills"), "CLI has --skills flag");
 ok(cliSrc.includes("PireTUI"), "CLI imports PireTUI");
-ok(cliSrc.includes("tui.start()"), "CLI starts TUI for binary arg");
+ok(cliSrc.includes("PireCLI"), "CLI imports PireCLI");
+ok(cliSrc.includes("tui.start()"), "CLI starts TUI by default");
+ok(cliSrc.includes("cli.start()"), "CLI starts CLI mode with -cli flag");
+ok(cliSrc.includes("-cli"), "CLI has -cli flag");
+ok(cliSrc.includes("useCliMode"), "CLI tracks useCliMode flag");
 ok(cliSrc.includes(":quit"), "CLI help mentions :quit");
 
 // ─── 5. TUI ────────────────────────────────────────────────────
@@ -97,6 +101,7 @@ ok(cliSrc.includes(":quit"), "CLI help mentions :quit");
 console.log("\n─ TUI ─");
 
 ok(tuiSrc.includes("class PireTUI"), "PireTUI class exists");
+ok(tuiSrc.includes("class PireCLI"), "PireCLI class exists (CLI-only mode)");
 ok(tuiSrc.includes("render()"), "TUI has render method");
 ok(tuiSrc.includes("handleInput"), "TUI handles input");
 ok(tuiSrc.includes(":tools"), "TUI has :tools command");
@@ -104,6 +109,7 @@ ok(tuiSrc.includes(":probe"), "TUI has :probe command");
 ok(tuiSrc.includes(":skills"), "TUI has :skills command");
 ok(tuiSrc.includes(":help"), "TUI has :help command");
 ok(tuiSrc.includes(":quit"), "TUI has :quit command");
+ok(tuiSrc.includes(":clear"), "TUI has :clear command");
 ok(tuiSrc.includes("RE_TOOLS"), "TUI imports RE_TOOLS");
 ok(tuiSrc.includes("probeTools"), "TUI imports probeTools");
 ok(tuiSrc.includes("agentLoop"), "TUI has agentLoop for autonomous tool calling");
@@ -112,6 +118,10 @@ ok(tuiSrc.includes("toolToFunction"), "TUI converts tools to function schemas");
 ok(tuiSrc.includes("callLLM"), "TUI calls LLM with tools");
 ok(tuiSrc.includes("Tell me what you need"), "TUI starts with chat prompt, no binary required");
 ok(!tuiSrc.includes("await import("), "no inline dynamic imports in TUI");
+ok(tuiSrc.includes("scrollOffset"), "TUI supports scrollback navigation");
+ok(tuiSrc.includes("PgUp") || tuiSrc.includes("Page Up") || tuiSrc.includes("0x35"), "TUI handles Page Up key");
+ok(tuiSrc.includes("PgDn") || tuiSrc.includes("Page Down") || tuiSrc.includes("0x36"), "TUI handles Page Down key");
+ok(tuiSrc.includes("split-pane") || tuiSrc.includes("sidebar") || tuiSrc.includes("Tools"), "TUI has tools sidebar");
 
 // ─── 6. System Prompt ─────────────────────────────────────────
 
@@ -207,7 +217,7 @@ if (fs.existsSync(pireConfig)) {
 console.log("\n─ Package Config ─");
 
 const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf-8"));
-ok(pkg.version === "0.84.0", `version is 0.84.0 (got ${pkg.version})`);
+ok(pkg.version === "0.85.0", `version is 0.85.0 (got ${pkg.version})`);
 ok(pkg.bin && pkg.bin.pire, "has pire bin entry");
 ok(pkg.scripts.test.includes("test-suite.cjs"), "test script runs test-suite");
 ok(pkg.scripts.test.includes("test-models.cjs"), "test script runs test-models");
@@ -425,16 +435,16 @@ ok(tuiSrc.includes("loadedTarget"), "TUI tracks loaded target");
 ok(tuiSrc.includes("MAX_TURNS = 40"), "TUI has 40 turn limit");
 ok(tuiSrc.includes("onContent"), "TUI streams content to stdout");
 ok(tuiSrc.includes("VERSION"), "TUI has version constant");
-ok(tuiSrc.includes("0.84.0"), "TUI version is 0.84.0");
+ok(tuiSrc.includes("0.85.0"), "TUI version is 0.85.0");
 
 // ─── 25. Version Alignment ────────────────────────────────────
 
 console.log("\n─ Version Alignment ─");
 
 const rootPkg = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "..", "..", "package.json"), "utf-8"));
-ok(rootPkg.version === "0.84.0", `root package.json version is 0.84.0 (got ${rootPkg.version})`);
-ok(pkg.version === "0.84.0", `re-agent package.json version is 0.84.0 (got ${pkg.version})`);
-ok(tuiSrc.includes("0.84.0"), `tui.ts VERSION is 0.84.0`);
+ok(rootPkg.version === "0.85.0", `root package.json version is 0.85.0 (got ${rootPkg.version})`);
+ok(pkg.version === "0.85.0", `re-agent package.json version is 0.85.0 (got ${pkg.version})`);
+ok(tuiSrc.includes("0.85.0"), `tui.ts VERSION is 0.85.0`);
 
 // ─── 26. Skills Not Gitignored ────────────────────────────────
 

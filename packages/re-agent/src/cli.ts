@@ -3,8 +3,10 @@
  * pire CLI entry point
  *
  * Usage:
- *   pire                      — Start chat (just tell it what to analyze)
- *   pire <path>               — Start and auto-analyze a binary or directory
+ *   pire                      — Start TUI dashboard (default)
+ *   pire -cli                 — Start CLI-only mode (plain readline, no dashboard)
+ *   pire <path>               — Start with a target loaded
+ *   pire -cli <path>          — CLI mode with a target loaded
  *   pire --tools              — List available RE tools
  *   pire --skills             — List available RE skills
  *   pire --probe              — Probe system for installed tools
@@ -12,7 +14,7 @@
  */
 
 import { RE_TOOLS, RE_SYSTEM_PROMPT, probeTools } from "./index.js";
-import { PireTUI } from "./tui.js";
+import { PireTUI, PireCLI } from "./tui.js";
 import { readdirSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -90,8 +92,10 @@ if (args[0] === "--help" || args[0] === "-h") {
 	console.log(`pire — Reverse Engineering Agent
 
 Usage:
-  pire                      Start chat
-  pire <path|URL>           Start with a target loaded (tell it what to do in chat)
+  pire                      Start TUI dashboard (default)
+  pire -cli                 Start CLI-only mode (plain readline)
+  pire <path|URL>           Start with a target loaded
+  pire -cli <path|URL>      CLI mode with a target loaded
   pire --tools              List available RE tools
   pire --skills             List available RE skills
   pire --probe              Probe system for installed tools
@@ -102,6 +106,8 @@ Chat Commands:
   :tools                    List all tools
   :probe                    Re-probe system
   :skills                   List skills
+  :save [path]              Save conversation history
+  :clear                    Clear output (TUI mode)
   :help                     Show help
   :quit                     Exit
 
@@ -109,6 +115,18 @@ Chat Commands:
   e.g. "analyze /bin/ls", "decompile main in ./crackme", "check entropy of firmware.bin"
 `);
 	process.exit(0);
+}
+
+// Check for -cli flag
+let useCliMode = false;
+let positionalArgs: string[] = [];
+
+for (const arg of args) {
+	if (arg === "-cli" || arg === "--cli") {
+		useCliMode = true;
+	} else if (!arg.startsWith("-")) {
+		positionalArgs.push(arg);
+	}
 }
 
 switch (args[0]) {
@@ -126,12 +144,18 @@ switch (args[0]) {
 		showVersion();
 		break;
 	default:
-		if (args[0]?.startsWith("-")) {
+		if (args[0]?.startsWith("-") && args[0] !== "-cli" && args[0] !== "--cli") {
 			console.error(`Unknown option: ${args[0]}`);
 			process.exit(1);
 		}
-		// Start chat REPL — optional path or URL kicks off auto-analysis
-		const tui = new PireTUI(args[0]);
-		tui.start();
+		// Start interactive session — TUI by default, CLI with -cli flag
+		const target = positionalArgs[0];
+		if (useCliMode) {
+			const cli = new PireCLI(target);
+			cli.start();
+		} else {
+			const tui = new PireTUI(target);
+			tui.start();
+		}
 		break;
 }
