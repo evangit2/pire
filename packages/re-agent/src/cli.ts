@@ -91,7 +91,7 @@ if (args[0] === "--help" || args[0] === "-h") {
 
 Usage:
   pire                      Start chat (just tell it what to analyze)
-  pire <path>               Start and auto-analyze a binary or directory
+  pire <path|URL>           Start and auto-analyze a binary, directory, or download from URL
   pire --tools              List available RE tools
   pire --skills             List available RE skills
   pire --probe              Probe system for installed tools
@@ -105,7 +105,7 @@ Chat Commands:
   :quit                     Exit
 
   Just type naturally — the agent runs tools for you.
-  e.g. "analyze /bin/ls" or "what's in /opt/game/?"
+  e.g. "analyze /bin/ls" or "reverse engineer https://example.com/app.exe"
 `);
 	process.exit(0);
 }
@@ -129,7 +129,7 @@ switch (args[0]) {
 			console.error(`Unknown option: ${args[0]}`);
 			process.exit(1);
 		}
-		// Start chat REPL — optional path kicks off auto-analysis
+		// Start chat REPL — optional path or URL kicks off auto-analysis
 		const tui = new PireTUI(args[0]);
 		tui.start();
 		break;

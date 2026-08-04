@@ -11,7 +11,7 @@
 
 import { Type } from "typebox";
 import { execSync, spawn } from "node:child_process";
-import { writeFileSync, existsSync, openSync, readSync, closeSync } from "node:fs";
+import { writeFileSync, existsSync, openSync, readSync, closeSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -751,11 +751,412 @@ const shellTool: AgentTool<{ command: string; cwd?: string }> = {
 	},
 };
 
+// ─── Fetch Tool (download binaries from URLs) ──────────────────
+
+const fetchTool: AgentTool<{ url: string; outputDir?: string }> = {
+	name: "fetch",
+	description: "Download a file from a URL (HTTP/HTTPS). Use when the user provides a link to a binary, archive, or file to analyze. Saves to /tmp/pire-downloads/ or specified dir.",
+	parameters: Type.Object({
+		url: Type.String({ description: "URL to download" }),
+		outputDir: Type.Optional(Type.String({ description: "Output directory (default: /tmp/pire-downloads)" })),
+	}),
+	async execute(_id, params) {
+		const outDir = params.outputDir || "/tmp/pire-downloads";
+		try { mkdirSync(outDir, { recursive: true }); } catch {}
+		// Derive filename from URL, fallback to timestamp
+		const urlPath = params.url.split("?")[0].split("/").pop() || `file_${Date.now()}`;
+		const outPath = join(outDir, urlPath);
+
+		// Try wget first (handles redirects, SSL), fall back to curl
+		const wgetBin = which("wget");
+		const curlBin = which("curl");
+		if (!wgetBin && !curlBin) {
+			return textResult("Neither wget nor curl is installed. Install one to download files.");
+		}
+
+		const cmd = wgetBin
+			? `${wgetBin} -q -O ${shellEscape(outPath)} ${shellEscape(params.url)} 2>&1`
+			: `${curlBin} -sL -o ${shellEscape(outPath)} ${shellEscape(params.url)} 2>&1`;
+
+		try {
+			run(cmd, { timeout: 120000 });
+			if (existsSync(outPath)) {
+				const stat = run(`stat -c %s ${shellEscape(outPath)} 2>/dev/null || stat -f %z ${shellEscape(outPath)} 2>/dev/null`);
+				const fileType = run(`file ${shellEscape(outPath)}`);
+				return textResult(`Downloaded to: ${outPath}\nSize: ${stat.trim()} bytes\nType: ${fileType.split(":")[1]?.trim() ?? "unknown"}`, {
+					path: outPath,
+					url: params.url,
+				});
+			}
+			return textResult("Download failed: no file created");
+		} catch (e: any) {
+			return textResult(`Download failed: ${e.message}`);
+		}
+	},
+};
+
+// ─── Hash Tool ─────────────────────────────────────────────────
+
+const hashTool: AgentTool<{ path: string; algo?: string }> = {
+	name: "hash",
+	description: "Compute file hashes (md5, sha1, sha256, or all). Useful for identifying known malware or comparing files.",
+	parameters: Type.Object({
+		path: Type.String({ description: "Path to file" }),
+		algo: Type.Optional(Type.String({ description: "Algorithm: md5, sha1, sha256, or all (default: all)" })),
+	}),
+	async execute(_id, params) {
+		const algo = params.algo || "all";
+		const algos = algo === "all" ? ["md5sum", "sha1sum", "sha256sum"] : [`${algo}sum`];
+		const results: string[] = [];
+		for (const a of algos) {
+			const bin = which(a);
+			if (bin) {
+				try {
+					const out = run(`${bin} ${shellEscape(params.path)}`, { timeout: 30000 });
+					results.push(out.trim());
+				} catch { results.push(`${a}: error`); }
+			} else {
+				results.push(`${a}: not installed`);
+			}
+		}
+		return textResult(results.join("\n"));
+	},
+};
+
+// ─── Entropy Tool ──────────────────────────────────────────────
+
+const entropyTool: AgentTool<{ path: string; blockSize?: number }> = {
+	name: "entropy",
+	description: "Calculate Shannon entropy of a file (or per-block). High entropy = compressed/encrypted. Useful for detecting packed sections or encrypted data.",
+	parameters: Type.Object({
+		path: Type.String({ description: "Path to file" }),
+		blockSize: Type.Optional(Type.Number({ description: "Block size in bytes (default: whole file)" })),
+	}),
+	async execute(_id, params) {
+		const py = which("python3");
+		if (!py) return textResult("python3 not installed");
+		const bs = params.blockSize || 0;
+		const script = `
+import sys, math, collections
+data = open(${JSON.stringify(params.path)}, "rb").read()
+if ${bs} > 0:
+    for i in range(0, len(data), ${bs}):
+        block = data[i:i+${bs}]
+        if not block: break
+        c = collections.Counter(block)
+        n = len(block)
+        e = -sum((v/n) * math.log2(v/n) for v in c.values())
+        print(f"offset {i:#x}: entropy={e:.4f}")
+else:
+    c = collections.Counter(data)
+    n = len(data)
+    e = -sum((v/n) * math.log2(v/n) for v in c.values())
+    print(f"file entropy: {e:.4f} bits/byte (max=8.0)")
+    print(f"file size: {n} bytes")
+    if e > 7.5: print("WARNING: very high entropy — likely compressed or encrypted")
+    elif e > 6.0: print("NOTE: high entropy — possibly packed")
+    elif e < 3.0: print("NOTE: low entropy — mostly text/structured data")
+`;
+		try {
+			const out = run(`python3 -c '${script.replace(/'/g, "'\\''")}'`, { timeout: 30000 });
+			return textResult(out);
+		} catch (e: any) {
+			return textResult(`Entropy calculation failed: ${e.message}`);
+		}
+	},
+};
+
+// ─── Extract Tool (archives: zip, tar, gz, 7z, rar) ────────────
+
+const extractTool: AgentTool<{ path: string; outputDir?: string }> = {
+	name: "extract",
+	description: "Extract archives (zip, tar.gz, tar.bz2, 7z, rar, deb, rpm). Auto-detects format. Use when analyzing packaged software or firmware.",
+	parameters: Type.Object({
+		path: Type.String({ description: "Path to archive" }),
+		outputDir: Type.Optional(Type.String({ description: "Output directory (default: /tmp/pire-extracted/<filename>)" })),
+	}),
+	async execute(_id, params) {
+		const baseName = params.path.split("/").pop() || "extracted";
+		const outDir = params.outputDir || join("/tmp/pire-extracted", baseName);
+		try { mkdirSync(outDir, { recursive: true }); } catch {}
+
+		const ext = params.path.toLowerCase();
+		let cmd = "";
+		if (ext.endsWith(".zip") || ext.endsWith(".jar") || ext.endsWith(".apk") || ext.endsWith(".war")) {
+			cmd = `unzip -o -d ${shellEscape(outDir)} ${shellEscape(params.path)} 2>&1`;
+		} else if (ext.endsWith(".tar.gz") || ext.endsWith(".tgz")) {
+			cmd = `tar xzf ${shellEscape(params.path)} -C ${shellEscape(outDir)} 2>&1`;
+		} else if (ext.endsWith(".tar.bz2") || ext.endsWith(".tbz2")) {
+			cmd = `tar xjf ${shellEscape(params.path)} -C ${shellEscape(outDir)} 2>&1`;
+		} else if (ext.endsWith(".tar.xz") || ext.endsWith(".txz")) {
+			cmd = `tar xJf ${shellEscape(params.path)} -C ${shellEscape(outDir)} 2>&1`;
+		} else if (ext.endsWith(".tar")) {
+			cmd = `tar xf ${shellEscape(params.path)} -C ${shellEscape(outDir)} 2>&1`;
+		} else if (ext.endsWith(".gz") && !ext.endsWith(".tar.gz")) {
+			cmd = `gunzip -k -c ${shellEscape(params.path)} > ${shellEscape(join(outDir, baseName.replace(/\.gz$/, "")))} 2>&1`;
+		} else if (ext.endsWith(".7z")) {
+			const b = which("7z") || which("7za");
+			if (!b) return textResult("7z not installed. Install p7zip-full.");
+			cmd = `${b} x -o${shellEscape(outDir)} -y ${shellEscape(params.path)} 2>&1`;
+		} else if (ext.endsWith(".rar")) {
+			const b = which("unrar") || which("rar");
+			if (!b) return textResult("unrar not installed.");
+			cmd = `${b} x -o${shellEscape(outDir)} -y ${shellEscape(params.path)} 2>&1`;
+		} else if (ext.endsWith(".deb")) {
+			cmd = `dpkg-deb -x ${shellEscape(params.path)} ${shellEscape(outDir)} 2>&1`;
+		} else if (ext.endsWith(".rpm")) {
+			const b = which("rpm2cpio");
+			const c = which("cpio");
+			if (!b || !c) return textResult("rpm2cpio/cpio not installed.");
+			cmd = `${b} ${shellEscape(params.path)} | ${c} -idm -D ${shellEscape(outDir)} 2>&1`;
+		} else {
+			// Try binwalk for firmware blobs
+			const bw = which("binwalk");
+			if (bw) cmd = `${bw} -e -C ${shellEscape(outDir)} ${shellEscape(params.path)} 2>&1`;
+			else return textResult(`Unknown archive format: ${params.path}. Try binwalk or manual extraction.`);
+		}
+
+		try {
+			const out = run(cmd, { timeout: 60000 });
+			// List extracted files
+			let listing = "";
+			try { listing = run(`find ${shellEscape(outDir)} -type f | head -50`, { timeout: 10000 }); } catch {}
+			return textResult(`Extracted to: ${outDir}\n${out}\n\nFiles:\n${listing}`, { outputDir: outDir });
+		} catch (e: any) {
+			return textResult(`Extraction failed: ${e.message}`);
+		}
+	},
+};
+
+// ─── nm Tool (symbol table) ────────────────────────────────────
+
+const nmTool: AgentTool<{ path: string; demangle?: boolean }> = {
+	name: "nm",
+	description: "List symbols from a binary's symbol table (functions, variables, etc.). Use --demangle for C++ names. Useful for non-stripped binaries.",
+	parameters: Type.Object({
+		path: Type.String({ description: "Path to binary" }),
+		demangle: Type.Optional(Type.Boolean({ description: "Demangle C++ symbols (default: true)" })),
+	}),
+	async execute(_id, params) {
+		const bin = which("nm");
+		if (!bin) return textResult("nm not installed (part of binutils)");
+		const flag = params.demangle !== false ? "--demangle" : "";
+		try {
+			const out = run(`${bin} ${flag} ${shellEscape(params.path)} 2>&1`, { timeout: 30000, maxBuffer: 5 * 1024 * 1024 });
+			return textResult(out);
+		} catch (e: any) {
+			const stdout = e.stdout?.toString() || "";
+			const stderr = e.stderr?.toString() || "";
+			return textResult([stdout, stderr].filter(Boolean).join("\n") || `nm failed: ${e.message}`);
+		}
+	},
+};
+
+// ─── size Tool (section sizes) ─────────────────────────────────
+
+const sizeTool: AgentTool<{ path: string }> = {
+	name: "size",
+	description: "Display section sizes of a binary (text, data, bss). Quick overview of binary footprint.",
+	parameters: Type.Object({
+		path: Type.String({ description: "Path to binary" }),
+	}),
+	async execute(_id, params) {
+		const bin = which("size");
+		if (!bin) return textResult("size not installed (part of binutils)");
+		try {
+			const out = run(`${bin} -A ${shellEscape(params.path)} 2>&1`, { timeout: 10000 });
+			return textResult(out);
+		} catch (e: any) {
+			return textResult(`size failed: ${e.message}`);
+		}
+	},
+};
+
+// ─── diff Tool (compare two files) ─────────────────────────────
+
+const diffTool: AgentTool<{ a: string; b: string; context?: number }> = {
+	name: "diff",
+	description: "Diff two files or binaries. Useful for comparing patched vs original, or two versions of a binary.",
+	parameters: Type.Object({
+		a: Type.String({ description: "First file path" }),
+		b: Type.String({ description: "Second file path" }),
+		context: Type.Optional(Type.Number({ description: "Lines of context (default: 3)" })),
+	}),
+	async execute(_id, params) {
+		const bin = which("diff");
+		if (!bin) return textResult("diff not installed");
+		const ctx = params.context ?? 3;
+		const ctxFlag = ctx > 0 ? ` -U${ctx}` : "";
+		try {
+			const out = run(`diff${ctxFlag} ${shellEscape(params.a)} ${shellEscape(params.b)} 2>&1`, { timeout: 30000 });
+			return textResult(out || "(files are identical)");
+		} catch (e: any) {
+			// diff exits 1 when files differ — that's not an error
+			const stdout = e.stdout?.toString() || "";
+			const stderr = e.stderr?.toString() || "";
+			return textResult(stdout || stderr || "(files are identical)");
+		}
+	},
+};
+
+// ─── Java/Dex Decompilation Tool ───────────────────────────────
+
+const jadxTool: AgentTool<{ path: string; outputDir?: string }> = {
+	name: "jadx",
+	description: "Decompile APK, DEX, JAR, or AAR files to Java source. Requires jadx installed. Use for Android apps and Java applications.",
+	parameters: Type.Object({
+		path: Type.String({ description: "Path to APK/DEX/JAR file" }),
+		outputDir: Type.Optional(Type.String({ description: "Output directory (default: /tmp/pire-jadx/<filename>)" })),
+	}),
+	async execute(_id, params) {
+		const bin = which("jadx") ?? which("jadx-cli");
+		if (!bin) return textResult("jadx not installed. Install from https://github.com/skylot/jadx");
+		const baseName = params.path.split("/").pop() || "decompiled";
+		const outDir = params.outputDir || join("/tmp/pire-jadx", baseName);
+		try { mkdirSync(outDir, { recursive: true }); } catch {}
+		try {
+			const out = run(`${bin} -d ${shellEscape(outDir)} ${shellEscape(params.path)} 2>&1`, { timeout: 120000 });
+			let listing = "";
+			try { listing = run(`find ${shellEscape(outDir)} -name "*.java" | head -50`, { timeout: 10000 }); } catch {}
+			return textResult(`Decompiled to: ${outDir}\n${out}\n\nJava files:\n${listing}`, { outputDir: outDir });
+		} catch (e: any) {
+			return textResult(`jadx failed: ${e.message}`);
+		}
+	},
+};
+
+// ─── .NET Decompilation Tool ───────────────────────────────────
+
+const ilspyTool: AgentTool<{ path: string; outputDir?: string }> = {
+	name: "ilspy",
+	description: "Decompile .NET assemblies (DLL/EXE) to C# source. Requires ilspycmd or monodis installed. Use for .NET applications.",
+	parameters: Type.Object({
+		path: Type.String({ description: "Path to .NET assembly" }),
+		outputDir: Type.Optional(Type.String({ description: "Output directory" })),
+	}),
+	async execute(_id, params) {
+		const ilspy = which("ilspycmd");
+		const monodis = which("monodis");
+		if (!ilspy && !monodis) return textResult("Neither ilspycmd nor monodis installed. Install ilspycmd (dotnet tool install -g ilspycmd) or mono-utils.");
+		const baseName = params.path.split("/").pop() || "decompiled";
+		const outDir = params.outputDir || join("/tmp/pire-ilspy", baseName);
+		try { mkdirSync(outDir, { recursive: true }); } catch {}
+
+		if (ilspy) {
+			try {
+				const out = run(`${ilspy} ${shellEscape(params.path)} -p -o ${shellEscape(outDir)} 2>&1`, { timeout: 120000 });
+				return textResult(`Decompiled to: ${outDir}\n${out}`, { outputDir: outDir });
+			} catch (e: any) {
+				return textResult(`ilspycmd failed: ${e.message}`);
+			}
+		}
+
+		// Fallback: monodis (IL only, not C#)
+		try {
+			const out = run(`${monodis} --output=${shellEscape(join(outDir, "output.il"))} ${shellEscape(params.path)} 2>&1`, { timeout: 60000 });
+			return textResult(`Disassembled (IL) to: ${outDir}/output.il\n${out}`, { outputDir: outDir });
+		} catch (e: any) {
+			return textResult(`monodis failed: ${e.message}`);
+		}
+	},
+};
+
+// ─── Patch/Dump Tool (hex edit at offset) ──────────────────────
+
+const patchTool: AgentTool<{ path: string; offset: string; bytes: string; backup?: boolean }> = {
+	name: "patch",
+	description: "Patch bytes at a hex offset in a binary. Takes hex offset and hex byte string. Creates backup by default. Use for binary patching / crackme solving.",
+	parameters: Type.Object({
+		path: Type.String({ description: "Path to binary" }),
+		offset: Type.String({ description: "Hex offset (e.g. 0x1234)" }),
+		bytes: Type.String({ description: "Hex bytes to write (e.g. 9090 for two NOPs)" }),
+		backup: Type.Optional(Type.Boolean({ description: "Create backup (default: true)" })),
+	}),
+	async execute(_id, params) {
+		const backup = params.backup !== false;
+		const backupPath = params.path + ".bak";
+
+		if (backup && !existsSync(backupPath)) {
+			try { run(`cp ${shellEscape(params.path)} ${shellEscape(backupPath)}`); } catch {}
+		}
+
+		const py = which("python3");
+		if (!py) return textResult("python3 not installed");
+		const script = `
+import struct
+path = ${JSON.stringify(params.path)}
+offset = int(${JSON.stringify(params.offset)}, 16)
+byte_hex = ${JSON.stringify(params.bytes)}.replace(" ", "")
+data = bytes.fromhex(byte_hex)
+with open(path, "r+b") as f:
+    f.seek(offset)
+    orig = f.read(len(data))
+    f.seek(offset)
+    f.write(data)
+    print(f"Patched {len(data)} bytes at 0x{offset:x}")
+    print(f"Original: {orig.hex()}")
+    print(f"New:      {data.hex()}")
+`;
+		try {
+			const out = run(`python3 -c '${script.replace(/'/g, "'\\''")}'`, { timeout: 10000 });
+			return textResult(out, { backupPath: backup ? backupPath : undefined });
+		} catch (e: any) {
+			return textResult(`Patch failed: ${e.message}`);
+		}
+	},
+};
+
+// ─── Search Tool (pattern search in binary) ────────────────────
+
+const searchTool: AgentTool<{ path: string; pattern: string; isHex?: boolean }> = {
+	name: "search",
+	description: "Search for a pattern in a binary file. Supports text and hex patterns. Returns offset + context for each match.",
+	parameters: Type.Object({
+		path: Type.String({ description: "Path to file" }),
+		pattern: Type.String({ description: "Pattern to search (text or hex)" }),
+		isHex: Type.Optional(Type.Boolean({ description: "Treat pattern as hex (default: false = text)" })),
+	}),
+	async execute(_id, params) {
+		const py = which("python3");
+		if (!py) return textResult("python3 not installed");
+		const hexMode = params.isHex === true;
+		const script = `
+data = open(${JSON.stringify(params.path)}, "rb").read()
+pattern = ${hexMode ? `bytes.fromhex(${JSON.stringify(params.pattern)}.replace(" ", ""))` : `${JSON.stringify(params.pattern)}.encode()`}
+matches = []
+start = 0
+while True:
+    idx = data.find(pattern, start)
+    if idx == -1: break
+    ctx_start = max(0, idx - 8)
+    ctx_end = min(len(data), idx + len(pattern) + 8)
+    ctx = data[ctx_start:ctx_end]
+    matches.append(f"0x{idx:x}: {ctx.hex(' ')}")
+    start = idx + 1
+    if len(matches) >= 100: break
+if matches:
+    print(f"Found {len(matches)} match(es):")
+    for m in matches: print(m)
+else:
+    print("No matches found")
+`;
+		try {
+			const out = run(`python3 -c '${script.replace(/'/g, "'\\''")}'`, { timeout: 30000 });
+			return textResult(out);
+		} catch (e: any) {
+			return textResult(`Search failed: ${e.message}`);
+		}
+	},
+};
+
 // ─── Tool Registry ─────────────────────────────────────────────
 
 export const RE_TOOLS: AgentTool<any>[] = [
 	// Shell (always available)
 	shellTool,
+	// Fetch & extraction
+	fetchTool,
+	extractTool,
 	// Core (always available if system tools exist)
 	stringsTool,
 	fileTool,
@@ -765,6 +1166,14 @@ export const RE_TOOLS: AgentTool<any>[] = [
 	disasmFuncTool,
 	r2Tool,
 	decompileTool,
+	nmTool,
+	sizeTool,
+	searchTool,
+	patchTool,
+	// Hash & entropy
+	hashTool,
+	entropyTool,
+	diffTool,
 	// Ghidra (native, crash-resilient)
 	ghidraStatus,
 	ghidraDecompile,
@@ -783,6 +1192,9 @@ export const RE_TOOLS: AgentTool<any>[] = [
 	fridaTool,
 	gdbTool,
 	volatilityTool,
+	// Language-specific decompilers
+	jadxTool,
+	ilspyTool,
 ];
 
 export function createReTools(extra: AgentTool<any>[] = []): AgentTool<any>[] {
@@ -792,15 +1204,24 @@ export function createReTools(extra: AgentTool<any>[] = []): AgentTool<any>[] {
 /** Probe system for available tools and return status. */
 export function probeTools(): Record<string, boolean> {
 	return {
-		shell: true,  // always available
+		shell: true,
+		fetch: !!which("wget") || !!which("curl"),
+		extract: !!which("unzip") || !!which("tar") || !!which("7z") || !!which("binwalk"),
 		strings: !!which("strings"),
 		file: !!which("file"),
 		objdump: !!which("objdump"),
-		disasm_func: !!which("objdump"),
+		disasm_func: !!which("objdump") || !!which("r2") || !!which("radare2"),
 		readelf: !!which("readelf"),
 		hexdump: !!which("hexdump"),
+		nm: !!which("nm"),
+		size: !!which("size"),
+		search: !!which("python3"),
+		patch: !!which("python3"),
 		r2: !!which("r2") || !!which("radare2"),
 		decompile: !!which("r2") || !!which("radare2"),
+		hash: !!which("md5sum") || !!which("sha256sum"),
+		entropy: !!which("python3"),
+		diff: !!which("diff"),
 		ghidra: ghidra.getStatus().alive,
 		binwalk: !!which("binwalk"),
 		lief: pythonModule("lief"),
@@ -812,24 +1233,89 @@ export function probeTools(): Record<string, boolean> {
 		frida: !!which("frida") || pythonModule("frida"),
 		gdb: !!which("gdb"),
 		volatility3: !!which("vol") || !!which("volatility3") || pythonModule("volatility3"),
+		jadx: !!which("jadx") || !!which("jadx-cli"),
+		ilspy: !!which("ilspycmd") || !!which("monodis"),
 	};
 }
 
 // ─── System Prompt ─────────────────────────────────────────────
 
-export const RE_SYSTEM_PROMPT = `You are pire, a reverse engineering agent specialized in analyzing closed-source binaries.
+export const RE_SYSTEM_PROMPT = `You are pire, a reverse engineering agent. You're friendly, conversational, and can analyze virtually any binary or software artifact.
+
+The user might give you:
+- A path to a binary, directory, or archive
+- A URL to download and analyze
+- A vague request like "what does this thing do?"
+- A specific question about a function, string, or behavior
+
+You figure out what to do. Run the right tools automatically.
+
+## Auto-Detection Workflow
+
+When given a file or URL, always start with:
+1. **fetch** — if it's a URL, download it first
+2. **filetype** — identify what it is
+3. Route based on type:
+
+### ELF (Linux binaries, .so, .ko)
+- **readelf** — headers, symbols, relocations
+- **objdump** / **disasm_func** — disassembly (disasm_func handles stripped + early-exit rets)
+- **nm** — symbol table (if not stripped)
+- **r2** — radare2 analysis (aaa; afl, pdf @ main)
+
+### PE (Windows .exe, .dll)
+- disasm_func auto-detects PE (MZ header) and routes to r2
+- **r2** with \`aaa; afl\` to list functions, \`pdf @ addr\` to disassemble
+- **lief** to parse PE imports/exports (kernel32.dll, user32.dll, etc.)
+- Run with: WINEPREFIX=$HOME/.wine wine <binary> <args>
+- PE binaries often use CRLF line endings
+
+### Mach-O (macOS binaries, .dylib)
+- **lief** or **r2** for analysis
+- **objdump** with --target=macho-* if available
+
+### APK / DEX / JAR (Android, Java)
+- **extract** to unzip the APK
+- **jadx** to decompile to Java source
+- Look at AndroidManifest.xml, classes.dex
+
+### .NET assemblies (.NET .exe/.dll)
+- **ilspy** to decompile to C#
+- **monodis** fallback (IL disassembly)
+
+### Archives (zip, tar, 7z, deb, rpm)
+- **extract** to unpack, then analyze contents
+- **binwalk** for firmware blobs
+
+### Firmware / embedded
+- **binwalk** to scan and extract embedded files
+- **entropy** to detect compressed/encrypted sections
+- **hexdump** for raw inspection
 
 ## Tools
 
-Tools auto-detect at runtime. If something isn't installed you'll get a message with install instructions.
+### Fetch & Extract
+- **fetch** — Download a file from a URL
+- **extract** — Extract archives (zip, tar, 7z, rar, deb, rpm)
 
-### Core (always available)
+### Core Analysis
 - **filetype** — Identify file type, arch, format
 - **strings** — Extract printable strings
-- **objdump** — Disassemble ELF/PE sections
-- **disasm_func** — Extract a single function's disassembly (handles stripped binaries, tracks past early-exit rets)
+- **objdump** — Disassemble sections
+- **disasm_func** — Extract single function disassembly (handles stripped + PE + ELF)
 - **readelf** — ELF headers, symbols, relocations
 - **hexdump** — Raw hex dump
+- **nm** — Symbol table
+- **size** — Section sizes
+- **search** — Pattern search (text or hex) in binary
+- **patch** — Patch bytes at offset (with backup)
+
+### Hashing & Comparison
+- **hash** — MD5, SHA1, SHA256
+- **entropy** — Shannon entropy (detect packing/encryption)
+- **diff** — Compare two files
+
+### Radare2 (persistent session)
 - **r2** — Radare2 commands (aaa; afl, pdf @ main, iz, etc.)
 
 ### Ghidra (native, crash-resilient, auto-starts bridge)
@@ -842,69 +1328,50 @@ Tools auto-detect at runtime. If something isn't installed you'll get a message 
 
 ### Disassembly & Emulation
 - **capstone** — Multi-arch disassembly
-- **keystone** — Multi-arch assembly (instructions → bytes)
-- **unicorn** — CPU emulation (load + step through code)
-- **angr** — Symbolic execution (CFG, path finding, constraints)
+- **keystone** — Multi-arch assembly
+- **unicorn** — CPU emulation
+- **angr** — Symbolic execution
 
 ### Binary Parsing & Forensics
-- **lief** — Parse ELF/PE/Mach-O (imports, exports, sections, headers)
-- **binwalk** — Firmware/embedded file extraction
-- **yara** — Pattern matching / signature scanning
+- **lief** — Parse ELF/PE/Mach-O
+- **binwalk** — Firmware extraction
+- **yara** — Pattern matching
 - **volatility** — Memory forensics
 
 ### Dynamic Analysis
-- **frida** — Dynamic instrumentation (spawn, attach, trace)
+- **frida** — Dynamic instrumentation
 - **gdb** — Scripted debugging
 
-## Analysis Workflow
+### Language-Specific Decompilers
+- **jadx** — APK/DEX/JAR → Java
+- **ilspy** — .NET → C#
 
-Work in stages. Each stage builds on the previous. Don't skip ahead.
+## Analysis Tips
 
-### PE Binary Notes
-- Windows PE binaries start with "MZ" header — the disasm_func tool auto-detects PE and uses r2 instead of objdump
-- For PE: use **r2** with \`aaa; afl\` to list functions, \`pdf @ addr\` to disassemble
-- Use **lief** to parse PE imports/exports (look for kernel32.dll, user32.dll imports)
-- Run PE binaries with: WINEPREFIX=$HOME/.wine wine <binary> <args>
-- PE binaries often use CRLF (\\r\\n) line endings — check with xxd | head
-
-### Stage 1: Triage
-- **filetype** — what is this binary?
-- **strings** — what does it reveal? (paths, URLs, error messages, version strings)
-- **readelf** or **lief** — imports, exports, sections, linkage
-
-### Stage 2: Structure
-- **objdump -d** or **r2 aaa; afl** — identify functions, entry points
-- For stripped binaries: find function boundaries by looking for endbr64, prologue patterns (push rbp), or call targets from main
-- Use **disasm_func** (not raw objdump) to extract individual functions — it handles early-exit rets correctly
-
-### Stage 3: Deep Analysis
-- Analyze each function with specific, focused questions
-- For each check or branch: quote the exact instruction and address
-- Identify constants: comparison values, magic numbers, modulo divisors
-- Compiler optimizations to recognize:
-  - \`imul\` with magic numbers = division (look up the constant)
-  - \`lea -0x30(%reg),%reg\` + \`cmp $0x9\` = ASCII digit check
-  - \`bt\` with a bitmask = skip certain indices
-  - \`endbr64\` = function boundary in stripped PIE binaries
-
-### Stage 4: Synthesis
-- Reconstruct the algorithm in pseudocode
-- If possible, forge a valid input that passes all checks
-- Verify by running the binary (if safe)
+- Work in stages: triage → structure → deep analysis → synthesis
+- Quote exact instructions and addresses for findings
+- Compiler optimizations: \`imul\` with magic numbers = division, \`lea -0x30\` + \`cmp $0x9\` = ASCII digit check
+- \`endbr64\` = function boundary in stripped PIE binaries
+- High entropy (>7.5) = likely packed/encrypted
+- If unsure about a constant, say so
 
 ## Rules
 - Never execute target binaries outside sandboxes
-- Work on copies, never patch originals
-- Quote exact instructions and addresses for every finding — don't paraphrase
-- If you're unsure about a constant, say so rather than guessing
-- Analyze functions in focused passes, not all at once
+- Work on copies, never patch originals (patch tool creates backups)
+- If a tool isn't installed, tell the user how to install it
+- Be proactive — run multiple tools to build a complete picture
+- Be conversational — explain what you're finding as you go
 `;
 
 // ─── Exports ───────────────────────────────────────────────────
 
 export {
 	shellTool,
+	fetchTool, extractTool,
 	stringsTool, fileTool, objdumpTool, readelfTool, hexdumpTool, disasmFuncTool, r2Tool, decompileTool,
+	nmTool, sizeTool, searchTool, patchTool,
+	hashTool, entropyTool, diffTool,
 	ghidraStatus, ghidraDecompile, ghidraListFunctions, ghidraRename, ghidraXrefs, ghidraStrings,
 	binwalkTool, liefTool, angrTool, capstoneTool, keystoneTool, unicornTool, yaraTool, fridaTool, gdbTool, volatilityTool,
+	jadxTool, ilspyTool,
 };

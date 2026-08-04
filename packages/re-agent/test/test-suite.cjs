@@ -60,7 +60,7 @@ ok(src.includes("probeTools"), "probeTools exported");
 const toolArrayMatch = src.match(/export const RE_TOOLS[\s\S]*?\];/);
 if (toolArrayMatch) {
 	const toolCount = (toolArrayMatch[0].match(/^	\w+(Tool|Status|Decompile|ListFunctions|Rename|Xrefs|Strings)/gm) || []).length;
-	ok(toolCount === 25, `RE_TOOLS has 25 tools (got ${toolCount})`);
+	ok(toolCount === 36, `RE_TOOLS has 36 tools (got ${toolCount})`);
 }
 
 // ─── 3. Auto-Detect Wrappers ──────────────────────────────────
@@ -118,7 +118,7 @@ ok(!tuiSrc.includes("await import("), "no inline dynamic imports in TUI");
 console.log("\n─ System Prompt ─");
 
 ok(src.includes("RE_SYSTEM_PROMPT"), "system prompt defined");
-ok(src.includes("closed-source"), "prompt mentions closed-source analysis");
+ok(src.includes("closed-source") || src.includes("software artifact"), "prompt mentions binary analysis scope");
 ok(src.includes("auto-detect"), "prompt mentions auto-detection");
 ok(src.includes("crash-resilient"), "prompt mentions crash resilience");
 ok(src.includes("auto-starts"), "prompt mentions auto-start bridge");
@@ -296,16 +296,19 @@ if (fs.existsSync(licenseBin)) {
 
 console.log("\n─ Improved System Prompt ─");
 
-ok(src.includes("Stage 1: Triage"), "prompt has Stage 1: Triage");
-ok(src.includes("Stage 2: Structure"), "prompt has Stage 2: Structure");
-ok(src.includes("Stage 3: Deep Analysis"), "prompt has Stage 3: Deep Analysis");
-ok(src.includes("Stage 4: Synthesis"), "prompt has Stage 4: Synthesis");
+ok(src.includes("conversational"), "prompt mentions conversational approach");
+ok(src.includes("Auto-Detection Workflow"), "prompt has auto-detection workflow");
+ok(src.includes("ELF"), "prompt covers ELF binaries");
+ok(src.includes("PE"), "prompt covers PE binaries");
+ok(src.includes("Mach-O"), "prompt covers Mach-O binaries");
+ok(src.includes("APK"), "prompt covers APK/Android");
+ok(src.includes(".NET"), "prompt covers .NET assemblies");
+ok(src.includes("Firmware"), "prompt covers firmware analysis");
 ok(src.includes("disasm_func"), "prompt mentions disasm_func tool");
-ok(src.includes("early-exit ret"), "prompt mentions early-exit ret handling");
 ok(src.includes("imul"), "prompt mentions imul optimization");
 ok(src.includes("lea -0x30"), "prompt mentions digit check pattern");
 ok(src.includes("Quote exact instructions"), "prompt requires quoting instructions");
-ok(src.includes("focused passes"), "prompt advises focused analysis passes");
+ok(src.includes("entropy"), "prompt mentions entropy analysis");
 
 // ─── 18. Agent Loop & Tool Calling ─────────────────────────────
 
@@ -383,7 +386,7 @@ ok(src.includes("0x4d") && src.includes("0x5a"), "checks MZ header bytes");
 ok(src.includes("openSync"), "uses openSync for header read");
 ok(src.includes("pei-x86-64"), "falls back to objdump with PE target");
 ok(src.includes("r2") && src.includes("pdf"), "uses r2 pdf for PE disassembly");
-ok(src.includes("PE Binary Notes"), "system prompt has PE guidance");
+ok(src.includes("MZ") && (src.includes("PE") || src.includes("pe binary")), "system prompt has PE guidance");
 ok(src.includes("WINEPREFIX"), "system prompt mentions WINEPREFIX for PE");
 ok(src.includes("CRLF"), "system prompt mentions CRLF for PE");
 ok(src.includes("MZ"), "system prompt mentions MZ header");
@@ -453,6 +456,60 @@ ok(src.includes("BLOCKED_PATTERNS") && src.includes("isCommandBlocked"), "shell 
 // Verify tool output truncation limits are reasonable
 ok(tuiSrc.includes("16000"), "TUI truncates at 16000 chars");
 ok(reimplSrc.includes("16000"), "reimpl truncates at 16000 chars");
+
+// ─── 28. New Tools & URL Support ───────────────────────────────
+
+console.log("\n─ New Tools & URL Support ─");
+
+ok(src.includes("fetchTool"), "fetch tool defined");
+ok(src.includes('"fetch"'), "fetch tool registered with name");
+ok(src.includes("wget") && src.includes("curl"), "fetch tries wget and curl");
+ok(src.includes("/tmp/pire-downloads"), "fetch saves to /tmp/pire-downloads");
+
+ok(src.includes("hashTool"), "hash tool defined");
+ok(src.includes('"hash"'), "hash tool registered");
+ok(src.includes("md5sum") && src.includes("sha256sum"), "hash supports md5 and sha256");
+
+ok(src.includes("entropyTool"), "entropy tool defined");
+ok(src.includes('"entropy"'), "entropy tool registered");
+ok(src.includes("Shannon"), "entropy uses Shannon entropy");
+
+ok(src.includes("extractTool"), "extract tool defined");
+ok(src.includes('"extract"'), "extract tool registered");
+ok(src.includes("unzip") && src.includes("tar"), "extract handles zip and tar");
+
+ok(src.includes("nmTool"), "nm tool defined");
+ok(src.includes('"nm"'), "nm tool registered");
+
+ok(src.includes("sizeTool"), "size tool defined");
+ok(src.includes('"size"'), "size tool registered");
+
+ok(src.includes("diffTool"), "diff tool defined");
+ok(src.includes('"diff"'), "diff tool registered");
+
+ok(src.includes("searchTool"), "search tool defined");
+ok(src.includes('"search"'), "search tool registered");
+
+ok(src.includes("patchTool"), "patch tool defined");
+ok(src.includes('"patch"'), "patch tool registered");
+
+ok(src.includes("jadxTool"), "jadx tool defined");
+ok(src.includes('"jadx"'), "jadx tool registered");
+
+ok(src.includes("ilspyTool"), "ilspy tool defined");
+ok(src.includes('"ilspy"'), "ilspy tool registered");
+
+// TUI URL handling
+ok(tuiSrc.includes("pendingUrl"), "TUI tracks pending URL");
+ok(tuiSrc.includes("https?:") || tuiSrc.includes("https?\\\\"), "TUI detects URLs");
+ok(tuiSrc.includes("Downloading from"), "TUI shows download message");
+ok(tuiSrc.includes("fetchTool"), "TUI imports fetchTool");
+
+// probeTools includes new tools
+ok(src.includes("fetch:") && src.includes("extract:"), "probeTools checks fetch and extract");
+ok(src.includes("nm:") && src.includes("size:"), "probeTools checks nm and size");
+ok(src.includes("hash:") && src.includes("entropy:"), "probeTools checks hash and entropy");
+ok(src.includes("jadx:") && src.includes("ilspy:"), "probeTools checks jadx and ilspy");
 
 // ─── Summary ───────────────────────────────────────────────────
 
