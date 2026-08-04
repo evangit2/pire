@@ -921,6 +921,15 @@ if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/package.json" ]; then
 	npm install --ignore-scripts </dev/null >/dev/null 2>&1 || npm install </dev/null >/dev/null 2>&1 || log_warn "npm install had issues"
 	log_done "npm dependencies installed"
 
+	# Build pi-tui (dist/ is gitignored, must be built locally)
+	log_step "Building TUI framework..."
+	( cd "$SCRIPT_DIR/packages/tui" && npx tsc -p tsconfig.build.json 2>/dev/null || npx tsgo -p tsconfig.build.json 2>/dev/null || log_warn "TUI build had issues" )
+	if [ -f "$SCRIPT_DIR/packages/tui/dist/index.js" ]; then
+		log_done "TUI framework built"
+	else
+		log_warn "TUI framework build incomplete — pire may not start"
+	fi
+
 	# Link pire CLI
 	if [ -f "$SCRIPT_DIR/packages/re-agent/src/cli.ts" ]; then
 		log_step "Linking pire CLI..."

@@ -578,6 +578,22 @@ if ($ScriptDir -and (Test-Path "$ScriptDir\package.json")) {
         Pop-Location
     }
 
+    # Build pi-tui (dist/ is gitignored, must be built locally)
+    Write-Step "Building TUI framework..."
+    Push-Location "$ScriptDir\packages\tui"
+    try {
+        npx tsc -p tsconfig.build.json 2>&1 | Out-Null
+        if (Test-Path "dist\index.js") {
+            Write-Ok "TUI framework built"
+        } else {
+            Write-Warn2 "TUI framework build incomplete — pire may not start"
+        }
+    } catch {
+        Write-Warn2 "TUI build failed: $_"
+    } finally {
+        Pop-Location
+    }
+
     # Link pire CLI
     if (Test-Path "$ScriptDir\packages\re-agent\src\cli.ts") {
         Write-Step "Linking pire CLI..."
