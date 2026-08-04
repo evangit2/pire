@@ -159,7 +159,7 @@ ok(piTuiSrc.includes("agentLoop"), "Pi TUI has agentLoop method");
 ok(piTuiSrc.includes("onContent"), "Pi TUI streams content via onContent callback");
 ok(piTuiSrc.includes("tool_call"), "Pi TUI displays tool calls");
 ok(piTuiSrc.includes("tool_result"), "Pi TUI displays tool results");
-ok(piTuiSrc.includes("0.87.2"), "Pi TUI version is 0.87.2");
+ok(piTuiSrc.includes("0.87.3"), "Pi TUI version is 0.87.3");
 ok(piTuiSrc.includes("MAX_TURNS"), "Pi TUI has turn limit");
 ok(piTuiSrc.includes("MAX_OUTPUT"), "Pi TUI has output truncation");
 ok(tuiSrc.includes("agentLoop"), "TUI has agentLoop for autonomous tool calling");
@@ -267,7 +267,7 @@ if (fs.existsSync(pireConfig)) {
 console.log("\n─ Package Config ─");
 
 const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf-8"));
-ok(pkg.version === "0.87.2", `version is 0.87.2 (got ${pkg.version})`);
+ok(pkg.version === "0.87.3", `version is 0.87.3 (got ${pkg.version})`);
 ok(pkg.bin && pkg.bin.pire, "has pire bin entry");
 ok(pkg.scripts.test.includes("test-suite.cjs"), "test script runs test-suite");
 ok(pkg.scripts.test.includes("test-models.cjs"), "test script runs test-models");
@@ -279,25 +279,40 @@ console.log("\n─ Real Tool Execution ─");
 
 // Build a tiny test binary
 const testBin = "/tmp/pire_test_binary";
+const IS_MAC = process.platform === "darwin";
 try {
-	execSync('echo \'int main(){return 42;}\' | gcc -x c -o /tmp/pire_test_binary -', { timeout: 10000 });
+	if (IS_MAC) {
+		// macOS produces Mach-O binaries, not ELF
+		execSync('echo \'int main(){return 42;}\' | cc -x c -o /tmp/pire_test_binary -', { timeout: 10000 });
+	} else {
+		execSync('echo \'int main(){return 42;}\' | gcc -x c -o /tmp/pire_test_binary -', { timeout: 10000 });
+	}
 	ok(fs.existsSync(testBin), "test binary compiled");
 
 	// Test file tool
 	const fileType = execSync(`file ${testBin}`, { encoding: "utf-8" });
-	ok(fileType.includes("ELF"), "file identifies ELF binary");
+	if (IS_MAC) {
+		ok(fileType.includes("Mach-O") || fileType.includes("executable"), "file identifies Mach-O binary");
+	} else {
+		ok(fileType.includes("ELF"), "file identifies ELF binary");
+	}
 
 	// Test strings tool
 	const stringsOut = execSync(`strings -a -n 4 ${testBin}`, { encoding: "utf-8" });
 	ok(stringsOut.length > 0, "strings extracts output");
 
-	// Test readelf
-	const readelfOut = execSync(`readelf -h ${testBin} 2>/dev/null`, { encoding: "utf-8" });
-	ok(readelfOut.includes("ELF") || readelfOut.includes("Class"), "readelf parses ELF header");
+	// Test readelf (Linux only — macOS uses otool)
+	if (!IS_MAC) {
+		const readelfOut = execSync(`readelf -h ${testBin} 2>/dev/null`, { encoding: "utf-8" });
+		ok(readelfOut.includes("ELF") || readelfOut.includes("Class"), "readelf parses ELF header");
+	} else {
+		const otoolOut = execSync(`otool -L ${testBin} 2>/dev/null`, { encoding: "utf-8" });
+		ok(otoolOut.length > 0, "otool parses Mach-O binary");
+	}
 
 	// Test objdump
 	const objdumpOut = execSync(`objdump -d ${testBin} 2>/dev/null | head -20`, { encoding: "utf-8" });
-	ok(objdumpOut.includes("<main>") || objdumpOut.includes("Disassembly"), "objdump disassembles main");
+	ok(objdumpOut.includes("<main>") || objdumpOut.includes("Disassembly") || objdumpOut.includes("_main"), "objdump disassembles main");
 
 	// Test hexdump
 	const hexOut = execSync(`dd if=${testBin} bs=1 count=64 2>/dev/null | hexdump -C`, { encoding: "utf-8" });
@@ -485,16 +500,16 @@ ok(tuiSrc.includes("loadedTarget"), "TUI tracks loaded target");
 ok(tuiSrc.includes("MAX_TURNS = 40"), "TUI has 40 turn limit");
 ok(tuiSrc.includes("onContent"), "TUI streams content to stdout");
 ok(tuiSrc.includes("VERSION"), "TUI has version constant");
-ok(tuiSrc.includes("0.87.2"), "TUI version is 0.87.2");
+ok(tuiSrc.includes("0.87.3"), "TUI version is 0.87.3");
 
 // ─── 25. Version Alignment ────────────────────────────────────
 
 console.log("\n─ Version Alignment ─");
 
 const rootPkg = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "..", "..", "package.json"), "utf-8"));
-ok(rootPkg.version === "0.87.2", `root package.json version is 0.87.2 (got ${rootPkg.version})`);
-ok(pkg.version === "0.87.2", `re-agent package.json version is 0.87.2 (got ${pkg.version})`);
-ok(tuiSrc.includes("0.87.2"), `tui.ts VERSION is 0.87.2`);
+ok(rootPkg.version === "0.87.3", `root package.json version is 0.87.3 (got ${rootPkg.version})`);
+ok(pkg.version === "0.87.3", `re-agent package.json version is 0.87.3 (got ${pkg.version})`);
+ok(tuiSrc.includes("0.87.3"), `tui.ts VERSION is 0.87.3`);
 
 // ─── 26. Skills Not Gitignored ────────────────────────────────
 

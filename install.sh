@@ -986,12 +986,12 @@ has file    && log_done "file"                         || log_warn "file not ins
 [ "$INSTALL_MINGW" = "1" ]  && { has x86_64-w64-mingw32-gcc                     && log_done "MinGW-w64"                  || log_warn "MinGW-w64 not installed"; }
 [ "$INSTALL_GDB" = "1" ]    && { has gdb                                        && log_done "gdb"                        || log_warn "gdb not installed"; }
 [ "$INSTALL_BINWALK" = "1" ] && { has binwalk                                   && log_done "binwalk"                    || log_warn "binwalk not installed"; }
-[ "$INSTALL_FRIDA" = "1" ]  && { (has frida || has frida-ps)                    && log_done "frida"                      || log_warn "frida not installed"; }
+[ "$INSTALL_FRIDA" = "1" ]  && { (has frida || has frida-ps || "${PIRE_PYTHON:-python3}" -c "import frida" 2>/dev/null) && log_done "frida" || log_warn "frida not installed"; }
 [ "$INSTALL_JADX" = "1" ]   && { has jadx                                       && log_done "jadx"                       || log_warn "jadx not installed"; }
 [ "$INSTALL_YARA" = "1" ]   && { has yara                                       && log_done "yara"                       || log_warn "yara not installed"; }
 [ "$INSTALL_PYTHON_TOOLS" = "1" ] && {
-	python3 -c "import capstone" 2>/dev/null && log_done "capstone" || log_warn "capstone not installed"
-	python3 -c "import lief" 2>/dev/null     && log_done "lief"     || log_warn "lief not installed"
+	"${PIRE_PYTHON:-python3}" -c "import capstone" 2>/dev/null && log_done "capstone" || log_warn "capstone not installed"
+	"${PIRE_PYTHON:-python3}" -c "import lief" 2>/dev/null     && log_done "lief"     || log_warn "lief not installed"
 }
 
 # ── Install npm dependencies & link CLI ────────────────────────
