@@ -1,32 +1,27 @@
 /**
- * pire-pi-tui.ts — Rich TUI built on Pi's actual TUI framework
+ * pire-pi-tui.ts — Rich TUI built on Pi's TUI framework
  *
- * Uses @earendil-works/pi-tui components: TuiMainScreen, Container,
- * ScrollView, VStack, HStack, Box, Text, Spacer, Input, Markdown.
- * Proper differential rendering, component tree, focus management,
- * and input handling from Pi's TUI library.
+ * Uses TuiAltScreen (alternate screen buffer) for a fixed-viewport
+ * layout with proper differential rendering and synchronized output
+ * (DECSET ?2026) — no flicker, no scrollback pollution.
  *
- * Layout (TuiMainScreen — main screen with scrollback):
+ * Layout (TuiAltScreen — fixed viewport):
  *   ┌──────────────────────────────────────────┐
- *   │  Container (vertical stack)               │
- *   │    Box(padding=1) → sidebar title         │
- *   │    HStack: [sidebar | chatContainer]      │
- *   │      sidebar: Box → tool list             │
- *   │      chatContainer:                        │
- *   │        ScrollView(transcript)             │
- *   │        DynamicBorder (separator)          │
- *   │        Box → status bar                    │
- *   │        Input (focused)                     │
+ *   │  HStack: [sidebar | chatVStack]           │
+ *   │    sidebar: Box → tool list (full height) │
+ *   │    chatVStack:                            │
+ *   │      ScrollView(transcript)  ← grows      │
+ *   │      DynamicBorder (separator)            │
+ *   │      Box → status bar                     │
+ *   │      Input (focused)                      │
  *   └──────────────────────────────────────────┘
  */
 
 import {
 	ProcessTerminal,
-	TuiMainScreen,
+	TuiAltScreen,
 	Container,
-	Text,
 	Box,
-	Spacer,
 	ScrollView,
 	VStack,
 	HStack,
@@ -50,30 +45,26 @@ import chalk from "chalk";
 
 const BANNER = `
        ,--.               
- ,---. '--',--.--. ,---.  
+,---. '--',--.--. ,---.  
 | .-. |,--.|  .--'| .-. : 
 | '-' '|  ||  |   \\   --. 
 |  |-' '--'--'    '----'  v${VERSION}
-'--'                      
+'--'                     
 `;
 
 // ─── Double Ctrl+C to quit ─────────────────────────────────────
-// First Ctrl+C shows a warning, second within 15s exits.
-// SIGTERM always exits immediately.
 function setupGracefulQuit(onQuit: () => void, onFirstPress?: () => void): void {
 	let pressed = false;
 	let timer: NodeJS.Timeout | undefined;
 
 	process.on("SIGINT", () => {
 		if (pressed) {
-			// Second press within window — exit now
 			if (timer) clearTimeout(timer);
 			onQuit();
 			process.exit(0);
 		}
 		pressed = true;
 		onFirstPress?.();
-		// Reset after 15s
 		timer = setTimeout(() => { pressed = false; }, 15000);
 	});
 
@@ -87,7 +78,7 @@ function setupGracefulQuit(onQuit: () => void, onFirstPress?: () => void): void 
 const MAX_TURNS = 40;
 const MAX_OUTPUT = 16000;
 
-// ─── DynamicBorder (inline, like Pi's coding-agent) ────────────
+// ─── DynamicBorder ─────────────────────────────────────────────
 class DynamicBorder implements Component {
 	private colorFn: (s: string) => string;
 
@@ -116,8 +107,7 @@ class ToolSidebar implements Component {
 	}
 
 	render(width: number): string[] {
-		// Always render at fixed sidebar width regardless of what HStack passes
-		const fixedWidth = 20;
+		const fixedWidth = Math.min(20, Math.max(10, width));
 		if (this.cached && this.cachedW === fixedWidth) return this.cached;
 		const lines: string[] = [];
 		lines.push(chalk.bold.cyan("Tools"));
@@ -135,7 +125,7 @@ class ToolSidebar implements Component {
 		lines.push(chalk.dim(`${avail}/${total} available`));
 		this.cached = lines;
 		this.cachedW = fixedWidth;
-		return lines;
+		return this.cached;
 	}
 
 	invalidate(): void { this.cached = undefined; }
@@ -184,16 +174,12 @@ class TranscriptView implements Component {
 			}
 			const prefixLen = visibleWidth(prefix);
 
-			// For tool calls and results: single-line truncation, no wrapping
-			// (wrapping long JSON/binary strings breaks mid-word and looks terrible)
 			if (e.type === "tool_call" || e.type === "tool_result") {
 				const firstLine = e.text.split("\n")[0] || "";
 				const wrapWidth = Math.max(10, contentWidth - prefixLen);
 				let truncated = firstLine;
 				if (visibleWidth(firstLine) > wrapWidth) {
-					// Truncate by visible width — slice the raw string conservatively
 					truncated = firstLine.slice(0, Math.max(0, wrapWidth - 3));
-					// Walk back if we sliced mid-ANSI (rough heuristic)
 					const lastEscape = truncated.lastIndexOf("\x1b[");
 					const lastM = truncated.lastIndexOf("m");
 					if (lastEscape > lastM) {
@@ -208,7 +194,6 @@ class TranscriptView implements Component {
 			}
 
 			const wrapWidth = Math.max(10, contentWidth - prefixLen);
-			// Use Pi's wrapTextWithAnsi for proper ANSI-preserving word wrap
 			for (const rawLine of e.text.split("\n")) {
 				const wrapped = wrapTextWithAnsi(rawLine, wrapWidth);
 				for (let i = 0; i < wrapped.length; i++) {
@@ -225,7 +210,7 @@ class TranscriptView implements Component {
 		}
 		this.cached = lines;
 		this.cachedW = width;
-		return lines;
+		return this.cached;
 	}
 
 	invalidate(): void { this.cached = undefined; }
@@ -236,8 +221,8 @@ class StatusBar implements Component {
 	private target = "none";
 	private model = "";
 	private processing = false;
-	private turnsLeft = 0;
-	private turnsTotal = 0;
+	private turnCurrent = 0;
+	private turnTotal = 0;
 	private tokensIn = 0;
 	private tokensOut = 0;
 	private cached?: string[];
@@ -246,7 +231,7 @@ class StatusBar implements Component {
 	setTarget(t: string): void { this.target = t; this.cached = undefined; }
 	setModel(m: string): void { this.model = m; this.cached = undefined; }
 	setProcessing(p: boolean): void { this.processing = p; this.cached = undefined; }
-	setTurns(left: number, total: number): void { this.turnsLeft = left; this.turnsTotal = total; this.cached = undefined; }
+	setTurns(current: number, total: number): void { this.turnCurrent = current; this.turnTotal = total; this.cached = undefined; }
 	addTokens(inTokens: number, outTokens: number): void { this.tokensIn += inTokens; this.tokensOut += outTokens; this.cached = undefined; }
 	resetTokens(): void { this.tokensIn = 0; this.tokensOut = 0; this.cached = undefined; }
 
@@ -255,8 +240,8 @@ class StatusBar implements Component {
 		const parts: string[] = [];
 		parts.push(`${chalk.dim("target:")} ${this.target}`);
 		parts.push(`${chalk.dim("model:")} ${this.model || "default"}`);
-		if (this.turnsTotal > 0) {
-			parts.push(`${chalk.dim("turns:")} ${this.turnsLeft}/${this.turnsTotal}`);
+		if (this.turnTotal > 0) {
+			parts.push(`${chalk.dim("turn:")} ${this.turnCurrent}/${this.turnTotal}`);
 		}
 		if (this.tokensIn > 0 || this.tokensOut > 0) {
 			parts.push(`${chalk.dim("tokens:")} ${chalk.cyan("↑")}${this.tokensIn} ${chalk.magenta("↓")}${this.tokensOut}`);
@@ -274,17 +259,61 @@ class StatusBar implements Component {
 	invalidate(): void { this.cached = undefined; }
 }
 
+// ─── Render throttle helper ────────────────────────────────────
+// Coalesces rapid requestRender() calls into a single render per
+// animation frame (~16ms). This is the primary flicker reduction —
+// instead of rendering on every streaming chunk (which can be dozens
+// per second), we batch them into one render per frame.
+class RenderThrottle {
+	private pending = false;
+	private timer: NodeJS.Timeout | null = null;
+	private readonly interval: number;
+
+	constructor(
+		private renderFn: () => void,
+		intervalMs = 16,
+	) {
+		this.interval = intervalMs;
+	}
+
+	request(): void {
+		if (this.pending) return;
+		this.pending = true;
+		this.timer = setTimeout(() => {
+			this.pending = false;
+			this.timer = null;
+			this.renderFn();
+		}, this.interval);
+	}
+
+	flush(): void {
+		if (this.timer) {
+			clearTimeout(this.timer);
+			this.timer = null;
+			this.pending = false;
+			this.renderFn();
+		}
+	}
+
+	dispose(): void {
+		if (this.timer) {
+			clearTimeout(this.timer);
+			this.timer = null;
+			this.pending = false;
+		}
+	}
+}
+
 // ─── PirePiTUI ─────────────────────────────────────────────────
 export class PirePiTUI {
-	private ui: TuiMainScreen;
+	private ui: TuiAltScreen;
 	private terminal: ProcessTerminal;
 	private transcript: TranscriptView;
 	private sidebar: ToolSidebar;
 	private statusBar: StatusBar;
 	private input: Input;
 	private scrollView: ScrollView;
-	private rootContainer: Container;
-	private chatContainer: Container;
+	private throttle: RenderThrottle;
 
 	private messages: ChatMessage[] = [];
 	private loadedTarget: string | null = null;
@@ -295,13 +324,15 @@ export class PirePiTUI {
 
 	constructor(target?: string) {
 		this.terminal = new ProcessTerminal();
-		this.ui = new TuiMainScreen(this.terminal, true);
+		this.ui = new TuiAltScreen(this.terminal, true);
 
 		this.transcript = new TranscriptView();
 		this.sidebar = new ToolSidebar();
 		this.statusBar = new StatusBar();
 
-		// Use Pi's Input component with onSubmit
+		// Render throttle — coalesce rapid renders into one per frame
+		this.throttle = new RenderThrottle(() => this.ui.requestRender(), 16);
+
 		this.input = new Input();
 		this.input.onSubmit = (value: string) => {
 			if (value.trim() && !this.processing) {
@@ -326,46 +357,52 @@ export class PirePiTUI {
 		this.transcript.add("system", "Tell me what you need — load a binary with :load, or just describe what you're looking for.");
 		this.transcript.add("system", "Type :help for commands, :quit to exit.");
 
-		// Build layout using Pi components
-		// ScrollView wraps the transcript
+		// ScrollView wraps the transcript — this is the scrollable area
 		this.scrollView = new ScrollView(this.transcript, {
 			follow: "end",
 			primary: true,
 			scrollbar: "auto",
 		});
 
-		// Chat container: scrollview + border + status + input
-		this.chatContainer = new Container();
-		this.chatContainer.addChild(this.scrollView);
-		this.chatContainer.addChild(new DynamicBorder());
-		// Status bar with padding
+		// Chat column: scrollview (grows) + border + status + input
 		const statusBox = new Box(1, 0);
 		statusBox.addChild(this.statusBar);
-		this.chatContainer.addChild(statusBox);
-		this.chatContainer.addChild(this.input);
-
-		// HStack: sidebar | chat
-		const sidebarBox = new Box(1, 1);
-		sidebarBox.addChild(this.sidebar);
-		const sidebarVStack = new VStack([
-			{ component: sidebarBox, basis: "auto", grow: 0, shrink: 1, minSize: 3 },
-		]);
 		const chatVStack = new VStack([
-			{ component: this.chatContainer, basis: 0, grow: 1, shrink: 1, minSize: 10 },
+			{ component: this.scrollView, basis: 0, grow: 1, shrink: 1, minSize: 3 },
+			{ component: new DynamicBorder(), basis: "auto", grow: 0, shrink: 0 },
+			{ component: statusBox, basis: "auto", grow: 0, shrink: 0 },
+			{ component: this.input, basis: "auto", grow: 0, shrink: 0 },
 		]);
+
+		// Sidebar column — padded to fill full height
+		const sidebarInner = new Box(1, 1);
+		sidebarInner.addChild(this.sidebar);
+		const sidebarVStack = new VStack([
+			{ component: sidebarInner, basis: 0, grow: 1, shrink: 0, minSize: 3 },
+		]);
+
+		// HStack: sidebar (fixed 22 cols) | chat (fills rest)
 		const mainHStack = new HStack([
 			{ component: sidebarVStack, basis: 22, grow: 0, shrink: 0, minSize: 22, maxSize: 22 },
 			{ component: chatVStack, basis: 0, grow: 1, shrink: 1, minSize: 20 },
 		]);
 
-		// Root container
-		this.rootContainer = new Container();
-		this.rootContainer.addChild(mainHStack);
-
-		this.ui.addChild(this.rootContainer);
+		// Set as layout root — TuiAltScreen uses renderLayoutFrame to
+		// enforce sizing constraints and clip to the fixed viewport
+		this.ui.setLayoutRoot(mainHStack);
 
 		// Focus the input
 		this.ui.setFocus(this.input);
+	}
+
+	/** Request a render (throttled to reduce flicker) */
+	private requestRender(): void {
+		this.throttle.request();
+	}
+
+	/** Flush any pending render immediately */
+	private flushRender(): void {
+		this.throttle.flush();
 	}
 
 	private async handleInput(input: string): Promise<void> {
@@ -374,7 +411,7 @@ export class PirePiTUI {
 
 		// Clear the input field
 		this.input.setValue("");
-		this.ui.requestRender();
+		this.flushRender();
 
 		// Bare keywords that should quit without colon prefix
 		if (trimmed === "exit" || trimmed === "quit" || trimmed === "q") {
@@ -389,7 +426,10 @@ export class PirePiTUI {
 
 		this.transcript.add("user", trimmed);
 		this.messages.push({ role: "user", content: trimmed });
-		this.ui.requestRender();
+
+		// Reset turn counter for new user message
+		this.statusBar.setTurns(0, MAX_TURNS);
+		this.flushRender();
 		await this.agentLoop();
 	}
 
@@ -470,6 +510,8 @@ export class PirePiTUI {
 			case "clear":
 				this.transcript.clear();
 				this.messages = [];
+				this.statusBar.setTurns(0, 0);
+				this.statusBar.resetTokens();
 				this.transcript.add("system", BANNER);
 				this.transcript.add("system", "Transcript cleared.");
 				break;
@@ -482,20 +524,20 @@ export class PirePiTUI {
 			default:
 				this.transcript.add("error", `Unknown command: :${command}. Type :help for available commands.`);
 		}
-		this.ui.requestRender();
+		this.flushRender();
 	}
 
 	private async agentLoop(): Promise<void> {
 		if (!this.llm) {
 			this.transcript.add("error", "No LLM config found. Set OPENAI_API_KEY + OPENAI_BASE_URL or create ~/.pire/config.yaml");
-			this.ui.requestRender();
+			this.flushRender();
 			return;
 		}
 
 		this.processing = true;
 		this.statusBar.setProcessing(true);
 		this.statusBar.resetTokens();
-		this.ui.requestRender();
+		this.flushRender();
 
 		try {
 			// Handle pending URL download
@@ -523,8 +565,9 @@ export class PirePiTUI {
 			const toolSchemas = RE_TOOLS.map((t) => toolToFunction(t));
 
 			for (let turn = 0; turn < MAX_TURNS; turn++) {
-				this.statusBar.setTurns(MAX_TURNS - turn, MAX_TURNS);
-				this.ui.requestRender();
+				// Count UP: turn 1/40, 2/40, ...
+				this.statusBar.setTurns(turn + 1, MAX_TURNS);
+				this.requestRender();
 
 				let assistantContent = "";
 
@@ -538,7 +581,8 @@ export class PirePiTUI {
 							this.transcript.add("assistant", assistantContent);
 							this.transcript["entries"][this.transcript["entries"].length - 1].streaming = true;
 						}
-						this.ui.requestRender();
+						// Throttled render — coalesces rapid chunks
+						this.requestRender();
 					},
 				});
 
@@ -574,7 +618,7 @@ export class PirePiTUI {
 						args = JSON.parse(tc.function.arguments);
 					} catch { args = {}; }
 
-					// Auto-detect target from tool calls (path/binary/target/file args)
+					// Auto-detect target from tool calls
 					if (!this.loadedTarget) {
 						const candidate = args.path || args.binary || args.target || args.file;
 						if (candidate && typeof candidate === "string" && candidate.startsWith("/")) {
@@ -595,12 +639,11 @@ export class PirePiTUI {
 					} catch {
 						displayArgs = tc.function.arguments;
 					}
-					// Truncate long args in the display
 					if (displayArgs.length > 120) {
 						displayArgs = displayArgs.slice(0, 117) + "...";
 					}
 					this.transcript.add("tool_call", `${tc.function.name}(${displayArgs})`);
-					this.ui.requestRender();
+					this.requestRender();
 
 					let resultText: string;
 					try {
@@ -616,7 +659,6 @@ export class PirePiTUI {
 
 					// Clean up result text for display
 					let displayResult = resultText;
-					// Strip Python traceback lines (keep first line of error only)
 					const resultLines = displayResult.split("\n");
 					const cleanedLines: string[] = [];
 					let inTraceback = false;
@@ -626,17 +668,16 @@ export class PirePiTUI {
 							continue;
 						}
 						if (inTraceback) {
-							if (ln.startsWith("  ") || ln.startsWith("	") || ln.startsWith("    ")) continue;
+							if (ln.startsWith("  ") || ln.startsWith("\t") || ln.startsWith("    ")) continue;
 							inTraceback = false;
 						}
-						// Skip angr/unicorn warning spam
 						if (/^(WARNING|INFO|ERROR)\s+\|/.test(ln)) continue;
 						cleanedLines.push(ln);
 					}
 					displayResult = cleanedLines.join("\n").trim() || "(no output)";
 
 					this.transcript.add("tool_result", displayResult.slice(0, 200) + (displayResult.length > 200 ? "..." : ""));
-					this.ui.requestRender();
+					this.requestRender();
 
 					this.messages.push({ role: "tool", tool_call_id: tc.id, content: resultText });
 				}
@@ -646,7 +687,7 @@ export class PirePiTUI {
 		} finally {
 			this.processing = false;
 			this.statusBar.setProcessing(false);
-			this.ui.requestRender();
+			this.flushRender();
 		}
 	}
 
@@ -656,12 +697,13 @@ export class PirePiTUI {
 			() => { this.stop(); },
 			() => {
 				this.transcript.add("system", chalk.bold.yellow("Press Ctrl+C again to quit."));
-				this.ui.requestRender();
+				this.flushRender();
 			},
 		);
 	}
 
 	stop(): void {
+		this.throttle.dispose();
 		this.ui.stop();
 	}
 }

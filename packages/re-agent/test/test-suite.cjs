@@ -125,7 +125,7 @@ const piTuiSrc = fs.readFileSync(path.join(__dirname, "..", "src", "pire-pi-tui.
 
 ok(piTuiSrc.includes("class PirePiTUI"), "PirePiTUI class exists");
 ok(piTuiSrc.includes("@earendil-works/pi-tui"), "Pi TUI imports from @earendil-works/pi-tui");
-ok(piTuiSrc.includes("TuiMainScreen"), "Pi TUI uses TuiMainScreen");
+ok(piTuiSrc.includes("TuiAltScreen"), "Pi TUI uses TuiAltScreen");
 ok(piTuiSrc.includes("ProcessTerminal"), "Pi TUI uses ProcessTerminal");
 ok(piTuiSrc.includes("ScrollView"), "Pi TUI uses ScrollView");
 ok(piTuiSrc.includes("VStack"), "Pi TUI uses VStack");
