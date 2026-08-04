@@ -1,55 +1,97 @@
-#!/bin/sh
-# pire install script — cross-platform installer with component selection
+#!/bin/bash
+# ============================================================================
+# pire Installer
+# ============================================================================
+# Cross-platform installer with interactive component selection.
 #
-# One-line install:
-#   curl -fsSL https://raw.githubusercontent.com/evangit2/pire/main/install.sh | sh
+# Usage:
+#   curl -fsSL https://raw.githubusercontent.com/evangit2/pire/main/install.sh | bash
 #
-# Or clone and run:
-#   git clone https://github.com/evangit2/pire.git && cd pire && ./install.sh
+# Or with options:
+#   ./install.sh --all     # install everything non-interactively
+#   ./install.sh --core    # core only (no prompts)
+#   ./install.sh --no-wine # skip wine
+#   ./install.sh --help
 #
-# Flags:
-#   --all     Install everything (no prompts)
-#   --core    Install only core components (no prompts)
-#   --no-wine Skip wine even if on Linux/macOS
-#   --help    Show help
-#
-# Supports: Ubuntu/Debian, Fedora/RHEL, Arch Linux, macOS (Homebrew), Windows (Git Bash/WSL/MSYS2)
+# Supports: Ubuntu/Debian, Fedora/RHEL, Arch, openSUSE, Alpine, macOS, WSL,
+#           Windows (Git Bash/MSYS2)
+# ============================================================================
 
 set -e
 
-# ─── Helpers ──────────────────────────────────────────────────
+# ── Colors ────────────────────────────────────────────────────
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+MAGENTA='\033[0;35m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+NC='\033[0m'
 
-info()  { printf "\033[1;34m==>\033[0m %s\n" "$1"; }
-ok()    { printf "\033[1;32m  ✓\033[0m %s\n" "$1"; }
-warn()  { printf "\033[1;33m  !\033[0m %s\n" "$1"; }
-fail()  { printf "\033[1;31m  ✗\033[0m %s\n" "$1"; exit 1; }
+# ── Helpers ───────────────────────────────────────────────────
+log_step()   { echo -e "${CYAN}→${NC} $1"; }
+log_done()   { echo -e "${GREEN}✓${NC} $1"; }
+log_warn()   { echo -e "${YELLOW}⚠${NC} $1"; }
+log_error()  { echo -e "${RED}✗${NC} $1"; }
+log_section() {
+	echo ""
+	echo -e "${MAGENTA}${BOLD}═════════════════════════════════════════════════════════════${NC}"
+	echo -e "${MAGENTA}${BOLD}  $1${NC}"
+	echo -e "${MAGENTA}${BOLD}═════════════════════════════════════════════════════════════${NC}"
+}
 
 has() { command -v "$1" >/dev/null 2>&1; }
 
+# ── Banner ────────────────────────────────────────────────────
+print_banner() {
+	echo ""
+	echo -e "${MAGENTA}${BOLD}"
+	echo "┌─────────────────────────────────────────────────────────┐"
+	echo "│                   🔧 pire Installer                      │"
+	echo "│  Autonomous reverse-engineering agent                    │"
+	echo "│  github.com/evangit2/pire                                │"
+	echo "└─────────────────────────────────────────────────────────┘"
+	echo -e "${NC}"
+}
+
+# ── Interactive prompt ────────────────────────────────────────
+IS_INTERACTIVE=true
+if ! [ -t 0 ]; then
+	IS_INTERACTIVE=false
+fi
+
 prompt_yesno() {
 	# prompt_yesno "question" default(y/n)
+	QUESTION="$1"
 	DEFAULT="$2"
+
 	if [ "$NONINTERACTIVE" = "1" ]; then
-		if [ "$DEFAULT" = "y" ]; then return 0; else return 1; fi
+		[ "$DEFAULT" = "y" ] && return 0 || return 1
 	fi
-	PROMPT="$1"
-	if [ "$DEFAULT" = "y" ]; then
-		PROMPT="$PROMPT [Y/n] "
+
+	SUFFIX="[y/N]"
+	[ "$DEFAULT" = "y" ] && SUFFIX="[Y/n]"
+
+	if [ "$IS_INTERACTIVE" = "true" ]; then
+		printf "%s %s " "$QUESTION" "$SUFFIX"
+		read REPLY 2>/dev/null || REPLY=""
+	elif [ -r /dev/tty ] && [ -w /dev/tty ]; then
+		printf "%s %s " "$QUESTION" "$SUFFIX" > /dev/tty
+		IFS= read REPLY < /dev/tty 2>/dev/null || REPLY=""
 	else
-		PROMPT="$PROMPT [y/N] "
+		[ "$DEFAULT" = "y" ] && return 0 || return 1
 	fi
-	printf "%s" "$PROMPT"
-	read REPLY 2>/dev/null || REPLY=""
+
 	case "$REPLY" in
 		y|Y|yes|YES) return 0 ;;
-		n|N|no|NO) return 1 ;;
-		"") [ "$DEFAULT" = "y" ] && return 0 || return 1 ;;
-		*) return 1 ;;
+		n|N|no|NO)   return 1 ;;
+		"")          [ "$DEFAULT" = "y" ] && return 0 || return 1 ;;
+		*)           return 1 ;;
 	esac
 }
 
-# ─── Parse args ───────────────────────────────────────────────
-
+# ── Parse args ────────────────────────────────────────────────
 INSTALL_ALL=0
 INSTALL_CORE_ONLY=0
 NO_WINE=0
@@ -57,10 +99,10 @@ NONINTERACTIVE=0
 
 for arg in "$@"; do
 	case "$arg" in
-		--all)          INSTALL_ALL=1; NONINTERACTIVE=1 ;;
-		--core)         INSTALL_CORE_ONLY=1; NONINTERACTIVE=1 ;;
-		--no-wine)      NO_WINE=1 ;;
-		--yes|-y)       NONINTERACTIVE=1 ;;
+		--all)     INSTALL_ALL=1; NONINTERACTIVE=1 ;;
+		--core)    INSTALL_CORE_ONLY=1; NONINTERACTIVE=1 ;;
+		--no-wine) NO_WINE=1 ;;
+		--yes|-y)  NONINTERACTIVE=1 ;;
 		--help|-h)
 			echo "pire install — cross-platform installer"
 			echo ""
@@ -74,69 +116,67 @@ for arg in "$@"; do
 			echo "  --help, -h  Show this help"
 			echo ""
 			echo "One-liner:"
-			echo "  curl -fsSL https://raw.githubusercontent.com/evangit2/pire/main/install.sh | sh"
+			echo "  curl -fsSL https://raw.githubusercontent.com/evangit2/pire/main/install.sh | bash"
 			exit 0
 			;;
 		*) echo "Unknown option: $arg"; exit 1 ;;
 	esac
 done
 
-# ─── Detect Platform ──────────────────────────────────────────
+print_banner
+
+# ── Detect Platform ───────────────────────────────────────────
+log_section "Platform Detection"
 
 OS=""
 PKG_MGR=""
 
-# Detect Windows (Git Bash, MSYS2, Cygwin, WSL)
 UNAME_S="$(uname -s)"
 case "$UNAME_S" in
 	MSYS*|MINGW*|CYGWIN*)
 		OS="windows"
-		PKG_MGR="pacman"  # MSYS2 pacman
+		PKG_MGR="pacman"
 		;;
 esac
 
-# Detect WSL
 if [ -z "$OS" ] && grep -qi microsoft /proc/version 2>/dev/null; then
 	OS="wsl"
 fi
 
-# Detect Linux distros
 if [ -z "$OS" ] && [ -f /etc/os-release ]; then
 	. /etc/os-release
 	case "$ID" in
-		ubuntu|debian|linuxmint|pop|kali)
-			OS="debian"; PKG_MGR="apt" ;;
-		fedora|rhel|centos|rocky|alma)
-			OS="fedora"; PKG_MGR="dnf" ;;
-		arch|manjaro|endeavouros|garuda)
-			OS="arch"; PKG_MGR="pacman" ;;
-		opensuse*|suse)
-			OS="suse"; PKG_MGR="zypper" ;;
-		alpine)
-			OS="alpine"; PKG_MGR="apk" ;;
-		*)
-			OS="$ID"; PKG_MGR="unknown" ;;
+		ubuntu|debian|linuxmint|pop|kali) OS="debian"; PKG_MGR="apt" ;;
+		fedora|rhel|centos|rocky|alma)     OS="fedora"; PKG_MGR="dnf" ;;
+		arch|manjaro|endeavouros|garuda)   OS="arch"; PKG_MGR="pacman" ;;
+		opensuse*|suse)                    OS="suse"; PKG_MGR="zypper" ;;
+		alpine)                            OS="alpine"; PKG_MGR="apk" ;;
+		*)                                 OS="$ID"; PKG_MGR="unknown" ;;
 	esac
 fi
 
-# Detect macOS
 if [ -z "$OS" ] && [ "$UNAME_S" = "Darwin" ]; then
 	OS="macos"
 	PKG_MGR="brew"
 fi
 
 if [ -z "$OS" ]; then
-	fail "Could not detect OS. uname: $UNAME_S. Please install dependencies manually."
+	log_error "Could not detect OS (uname: $UNAME_S)"
+	echo "  Please install dependencies manually."
+	exit 1
 fi
 
-info "Detected: $OS ($PKG_MGR)"
+log_done "OS:      $OS"
+log_done "Package: $PKG_MGR"
 
-# ─── Component Selection ──────────────────────────────────────
+# ── Component Selection ──────────────────────────────────────
+log_section "Component Selection"
 
-# Core components (always installed)
-# - node, npm, git, gcc/make, radare2, binutils (nm, size, objdump, strings)
+echo "  Core (always installed):"
+echo "    node, npm, git, gcc, radare2, binutils (file, nm, strings, objdump)"
+echo ""
 
-# Optional components
+# Component flags
 INSTALL_WINE=0
 INSTALL_MINGW=0
 INSTALL_GHIDRA=0
@@ -147,10 +187,10 @@ INSTALL_JADX=0
 INSTALL_ILSPY=0
 INSTALL_YARA=0
 INSTALL_VOLATILITY=0
-INSTALL_PYTHON_TOOLS=0  # capstone, keystone, unicorn, angr, lief
+INSTALL_PYTHON_TOOLS=0
 
 if [ "$INSTALL_ALL" = "1" ]; then
-	info "Installing ALL components (--all)"
+	echo -e "  ${GREEN}Installing ALL components${NC}"
 	INSTALL_WINE=1
 	INSTALL_MINGW=1
 	INSTALL_GHIDRA=1
@@ -164,64 +204,96 @@ if [ "$INSTALL_ALL" = "1" ]; then
 	INSTALL_PYTHON_TOOLS=1
 	[ "$NO_WINE" = "1" ] && INSTALL_WINE=0
 elif [ "$INSTALL_CORE_ONLY" = "1" ]; then
-	info "Installing CORE components only (--core)"
+	echo -e "  ${GREEN}Installing CORE components only${NC}"
 else
-	echo ""
-	info "Component Selection"
-	echo "  Core (node, npm, git, gcc, radare2, binutils) — always installed"
+	echo "  Select optional components:"
 	echo ""
 
 	if [ "$OS" != "windows" ] && [ "$NO_WINE" = "0" ]; then
-		if prompt_yesno "Install Wine? (run Windows PE binaries)" "y"; then
+		if prompt_yesno "  Wine (run Windows PE binaries)" "y"; then
 			INSTALL_WINE=1
+			echo -e "    ${GREEN}✓${NC} Wine"
+		else
+			echo -e "    ${RED}✗${NC} Wine"
 		fi
 	fi
 
-	if prompt_yesno "Install MinGW-w64? (cross-compile Windows binaries)" "y"; then
+	if prompt_yesno "  MinGW-w64 (cross-compile Windows binaries)" "y"; then
 		INSTALL_MINGW=1
+		echo -e "    ${GREEN}✓${NC} MinGW-w64"
+	else
+		echo -e "    ${RED}✗${NC} MinGW-w64"
 	fi
 
-	if prompt_yesno "Install Ghidra? (decompiler — large download)" "n"; then
-		INSTALL_GHIDRA=1
-	fi
-
-	if prompt_yesno "Install Frida? (dynamic instrumentation)" "n"; then
-		INSTALL_FRIDA=1
-	fi
-
-	if prompt_yesno "Install GDB? (scripted debugging)" "n"; then
-		INSTALL_GDB=1
-	fi
-
-	if prompt_yesno "Install Binwalk? (firmware extraction)" "n"; then
-		INSTALL_BINWALK=1
-	fi
-
-	if prompt_yesno "Install JADX? (APK/DEX → Java decompiler)" "n"; then
-		INSTALL_JADX=1
-	fi
-
-	if prompt_yesno "Install ILSpy? (.NET → C# decompiler)" "n"; then
-		INSTALL_ILSPY=1
-	fi
-
-	if prompt_yesno "Install Yara? (pattern matching)" "n"; then
-		INSTALL_YARA=1
-	fi
-
-	if prompt_yesno "Install Volatility? (memory forensics)" "n"; then
-		INSTALL_VOLATILITY=1
-	fi
-
-	if prompt_yesno "Install Python RE tools? (capstone, keystone, unicorn, angr, lief)" "y"; then
+	if prompt_yesno "  Python RE tools (capstone, keystone, unicorn, angr, lief)" "y"; then
 		INSTALL_PYTHON_TOOLS=1
+		echo -e "    ${GREEN}✓${NC} Python RE tools"
+	else
+		echo -e "    ${RED}✗${NC} Python RE tools"
 	fi
 
 	echo ""
+	echo "  Advanced tools (optional):"
+	echo ""
+
+	if prompt_yesno "  Ghidra (decompiler — ~400MB download)" "n"; then
+		INSTALL_GHIDRA=1
+		echo -e "    ${GREEN}✓${NC} Ghidra"
+	else
+		echo -e "    ${RED}✗${NC} Ghidra"
+	fi
+
+	if prompt_yesno "  Frida (dynamic instrumentation)" "n"; then
+		INSTALL_FRIDA=1
+		echo -e "    ${GREEN}✓${NC} Frida"
+	else
+		echo -e "    ${RED}✗${NC} Frida"
+	fi
+
+	if prompt_yesno "  GDB (scripted debugging)" "n"; then
+		INSTALL_GDB=1
+		echo -e "    ${GREEN}✓${NC} GDB"
+	else
+		echo -e "    ${RED}✗${NC} GDB"
+	fi
+
+	if prompt_yesno "  Binwalk (firmware extraction)" "n"; then
+		INSTALL_BINWALK=1
+		echo -e "    ${GREEN}✓${NC} Binwalk"
+	else
+		echo -e "    ${RED}✗${NC} Binwalk"
+	fi
+
+	if prompt_yesno "  JADX (APK/DEX → Java decompiler)" "n"; then
+		INSTALL_JADX=1
+		echo -e "    ${GREEN}✓${NC} JADX"
+	else
+		echo -e "    ${RED}✗${NC} JADX"
+	fi
+
+	if prompt_yesno "  ILSpy (.NET → C# decompiler)" "n"; then
+		INSTALL_ILSPY=1
+		echo -e "    ${GREEN}✓${NC} ILSpy"
+	else
+		echo -e "    ${RED}✗${NC} ILSpy"
+	fi
+
+	if prompt_yesno "  Yara (pattern matching)" "n"; then
+		INSTALL_YARA=1
+		echo -e "    ${GREEN}✓${NC} Yara"
+	else
+		echo -e "    ${RED}✗${NC} Yara"
+	fi
+
+	if prompt_yesno "  Volatility (memory forensics)" "n"; then
+		INSTALL_VOLATILITY=1
+		echo -e "    ${GREEN}✓${NC} Volatility"
+	else
+		echo -e "    ${RED}✗${NC} Volatility"
+	fi
 fi
 
-# ─── Package Manager Abstraction ──────────────────────────────
-
+# ── Package Manager Abstraction ───────────────────────────────
 pkg_install() {
 	case "$PKG_MGR" in
 		apt)    sudo apt-get install -y -qq "$@" 2>/dev/null ;;
@@ -230,89 +302,99 @@ pkg_install() {
 		zypper) sudo zypper install -y -q "$@" 2>/dev/null ;;
 		apk)    sudo apk add -q "$@" 2>/dev/null ;;
 		brew)   brew install "$@" 2>/dev/null ;;
-		*)      warn "Unknown package manager for: $*" ;;
+		*)      log_warn "Unknown package manager for: $*" ;;
 	esac
 }
 
 pip_install() {
 	if has pip3; then
-		pip3 install --user -q "$@" 2>/dev/null || warn "pip install failed: $*"
+		pip3 install --user -q "$@" 2>/dev/null || log_warn "pip install failed: $*"
 	elif has pip; then
-		pip install --user -q "$@" 2>/dev/null || warn "pip install failed: $*"
+		pip install --user -q "$@" 2>/dev/null || log_warn "pip install failed: $*"
 	else
-		warn "pip not found, skipping: $*"
+		log_warn "pip not found, skipping: $*"
 	fi
 }
 
-# ─── Install Core ─────────────────────────────────────────────
-
-info "Installing core components..."
-
-CORE_PACKAGES=""
+# ── Install Core ──────────────────────────────────────────────
+log_section "Core Components"
 
 case "$OS" in
 	debian)
-		CORE_PACKAGES="nodejs npm git build-essential radare2 binutils file"
+		log_step "Updating package index..."
 		sudo apt-get update -qq 2>/dev/null
+		log_step "Installing core packages..."
+		pkg_install nodejs npm git build-essential radare2 binutils file
 		;;
 	fedora)
-		CORE_PACKAGES="nodejs npm git gcc make radare2 binutils file"
+		log_step "Installing core packages..."
+		pkg_install nodejs npm git gcc make radare2 binutils file
 		;;
 	arch)
-		CORE_PACKAGES="nodejs npm git base-devel radare2 binutils file"
+		log_step "Installing core packages..."
+		pkg_install nodejs npm git base-devel radare2 binutils file
 		;;
 	suse)
-		CORE_PACKAGES="nodejs npm git gcc make radare2 binutils file"
+		log_step "Installing core packages..."
+		pkg_install nodejs npm git gcc make radare2 binutils file
 		;;
 	alpine)
-		CORE_PACKAGES="nodejs npm git build-base radare2 binutils file"
+		log_step "Installing core packages..."
+		pkg_install nodejs npm git build-base radare2 binutils file
 		;;
 	macos)
 		if ! has brew; then
-			info "Installing Homebrew..."
+			log_step "Installing Homebrew..."
 			/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 		fi
-		CORE_PACKAGES="node radare2 binutils git"
+		log_done "Homebrew ready"
+		log_step "Installing core packages..."
+		pkg_install node radare2 binutils git
 		;;
 	wsl)
 		. /etc/os-release 2>/dev/null
 		case "$ID" in
 			ubuntu|debian|linuxmint|pop)
 				OS="debian"; PKG_MGR="apt"
-				CORE_PACKAGES="nodejs npm git build-essential radare2 binutils file"
+				log_step "Updating package index..."
 				sudo apt-get update -qq 2>/dev/null
+				log_step "Installing core packages..."
+				pkg_install nodejs npm git build-essential radare2 binutils file
 				;;
 			fedora|rhel|centos|rocky|alma)
 				OS="fedora"; PKG_MGR="dnf"
-				CORE_PACKAGES="nodejs npm git gcc make radare2 binutils file"
+				log_step "Installing core packages..."
+				pkg_install nodejs npm git gcc make radare2 binutils file
 				;;
-			*) 
+			*)
 				OS="debian"; PKG_MGR="apt"
-				CORE_PACKAGES="nodejs npm git build-essential radare2 binutils file"
+				log_step "Updating package index..."
 				sudo apt-get update -qq 2>/dev/null
+				log_step "Installing core packages..."
+				pkg_install nodejs npm git build-essential radare2 binutils file
 				;;
 		esac
 		;;
 	windows)
-		CORE_PACKAGES="nodejs npm git mingw-w64-x86_64-radare2 mingw-w64-x86_64-binutils"
+		log_step "Installing core packages..."
+		pkg_install nodejs npm git mingw-w64-x86_64-radare2 mingw-w64-x86_64-binutils
 		;;
 esac
 
-if [ -n "$CORE_PACKAGES" ]; then
-	pkg_install $CORE_PACKAGES || warn "Some core packages may not be available"
-fi
-
 # Ensure Node.js 22+
+log_step "Checking Node.js version..."
 NODE_VER=$(node -v 2>/dev/null | sed 's/v//' | cut -d. -f1 || echo "0")
 if [ "$NODE_VER" -lt 22 ] 2>/dev/null; then
-	warn "Node.js is v$NODE_VER, need v22+"
+	log_warn "Node.js is v$NODE_VER, need v22+"
+	log_step "Upgrading Node.js..."
 	case "$OS" in
 		debian)
-			info "Installing Node 22 via NodeSource..."
+			# NodeSource setup for Node.js 22
 			curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - 2>/dev/null
 			sudo apt-get install -y -qq nodejs 2>/dev/null
 			;;
 		fedora)
+			# NodeSource RPM for Node.js 22
 			curl -fsSL https://rpm.nodesource.com/setup_22.x | sudo bash - 2>/dev/null
 			sudo dnf install -y -q nodejs 2>/dev/null
 			;;
@@ -323,51 +405,61 @@ if [ "$NODE_VER" -lt 22 ] 2>/dev/null; then
 			brew install node@22 2>/dev/null || brew link --overwrite node@22 2>/dev/null
 			;;
 	esac
+	log_done "Node.js upgraded to $(node -v)"
+else
+	log_done "Node.js $(node -v)"
 fi
 
-# ─── Install Optional Components ──────────────────────────────
-
+# ── Install Wine ──────────────────────────────────────────────
 if [ "$INSTALL_WINE" = "1" ]; then
-	info "Installing Wine..."
+	log_section "Wine"
+	log_step "Installing Wine..."
 	case "$OS" in
-		debian)   pkg_install wine64 wine ;;
-		fedora)   pkg_install wine ;;
-		arch)     pkg_install wine ;;
-		suse)     pkg_install wine ;;
-		macos)    brew install --cask wine-stable 2>/dev/null || warn "Wine on macOS Apple Silicon may not work" ;;
-		windows)  ok "Wine not needed on Windows" ;;
+		debian)  pkg_install wine64 wine ;;
+		fedora)  pkg_install wine ;;
+		arch)    pkg_install wine ;;
+		suse)    pkg_install wine ;;
+		macos)   brew install --cask wine-stable 2>/dev/null || log_warn "Wine on macOS Apple Silicon may not work" ;;
+		windows) log_done "Wine not needed on Windows" ;;
 	esac
 
-	# Init wine prefix
-	WINEPREFIX="${WINEPREFIX:-$HOME/.wine}"
-	if [ ! -d "$WINEPREFIX" ] && [ "$OS" != "windows" ]; then
-		info "Initializing Wine prefix..."
-		WINEPREFIX="$WINEPREFIX" wineboot --init 2>/dev/null || warn "Wine init failed"
-		ok "Wine prefix initialized"
-	else
-		ok "Wine prefix exists"
+	if [ "$OS" != "windows" ]; then
+		WINEPREFIX="${WINEPREFIX:-$HOME/.wine}"
+		if [ ! -d "$WINEPREFIX" ]; then
+			log_step "Initializing Wine prefix..."
+			WINEPREFIX="$WINEPREFIX" wineboot --init 2>/dev/null || log_warn "Wine init failed"
+			log_done "Wine prefix initialized at $WINEPREFIX"
+		else
+			log_done "Wine prefix exists at $WINEPREFIX"
+		fi
 	fi
 fi
 
+# ── Install MinGW ─────────────────────────────────────────────
 if [ "$INSTALL_MINGW" = "1" ]; then
-	info "Installing MinGW-w64..."
+	log_section "MinGW-w64"
+	log_step "Installing MinGW-w64 cross-compiler..."
 	case "$OS" in
-		debian)   pkg_install gcc-mingw-w64-x86-64 ;;
-		fedora)   pkg_install mingw64-gcc ;;
-		arch)     pkg_install mingw-w64-gcc ;;
-		suse)     pkg_install mingw64-gcc ;;
-		macos)    brew install mingw-w64 ;;
-		windows)  pkg_install mingw-w64-x86_64-gcc ;;
+		debian)  pkg_install gcc-mingw-w64-x86-64 ;;
+		fedora)  pkg_install mingw64-gcc ;;
+		arch)    pkg_install mingw-w64-gcc ;;
+		suse)    pkg_install mingw64-gcc ;;
+		macos)   brew install mingw-w64 ;;
+		windows) pkg_install mingw-w64-x86_64-gcc ;;
 	esac
 fi
 
+# ── Install GDB ───────────────────────────────────────────────
 if [ "$INSTALL_GDB" = "1" ]; then
-	info "Installing GDB..."
+	log_section "GDB"
+	log_step "Installing GDB..."
 	pkg_install gdb
 fi
 
+# ── Install Binwalk ───────────────────────────────────────────
 if [ "$INSTALL_BINWALK" = "1" ]; then
-	info "Installing Binwalk..."
+	log_section "Binwalk"
+	log_step "Installing Binwalk..."
 	case "$OS" in
 		debian|fedora|arch|suse) pkg_install binwalk ;;
 		macos) brew install binwalk ;;
@@ -375,167 +467,160 @@ if [ "$INSTALL_BINWALK" = "1" ]; then
 	esac
 fi
 
+# ── Install Yara ──────────────────────────────────────────────
 if [ "$INSTALL_YARA" = "1" ]; then
-	info "Installing Yara..."
+	log_section "Yara"
+	log_step "Installing Yara..."
 	case "$OS" in
-		debian)   pkg_install yara ;;
-		fedora)   pkg_install yara ;;
-		arch)     pkg_install yara ;;
-		suse)     pkg_install yara ;;
-		macos)    brew install yara ;;
+		debian|fedora|arch|suse) pkg_install yara ;;
+		macos) brew install yara ;;
 		*) pip_install yara-python ;;
 	esac
 fi
 
+# ── Install Volatility ────────────────────────────────────────
 if [ "$INSTALL_VOLATILITY" = "1" ]; then
-	info "Installing Volatility 3..."
+	log_section "Volatility"
+	log_step "Installing Volatility 3..."
 	pip_install volatility3
 fi
 
+# ── Install Frida ─────────────────────────────────────────────
 if [ "$INSTALL_FRIDA" = "1" ]; then
-	info "Installing Frida..."
+	log_section "Frida"
+	log_step "Installing Frida..."
 	pip_install frida-tools
 	case "$OS" in
-		debian)   pkg_install python3-frida 2>/dev/null ;;
-		arch)     pkg_install frida-tools 2>/dev/null ;;
+		debian) pkg_install python3-frida 2>/dev/null ;;
+		arch)   pkg_install frida-tools 2>/dev/null ;;
 	esac
 fi
 
+# ── Install JADX ──────────────────────────────────────────────
 if [ "$INSTALL_JADX" = "1" ]; then
-	info "Installing JADX..."
+	log_section "JADX"
+	log_step "Installing JADX..."
 	case "$OS" in
 		debian|fedora|arch|suse)
-			pkg_install default-jre 2>/dev/null || warn "JADX needs Java (JRE)"
+			pkg_install default-jre 2>/dev/null || log_warn "JADX needs Java (JRE)"
 			if has jadx 2>/dev/null; then
-				ok "JADX already installed"
+				log_done "JADX already installed"
 			else
-				info "Downloading JADX..."
+				log_step "Downloading JADX v1.5.0..."
 				JADX_VER="1.5.0"
 				curl -fsSL "https://github.com/skylot/jadx/releases/download/v${JADX_VER}/jadx-${JADX_VER}.zip" -o /tmp/jadx.zip 2>/dev/null
 				sudo mkdir -p /opt/jadx && sudo unzip -q -o /tmp/jadx.zip -d /opt/jadx 2>/dev/null
 				sudo ln -sf /opt/jadx/bin/jadx /usr/local/bin/jadx 2>/dev/null
 				sudo ln -sf /opt/jadx/bin/jadx-gui /usr/local/bin/jadx-gui 2>/dev/null
 				rm -f /tmp/jadx.zip
+				log_done "JADX installed to /opt/jadx"
 			fi
 			;;
 		macos)
 			brew install jadx
 			;;
-		*) warn "JADX install not automated on $OS — see https://github.com/skylot/jadx" ;;
+		*) log_warn "JADX install not automated on $OS — see https://github.com/skylot/jadx" ;;
 	esac
 fi
 
+# ── Install ILSpy ─────────────────────────────────────────────
 if [ "$INSTALL_ILSPY" = "1" ]; then
-	info "Installing ILSpy..."
+	log_section "ILSpy"
+	log_step "Installing ILSpy..."
 	case "$OS" in
 		debian|fedora|arch|suse)
-			pkg_install dotnet-sdk-8.0 2>/dev/null || pkg_install dotnet-sdk 2>/dev/null || warn "ILSpy needs .NET SDK"
+			pkg_install dotnet-sdk-8.0 2>/dev/null || pkg_install dotnet-sdk 2>/dev/null || log_warn "ILSpy needs .NET SDK"
 			if has dotnet 2>/dev/null; then
-				dotnet tool install -g ilspycmd 2>/dev/null || warn "ilspycmd install failed"
+				dotnet tool install -g ilspycmd 2>/dev/null || log_warn "ilspycmd install failed"
+				log_done "ILSpy installed via dotnet tool"
 			fi
 			;;
 		macos)
-			brew install --cask dotnet-sdk 2>/dev/null || warn "Install .NET SDK manually"
+			brew install --cask dotnet-sdk 2>/dev/null || log_warn "Install .NET SDK manually"
 			if has dotnet 2>/dev/null; then
 				dotnet tool install -g ilspycmd 2>/dev/null
+				log_done "ILSpy installed via dotnet tool"
 			fi
 			;;
-		*) warn "ILSpy install not automated on $OS — see https://github.com/icsharpcode/ILSpy" ;;
+		*) log_warn "ILSpy install not automated on $OS — see https://github.com/icsharpcode/ILSpy" ;;
 	esac
 fi
 
+# ── Install Ghidra ────────────────────────────────────────────
 if [ "$INSTALL_GHIDRA" = "1" ]; then
-	info "Installing Ghidra..."
+	log_section "Ghidra"
+	log_step "Installing Ghidra..."
 	case "$OS" in
 		debian|fedora|arch|suse|wsl)
-			pkg_install default-jdk 2>/dev/null || warn "Ghidra needs Java (JDK 17+)"
+			pkg_install default-jdk 2>/dev/null || log_warn "Ghidra needs Java (JDK 17+)"
 			if has java 2>/dev/null; then
 				GHIDRA_VER="11.1.2"
 				GHIDRA_DATE="20240709"
-				info "Downloading Ghidra ${GHIDRA_VER}..."
+				log_step "Downloading Ghidra ${GHIDRA_VER} (~400MB)..."
 				curl -fsSL "https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_${GHIDRA_VER}_build/ghidra_${GHIDRA_VER}_PUBLIC_${GHIDRA_DATE}.zip" -o /tmp/ghidra.zip 2>/dev/null
 				if [ -f /tmp/ghidra.zip ]; then
+					log_step "Extracting..."
 					sudo unzip -q -o /tmp/ghidra.zip -d /opt/ 2>/dev/null
 					sudo ln -sf /opt/ghidra_${GHIDRA_VER}_PUBLIC/ghidraRun /usr/local/bin/ghidra 2>/dev/null
-					ok "Ghidra installed to /opt/ghidra_${GHIDRA_VER}_PUBLIC"
 					rm -f /tmp/ghidra.zip
+					log_done "Ghidra installed to /opt/ghidra_${GHIDRA_VER}_PUBLIC"
 				else
-					warn "Ghidra download failed — install manually from https://ghidra-sre.org/"
+					log_warn "Download failed — install manually from https://ghidra-sre.org/"
 				fi
 			else
-				warn "Java not installed — Ghidra requires JDK 17+"
+				log_warn "Java not installed — Ghidra requires JDK 17+"
 			fi
 			;;
 		macos)
-			brew install --cask ghidra 2>/dev/null || warn "Install Ghidra manually from https://ghidra-sre.org/"
+			brew install --cask ghidra 2>/dev/null || log_warn "Install Ghidra manually from https://ghidra-sre.org/"
 			;;
-		*) warn "Ghidra install not automated on $OS — see https://ghidra-sre.org/" ;;
+		*) log_warn "Ghidra install not automated on $OS — see https://ghidra-sre.org/" ;;
 	esac
 fi
 
+# ── Install Python RE Tools ───────────────────────────────────
 if [ "$INSTALL_PYTHON_TOOLS" = "1" ]; then
-	info "Installing Python RE tools (capstone, keystone, unicorn, angr, lief)..."
+	log_section "Python RE Tools"
+	log_step "Installing capstone, keystone, unicorn, angr, lief..."
 	case "$OS" in
 		debian)
 			pkg_install python3-pip python3-venv 2>/dev/null
-			# Some distros need these as system packages
 			pkg_install python3-capstone python3-lief 2>/dev/null
 			;;
-		fedora)
-			pkg_install python3-pip python3-capstone python3-lief 2>/dev/null
-			;;
-		arch)
-			pkg_install python-pip python-capstone python-lief 2>/dev/null
-			;;
+		fedora) pkg_install python3-pip python3-capstone python3-lief 2>/dev/null ;;
+		arch)   pkg_install python-pip python-capstone python-lief 2>/dev/null ;;
 	esac
 	pip_install capstone keystone-engine unicorn angr lief
 fi
 
-# ─── Verify ───────────────────────────────────────────────────
+# ── Verify ────────────────────────────────────────────────────
+log_section "Verification"
 
-info "Verifying installations..."
 echo ""
+		has node    && log_done "Node.js $(node -v)"          || log_error "Node.js not installed"
+		has npm     && log_done "npm $(npm -v)"               || log_error "npm not installed"
+		has git     && log_done "git"                          || log_warn "git not installed"
+		has gcc     && log_done "gcc $(gcc -dumpversion)"     || log_warn "gcc not installed"
+		has r2      && log_done "radare2"                      || log_warn "radare2 not installed"
+		has strings && log_done "strings"                      || log_warn "strings not installed"
+		has objdump && log_done "objdump"                      || log_warn "objdump not installed"
+		has nm      && log_done "nm"                           || log_warn "nm not installed"
+		has file    && log_done "file"                         || log_warn "file not installed"
 
-has node    && ok "Node.js $(node -v)" || fail "Node.js not installed"
-has npm     && ok "npm $(npm -v)" || fail "npm not installed"
-has git     && ok "git $(git --version | head -1)" || warn "git not installed"
-has gcc     && ok "gcc $(gcc -dumpversion)" || warn "gcc not installed"
-has r2      && ok "radare2 $(r2 -v 2>/dev/null | head -1)" || warn "radare2 not installed"
-has strings && ok "strings" || warn "strings not installed"
-has objdump && ok "objdump" || warn "objdump not installed"
-has nm      && ok "nm" || warn "nm not installed"
-has file    && ok "file" || warn "file not installed"
+[ "$INSTALL_WINE" = "1" ]   && { (has wine || has wine64)                       && log_done "wine"                       || log_warn "wine not installed"; }
+[ "$INSTALL_MINGW" = "1" ]  && { has x86_64-w64-mingw32-gcc                     && log_done "MinGW-w64"                  || log_warn "MinGW-w64 not installed"; }
+[ "$INSTALL_GDB" = "1" ]    && { has gdb                                        && log_done "gdb"                        || log_warn "gdb not installed"; }
+[ "$INSTALL_BINWALK" = "1" ] && { has binwalk                                   && log_done "binwalk"                    || log_warn "binwalk not installed"; }
+[ "$INSTALL_FRIDA" = "1" ]  && { (has frida || has frida-ps)                    && log_done "frida"                      || log_warn "frida not installed"; }
+[ "$INSTALL_JADX" = "1" ]   && { has jadx                                       && log_done "jadx"                       || log_warn "jadx not installed"; }
+[ "$INSTALL_YARA" = "1" ]   && { has yara                                       && log_done "yara"                       || log_warn "yara not installed"; }
+[ "$INSTALL_PYTHON_TOOLS" = "1" ] && {
+	python3 -c "import capstone" 2>/dev/null && log_done "capstone" || log_warn "capstone not installed"
+	python3 -c "import lief" 2>/dev/null     && log_done "lief"     || log_warn "lief not installed"
+}
 
-if [ "$INSTALL_WINE" = "1" ]; then
-	(has wine || has wine64) && ok "wine" || warn "wine not installed"
-fi
-if [ "$INSTALL_MINGW" = "1" ]; then
-	has x86_64-w64-mingw32-gcc && ok "MinGW-w64" || warn "MinGW-w64 not installed"
-fi
-if [ "$INSTALL_GDB" = "1" ]; then
-	has gdb && ok "gdb" || warn "gdb not installed"
-fi
-if [ "$INSTALL_BINWALK" = "1" ]; then
-	has binwalk && ok "binwalk" || warn "binwalk not installed"
-fi
-if [ "$INSTALL_FRIDA" = "1" ]; then
-	(has frida || has frida-ps) && ok "frida" || warn "frida not installed"
-fi
-if [ "$INSTALL_JADX" = "1" ]; then
-	has jadx && ok "jadx" || warn "jadx not installed"
-fi
-if [ "$INSTALL_YARA" = "1" ]; then
-	has yara && ok "yara" || warn "yara not installed"
-fi
-if [ "$INSTALL_PYTHON_TOOLS" = "1" ]; then
-	python3 -c "import capstone" 2>/dev/null && ok "capstone" || warn "capstone not installed"
-	python3 -c "import lief" 2>/dev/null && ok "lief" || warn "lief not installed"
-fi
-
-# ─── Install npm dependencies ─────────────────────────────────
-
+# ── Install npm dependencies ──────────────────────────────────
 SCRIPT_DIR=""
-# Try to find the repo root (if running from cloned repo)
 if [ -f "$(dirname "$0")/package.json" ]; then
 	SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 elif [ -f "./package.json" ]; then
@@ -543,58 +628,59 @@ elif [ -f "./package.json" ]; then
 fi
 
 if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/package.json" ]; then
-	info "Installing npm dependencies..."
+	log_section "Node.js Dependencies"
+	log_step "Installing npm dependencies..."
 	cd "$SCRIPT_DIR"
-	npm install --ignore-scripts 2>/dev/null || npm install 2>/dev/null || warn "npm install had issues"
-	ok "npm dependencies installed"
+	npm install --ignore-scripts 2>/dev/null || npm install 2>/dev/null || log_warn "npm install had issues"
+	log_done "npm dependencies installed"
 
 	# Link pire CLI
 	if [ -f "$SCRIPT_DIR/packages/re-agent/src/cli.ts" ] && ! has pire 2>/dev/null; then
-		info "Installing pire CLI link..."
+		log_step "Linking pire CLI..."
 		sudo ln -sf "$SCRIPT_DIR/packages/re-agent/src/cli.ts" /usr/local/bin/pire 2>/dev/null || \
-			warn "Could not create /usr/local/bin/pire symlink"
+			log_warn "Could not create /usr/local/bin/pire symlink"
 		if ! has tsx 2>/dev/null; then
-			info "Installing tsx (for running .ts files)..."
-			npm install -g tsx 2>/dev/null || warn "Install tsx manually: npm install -g tsx"
+			log_step "Installing tsx..."
+			npm install -g tsx 2>/dev/null || log_warn "Install tsx manually: npm install -g tsx"
 		fi
-		ok "pire command available"
+		log_done "pire command available"
 	fi
 
 	# Run tests
 	if [ -f "$SCRIPT_DIR/packages/re-agent/test/test-suite.cjs" ]; then
-		info "Running test suite..."
+		log_step "Running test suite..."
 		if node packages/re-agent/test/test-suite.cjs 2>&1 | tail -3; then
-			ok "Tests passed"
+			log_done "Tests passed"
 		else
-			warn "Some tests failed"
+			log_warn "Some tests failed"
 		fi
 	fi
 fi
 
-# ─── Done ─────────────────────────────────────────────────────
+# ── Done ──────────────────────────────────────────────────────
+log_section "Installation Complete"
 
 echo ""
-info "Installation complete!"
+echo -e "  ${GREEN}${BOLD}pire is ready!${NC}"
 echo ""
-echo "  What you can do now:"
+echo "  Next steps:"
 echo ""
-echo "  1. Set your LLM API credentials:"
-echo "     export OPENAI_API_KEY=\"your-key\""
-echo "     export OPENAI_BASE_URL=\"https://api.openai.com/v1\""
-echo "     export OPENAI_MODEL=\"gpt-4o\""
+echo "    1. Set your LLM API credentials:"
+echo "       export OPENAI_API_KEY=\"your-key\""
+echo "       export OPENAI_BASE_URL=\"https://api.openai.com/v1\""
+echo "       export OPENAI_MODEL=\"gpt-4o\""
 echo ""
-echo "  2. Start pire:"
-echo "     pire                          # start chat"
-echo "     pire /bin/ls                  # analyze a binary"
-echo "     pire https://example.com/app.exe  # download & analyze"
+echo "    2. Start pire:"
+echo "       pire                              # start chat"
+echo "       pire /bin/ls                      # analyze a binary"
+echo "       pire https://example.com/app.exe  # download & analyze"
 echo ""
+
 if [ "$INSTALL_WINE" = "0" ] && [ "$OS" != "windows" ]; then
-	echo "  Note: Wine not installed — can't run Windows PE binaries."
-	echo "        Re-run with ./install.sh to add Wine."
+	echo -e "  ${YELLOW}⚠${NC} Wine not installed — can't run Windows PE binaries."
+	echo "        Re-run: ./install.sh"
 	echo ""
 fi
-if [ "$INSTALL_PYTHON_TOOLS" = "0" ]; then
-	echo "  Note: Python RE tools (capstone, angr, lief) not installed."
-	echo "        Re-run with ./install.sh to add them."
-	echo ""
-fi
+
+echo -e "  ${CYAN}Docs:${NC} https://github.com/evangit2/pire"
+echo ""
