@@ -476,8 +476,6 @@ case "$OS" in
 		pkg_install node radare2 binutils git
 		# Install coreutils for gtimeout (needed for pip timeout)
 		pkg_install coreutils 2>/dev/null || true
-		# Install cmake for keystone-engine (no arm64 wheel on macOS)
-		pkg_install cmake 2>/dev/null || true
 		# Ensure Python is available (node formula may pull it in, but not always)
 		pkg_install python@3 2>/dev/null || true
 		;;
@@ -816,9 +814,21 @@ install_python_tools() {
 	# Install packages individually — angr is slow to compile and
 	# shouldn't block capstone/keystone/unicorn/lief.
 	# Use --only-binary when available to avoid source compilation.
-	for pkg in capstone keystone-engine unicorn lief; do
+	for pkg in capstone unicorn lief; do
 		pip_install "$pkg" 2>/dev/null || true
 	done
+	# keystone-engine has no arm64 wheel on PyPI — use our pre-built one
+	if [ "$OS" = "macos" ] && [ "$(uname -m)" = "arm64" ]; then
+		KS_WHEEL="/tmp/keystone_engine-arm64.whl"
+		curl -fsSL "https://raw.githubusercontent.com/evangit2/pire/main/wheels/macos-arm64/keystone_engine-0.9.2-py2.py3-none-macosx_14_0_arm64.whl" -o "$KS_WHEEL" 2>/dev/null
+		if [ -f "$KS_WHEEL" ]; then
+			pip_install "$KS_WHEEL" 2>/dev/null || pip_install keystone-engine 2>/dev/null || true
+		else
+			pip_install keystone-engine 2>/dev/null || true
+		fi
+	else
+		pip_install keystone-engine 2>/dev/null || true
+	fi
 	# angr is heavy — try binary wheel first, fall back to source
 	pip_install "angr" 2>/dev/null || true
 	if python3 -c "import capstone" 2>/dev/null || python -c "import capstone" 2>/dev/null; then
