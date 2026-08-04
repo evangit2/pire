@@ -1,11 +1,11 @@
-#!/bin/bash
+#!/bin/sh
 # ============================================================================
 # pire Installer
 # ============================================================================
 # Cross-platform installer with interactive component selection.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/evangit2/pire/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/evangit2/pire/main/install.sh | sh
 #
 # Or with options:
 #   ./install.sh --all     # install everything non-interactively
@@ -19,40 +19,33 @@
 
 set -e
 
-# ── Colors ────────────────────────────────────────────────────
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[0;33m'
-BLUE='\033[0;34m'
-MAGENTA='\033[0;35m'
-CYAN='\033[0;36m'
-BOLD='\033[1m'
-NC='\033[0m'
-
 # ── Helpers ───────────────────────────────────────────────────
-log_step()   { echo -e "${CYAN}→${NC} $1"; }
-log_done()   { echo -e "${GREEN}✓${NC} $1"; }
-log_warn()   { echo -e "${YELLOW}⚠${NC} $1"; }
-log_error()  { echo -e "${RED}✗${NC} $1"; }
+# Use printf with escape codes in the format string (not echo -e,
+# which is not POSIX and prints literal "-e" under dash/sh).
+# printf interprets \033 in the format string directly — no %b needed.
+log_step()   { printf '\033[0;36m→\033[0m %s\n' "$1"; }
+log_done()   { printf '\033[0;32m✓\033[0m %s\n' "$1"; }
+log_warn()   { printf '\033[0;33m⚠\033[0m %s\n' "$1"; }
+log_error()  { printf '\033[0;31m✗\033[0m %s\n' "$1"; }
 log_section() {
-	echo ""
-	echo -e "${MAGENTA}${BOLD}═════════════════════════════════════════════════════════════${NC}"
-	echo -e "${MAGENTA}${BOLD}  $1${NC}"
-	echo -e "${MAGENTA}${BOLD}═════════════════════════════════════════════════════════════${NC}"
+	printf '\n'
+	printf '\033[0;35m\033[1m═════════════════════════════════════════════════════════════\033[0m\n'
+	printf '\033[0;35m\033[1m  %s\033[0m\n' "$1"
+	printf '\033[0;35m\033[1m═════════════════════════════════════════════════════════════\033[0m\n'
 }
 
 has() { command -v "$1" >/dev/null 2>&1; }
 
 # ── Banner ────────────────────────────────────────────────────
 print_banner() {
-	echo ""
-	echo -e "${MAGENTA}${BOLD}"
-	echo "┌─────────────────────────────────────────────────────────┐"
-	echo "│                   🔧 pire Installer                      │"
-	echo "│  Autonomous reverse-engineering agent                    │"
-	echo "│  github.com/evangit2/pire                                │"
-	echo "└─────────────────────────────────────────────────────────┘"
-	echo -e "${NC}"
+	printf '\n'
+	printf '\033[0;35m\033[1m\n'
+	printf '%s\n' "┌─────────────────────────────────────────────────────────┐"
+	printf '%s\n' "│                   pire Installer                      │"
+	printf '%s\n' "│  Autonomous reverse-engineering agent                    │"
+	printf '%s\n' "│  github.com/evangit2/pire                                │"
+	printf '%s\n' "└─────────────────────────────────────────────────────────┘"
+	printf '\033[0m\n'
 }
 
 # ── Interactive prompt ────────────────────────────────────────
@@ -74,10 +67,10 @@ prompt_yesno() {
 	[ "$DEFAULT" = "y" ] && SUFFIX="[Y/n]"
 
 	if [ "$IS_INTERACTIVE" = "true" ]; then
-		printf "%s %s " "$QUESTION" "$SUFFIX"
+		printf '%s %s ' "$QUESTION" "$SUFFIX"
 		read REPLY 2>/dev/null || REPLY=""
 	elif [ -r /dev/tty ] && [ -w /dev/tty ]; then
-		printf "%s %s " "$QUESTION" "$SUFFIX" > /dev/tty
+		printf '%s %s ' "$QUESTION" "$SUFFIX" > /dev/tty
 		IFS= read REPLY < /dev/tty 2>/dev/null || REPLY=""
 	else
 		[ "$DEFAULT" = "y" ] && return 0 || return 1
@@ -116,7 +109,7 @@ for arg in "$@"; do
 			echo "  --help, -h  Show this help"
 			echo ""
 			echo "One-liner:"
-			echo "  curl -fsSL https://raw.githubusercontent.com/evangit2/pire/main/install.sh | bash"
+			echo "  curl -fsSL https://raw.githubusercontent.com/evangit2/pire/main/install.sh | sh"
 			exit 0
 			;;
 		*) echo "Unknown option: $arg"; exit 1 ;;
@@ -190,7 +183,7 @@ INSTALL_VOLATILITY=0
 INSTALL_PYTHON_TOOLS=0
 
 if [ "$INSTALL_ALL" = "1" ]; then
-	echo -e "  ${GREEN}Installing ALL components${NC}"
+	printf '  \033[0;32mInstalling ALL components\033[0m\n'
 	INSTALL_WINE=1
 	INSTALL_MINGW=1
 	INSTALL_GHIDRA=1
@@ -204,7 +197,7 @@ if [ "$INSTALL_ALL" = "1" ]; then
 	INSTALL_PYTHON_TOOLS=1
 	[ "$NO_WINE" = "1" ] && INSTALL_WINE=0
 elif [ "$INSTALL_CORE_ONLY" = "1" ]; then
-	echo -e "  ${GREEN}Installing CORE components only${NC}"
+	printf '  \033[0;32mInstalling CORE components only\033[0m\n'
 else
 	echo "  Select optional components:"
 	echo ""
@@ -212,24 +205,24 @@ else
 	if [ "$OS" != "windows" ] && [ "$NO_WINE" = "0" ]; then
 		if prompt_yesno "  Wine (run Windows PE binaries)" "y"; then
 			INSTALL_WINE=1
-			echo -e "    ${GREEN}✓${NC} Wine"
+			printf '    \033[0;32m✓\033[0m Wine\n'
 		else
-			echo -e "    ${RED}✗${NC} Wine"
+			printf '    \033[0;31m✗\033[0m Wine\n'
 		fi
 	fi
 
 	if prompt_yesno "  MinGW-w64 (cross-compile Windows binaries)" "y"; then
 		INSTALL_MINGW=1
-		echo -e "    ${GREEN}✓${NC} MinGW-w64"
+		printf '    \033[0;32m✓\033[0m MinGW-w64\n'
 	else
-		echo -e "    ${RED}✗${NC} MinGW-w64"
+		printf '    \033[0;31m✗\033[0m MinGW-w64\n'
 	fi
 
 	if prompt_yesno "  Python RE tools (capstone, keystone, unicorn, angr, lief)" "y"; then
 		INSTALL_PYTHON_TOOLS=1
-		echo -e "    ${GREEN}✓${NC} Python RE tools"
+		printf '    \033[0;32m✓\033[0m Python RE tools\n'
 	else
-		echo -e "    ${RED}✗${NC} Python RE tools"
+		printf '    \033[0;31m✗\033[0m Python RE tools\n'
 	fi
 
 	echo ""
@@ -238,58 +231,58 @@ else
 
 	if prompt_yesno "  Ghidra (decompiler — ~400MB download)" "n"; then
 		INSTALL_GHIDRA=1
-		echo -e "    ${GREEN}✓${NC} Ghidra"
+		printf '    \033[0;32m✓\033[0m Ghidra\n'
 	else
-		echo -e "    ${RED}✗${NC} Ghidra"
+		printf '    \033[0;31m✗\033[0m Ghidra\n'
 	fi
 
 	if prompt_yesno "  Frida (dynamic instrumentation)" "n"; then
 		INSTALL_FRIDA=1
-		echo -e "    ${GREEN}✓${NC} Frida"
+		printf '    \033[0;32m✓\033[0m Frida\n'
 	else
-		echo -e "    ${RED}✗${NC} Frida"
+		printf '    \033[0;31m✗\033[0m Frida\n'
 	fi
 
 	if prompt_yesno "  GDB (scripted debugging)" "n"; then
 		INSTALL_GDB=1
-		echo -e "    ${GREEN}✓${NC} GDB"
+		printf '    \033[0;32m✓\033[0m GDB\n'
 	else
-		echo -e "    ${RED}✗${NC} GDB"
+		printf '    \033[0;31m✗\033[0m GDB\n'
 	fi
 
 	if prompt_yesno "  Binwalk (firmware extraction)" "n"; then
 		INSTALL_BINWALK=1
-		echo -e "    ${GREEN}✓${NC} Binwalk"
+		printf '    \033[0;32m✓\033[0m Binwalk\n'
 	else
-		echo -e "    ${RED}✗${NC} Binwalk"
+		printf '    \033[0;31m✗\033[0m Binwalk\n'
 	fi
 
 	if prompt_yesno "  JADX (APK/DEX → Java decompiler)" "n"; then
 		INSTALL_JADX=1
-		echo -e "    ${GREEN}✓${NC} JADX"
+		printf '    \033[0;32m✓\033[0m JADX\n'
 	else
-		echo -e "    ${RED}✗${NC} JADX"
+		printf '    \033[0;31m✗\033[0m JADX\n'
 	fi
 
 	if prompt_yesno "  ILSpy (.NET → C# decompiler)" "n"; then
 		INSTALL_ILSPY=1
-		echo -e "    ${GREEN}✓${NC} ILSpy"
+		printf '    \033[0;32m✓\033[0m ILSpy\n'
 	else
-		echo -e "    ${RED}✗${NC} ILSpy"
+		printf '    \033[0;31m✗\033[0m ILSpy\n'
 	fi
 
 	if prompt_yesno "  Yara (pattern matching)" "n"; then
 		INSTALL_YARA=1
-		echo -e "    ${GREEN}✓${NC} Yara"
+		printf '    \033[0;32m✓\033[0m Yara\n'
 	else
-		echo -e "    ${RED}✗${NC} Yara"
+		printf '    \033[0;31m✗\033[0m Yara\n'
 	fi
 
 	if prompt_yesno "  Volatility (memory forensics)" "n"; then
 		INSTALL_VOLATILITY=1
-		echo -e "    ${GREEN}✓${NC} Volatility"
+		printf '    \033[0;32m✓\033[0m Volatility\n'
 	else
-		echo -e "    ${RED}✗${NC} Volatility"
+		printf '    \033[0;31m✗\033[0m Volatility\n'
 	fi
 fi
 
@@ -597,15 +590,15 @@ fi
 log_section "Verification"
 
 echo ""
-		has node    && log_done "Node.js $(node -v)"          || log_error "Node.js not installed"
-		has npm     && log_done "npm $(npm -v)"               || log_error "npm not installed"
-		has git     && log_done "git"                          || log_warn "git not installed"
-		has gcc     && log_done "gcc $(gcc -dumpversion)"     || log_warn "gcc not installed"
-		has r2      && log_done "radare2"                      || log_warn "radare2 not installed"
-		has strings && log_done "strings"                      || log_warn "strings not installed"
-		has objdump && log_done "objdump"                      || log_warn "objdump not installed"
-		has nm      && log_done "nm"                           || log_warn "nm not installed"
-		has file    && log_done "file"                         || log_warn "file not installed"
+has node    && log_done "Node.js $(node -v)"          || log_error "Node.js not installed"
+has npm     && log_done "npm $(npm -v)"               || log_error "npm not installed"
+has git     && log_done "git"                          || log_warn "git not installed"
+has gcc     && log_done "gcc $(gcc -dumpversion)"     || log_warn "gcc not installed"
+has r2      && log_done "radare2"                      || log_warn "radare2 not installed"
+has strings && log_done "strings"                      || log_warn "strings not installed"
+has objdump && log_done "objdump"                      || log_warn "objdump not installed"
+has nm      && log_done "nm"                           || log_warn "nm not installed"
+has file    && log_done "file"                         || log_warn "file not installed"
 
 [ "$INSTALL_WINE" = "1" ]   && { (has wine || has wine64)                       && log_done "wine"                       || log_warn "wine not installed"; }
 [ "$INSTALL_MINGW" = "1" ]  && { has x86_64-w64-mingw32-gcc                     && log_done "MinGW-w64"                  || log_warn "MinGW-w64 not installed"; }
@@ -661,7 +654,7 @@ fi
 log_section "Installation Complete"
 
 echo ""
-echo -e "  ${GREEN}${BOLD}pire is ready!${NC}"
+printf '  \033[0;32m\033[1mpire is ready!\033[0m\n'
 echo ""
 echo "  Next steps:"
 echo ""
@@ -677,10 +670,10 @@ echo "       pire https://example.com/app.exe  # download & analyze"
 echo ""
 
 if [ "$INSTALL_WINE" = "0" ] && [ "$OS" != "windows" ]; then
-	echo -e "  ${YELLOW}⚠${NC} Wine not installed — can't run Windows PE binaries."
+	printf '  \033[0;33m⚠\033[0m Wine not installed — can'"'"'t run Windows PE binaries.\n'
 	echo "        Re-run: ./install.sh"
 	echo ""
 fi
 
-echo -e "  ${CYAN}Docs:${NC} https://github.com/evangit2/pire"
+printf '  \033[0;36mDocs:\033[0m https://github.com/evangit2/pire\n'
 echo ""
