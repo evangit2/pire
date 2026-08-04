@@ -300,12 +300,20 @@ pkg_install() {
 }
 
 pip_install() {
-	if has pip3; then
+	# Try python3 -m pip first (most reliable), then pip3, then pip
+	if python3 -m pip --version >/dev/null 2>&1; then
+		python3 -m pip install --user -q "$@" 2>/dev/null || log_warn "pip install failed: $*"
+	elif has pip3; then
 		pip3 install --user -q "$@" 2>/dev/null || log_warn "pip install failed: $*"
 	elif has pip; then
 		pip install --user -q "$@" 2>/dev/null || log_warn "pip install failed: $*"
 	else
-		log_warn "pip not found, skipping: $*"
+		# Try to bootstrap pip via ensurepip, then retry
+		if python3 -m ensurepip --user >/dev/null 2>&1; then
+			python3 -m pip install --user -q "$@" 2>/dev/null || log_warn "pip install failed: $*"
+		else
+			log_warn "pip not found, skipping: $*"
+		fi
 	fi
 }
 
@@ -317,23 +325,25 @@ case "$OS" in
 		log_step "Updating package index..."
 		sudo apt-get update -qq >/dev/null 2>&1
 		log_step "Installing core packages..."
-		pkg_install nodejs npm git build-essential radare2 binutils file
+		pkg_install nodejs npm git build-essential radare2 binutils file python3-pip python3-venv
+		# Bootstrap pip if apt didn't provide it
+		python3 -m pip --version >/dev/null 2>&1 || python3 -m ensurepip --user >/dev/null 2>&1
 		;;
 	fedora)
 		log_step "Installing core packages..."
-		pkg_install nodejs npm git gcc make radare2 binutils file
+		pkg_install nodejs npm git gcc make radare2 binutils file python3-pip
 		;;
 	arch)
 		log_step "Installing core packages..."
-		pkg_install nodejs npm git base-devel radare2 binutils file
+		pkg_install nodejs npm git base-devel radare2 binutils file python-pip
 		;;
 	suse)
 		log_step "Installing core packages..."
-		pkg_install nodejs npm git gcc make radare2 binutils file
+		pkg_install nodejs npm git gcc make radare2 binutils file python3-pip
 		;;
 	alpine)
 		log_step "Installing core packages..."
-		pkg_install nodejs npm git build-base radare2 binutils file
+		pkg_install nodejs npm git build-base radare2 binutils file py3-pip
 		;;
 	macos)
 		if ! has brew; then
