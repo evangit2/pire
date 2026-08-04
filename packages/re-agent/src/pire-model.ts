@@ -288,19 +288,39 @@ async function main(): Promise<void> {
 			db.active = p.name;
 			saveProviders(db);
 			// Write config with this provider's base_url + api_key
-			// (keep existing model/tokens if the config already exists and matches, otherwise just set the provider)
+			// Don't carry over model from a different provider
 			const existing = loadConfig();
+			const sameProvider = existing?.base_url === p.base_url;
 			const newConfig: PireConfig = {
 				base_url: p.base_url,
 				api_key: p.api_key,
-				model: existing?.model || "",
+				model: sameProvider ? (existing?.model || "") : "",
 				context_length: existing?.context_length,
 				max_tokens: existing?.max_tokens,
 			};
 			saveConfig(newConfig);
 			console.log(chalk.green(`✓ Switched to ${p.name}`));
 			if (!newConfig.model) {
-				console.log(chalk.dim("  No model set yet — use 's' or 'm' to select one."));
+				// Auto-offer to fetch models from the new provider
+				console.log(chalk.cyan(`  Fetching models from ${p.name}...`));
+				try {
+					const models = await fetchModels(p.base_url, p.api_key);
+					if (models.length > 0) {
+						const selected = await selectFromList(rlInst, `Models from ${p.name}:`, models);
+						if (selected) {
+							newConfig.model = selected;
+							saveConfig(newConfig);
+							console.log(chalk.green(`\n✓ Model set to: ${selected}`));
+						} else {
+							console.log(chalk.dim("  Skipped — use 's' or 'm' later to select a model."));
+						}
+					} else {
+						console.log(chalk.yellow("  No models returned. Use 'm' for manual entry."));
+					}
+				} catch (e: any) {
+					console.log(chalk.yellow(`  Couldn't fetch models: ${e.message}`));
+					console.log(chalk.dim("  Use 'm' for manual entry."));
+				}
 			} else {
 				console.log(chalk.dim(`  Model: ${newConfig.model}`));
 			}
