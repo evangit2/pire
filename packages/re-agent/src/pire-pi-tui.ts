@@ -183,6 +183,30 @@ class TranscriptView implements Component {
 				case "error":     prefix = `${chalk.bold.red("error")} > `;   color = chalk.red; break;
 			}
 			const prefixLen = visibleWidth(prefix);
+
+			// For tool calls and results: single-line truncation, no wrapping
+			// (wrapping long JSON/binary strings breaks mid-word and looks terrible)
+			if (e.type === "tool_call" || e.type === "tool_result") {
+				const firstLine = e.text.split("\n")[0] || "";
+				const wrapWidth = Math.max(10, contentWidth - prefixLen);
+				let truncated = firstLine;
+				if (visibleWidth(firstLine) > wrapWidth) {
+					// Truncate by visible width — slice the raw string conservatively
+					truncated = firstLine.slice(0, Math.max(0, wrapWidth - 3));
+					// Walk back if we sliced mid-ANSI (rough heuristic)
+					const lastEscape = truncated.lastIndexOf("\x1b[");
+					const lastM = truncated.lastIndexOf("m");
+					if (lastEscape > lastM) {
+						truncated = truncated.slice(0, lastEscape);
+					}
+					truncated += "...";
+				}
+				if (truncated) {
+					lines.push(prefix + color(truncated));
+				}
+				continue;
+			}
+
 			const wrapWidth = Math.max(10, contentWidth - prefixLen);
 			// Use Pi's wrapTextWithAnsi for proper ANSI-preserving word wrap
 			for (const rawLine of e.text.split("\n")) {
@@ -541,8 +565,8 @@ export class PirePiTUI {
 						displayArgs = tc.function.arguments;
 					}
 					// Truncate long args in the display
-					if (displayArgs.length > 200) {
-						displayArgs = displayArgs.slice(0, 197) + "...";
+					if (displayArgs.length > 120) {
+						displayArgs = displayArgs.slice(0, 117) + "...";
 					}
 					this.transcript.add("tool_call", `${tc.function.name}(${displayArgs})`);
 					this.ui.requestRender();
@@ -559,7 +583,28 @@ export class PirePiTUI {
 						resultText = resultText.slice(0, MAX_OUTPUT) + "\n... (truncated)";
 					}
 
-					this.transcript.add("tool_result", resultText.slice(0, 200) + (resultText.length > 200 ? "..." : ""));
+					// Clean up result text for display
+					let displayResult = resultText;
+					// Strip Python traceback lines (keep first line of error only)
+					const resultLines = displayResult.split("\n");
+					const cleanedLines: string[] = [];
+					let inTraceback = false;
+					for (const ln of resultLines) {
+						if (ln.startsWith("Traceback (most recent call last):")) {
+							inTraceback = true;
+							continue;
+						}
+						if (inTraceback) {
+							if (ln.startsWith("  ") || ln.startsWith("	") || ln.startsWith("    ")) continue;
+							inTraceback = false;
+						}
+						// Skip angr/unicorn warning spam
+						if (/^(WARNING|INFO|ERROR)\s+\|/.test(ln)) continue;
+						cleanedLines.push(ln);
+					}
+					displayResult = cleanedLines.join("\n").trim() || "(no output)";
+
+					this.transcript.add("tool_result", displayResult.slice(0, 200) + (displayResult.length > 200 ? "..." : ""));
 					this.ui.requestRender();
 
 					this.messages.push({ role: "tool", tool_call_id: tc.id, content: resultText });
