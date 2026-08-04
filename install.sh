@@ -20,9 +20,6 @@
 set +e
 
 # ── Helpers ───────────────────────────────────────────────────
-# Use printf with escape codes in the format string (not echo -e,
-# which is not POSIX and prints literal "-e" under dash/sh).
-# printf interprets \033 in the format string directly — no %b needed.
 log_step()   { printf '\033[0;36m→\033[0m %s\n' "$1"; }
 log_done()   { printf '\033[0;32m✓\033[0m %s\n' "$1"; }
 log_warn()   { printf '\033[0;33m⚠\033[0m %s\n' "$1"; }
@@ -55,7 +52,6 @@ if ! [ -t 0 ]; then
 fi
 
 prompt_yesno() {
-	# prompt_yesno "question" default(y/n)
 	QUESTION="$1"
 	DEFAULT="$2"
 
@@ -292,8 +288,6 @@ pkg_install() {
 		apt)    sudo apt-get install -y -qq "$@" </dev/null >/dev/null 2>&1 ;;
 		dnf)    sudo dnf install -y -q "$@" </dev/null >/dev/null 2>&1 ;;
 		pacman)
-			# On Windows/MSYS2, pacman prints "Command line alias added" for
-			# every toolchain binary. Suppress that noise.
 			if [ "$OS" = "windows" ]; then
 				sudo pacman -S --noconfirm --needed "$@" </dev/null 2>&1 \
 					| grep -v "Command line alias added" >&2 || true
@@ -309,8 +303,6 @@ pkg_install() {
 }
 
 pip_install() {
-	# Find a python3 that actually has pip. The first python3 on PATH
-	# might be a venv without pip (e.g. Hermes, poetry, etc).
 	PIPRE_PY=""
 	if [ -x /usr/bin/python3 ] && /usr/bin/python3 -m pip --version >/dev/null 2>&1; then
 		PIPRE_PY="/usr/bin/python3"
@@ -321,7 +313,6 @@ pip_install() {
 	fi
 
 	if [ -z "$PIPRE_PY" ]; then
-		# Try to bootstrap pip via ensurepip
 		for p in /usr/bin/python3 python3 python; do
 			if command -v "$p" >/dev/null 2>&1 && "$p" -m ensurepip --user </dev/null >/dev/null 2>&1; then
 				PIPRE_PY="$p"
@@ -331,13 +322,9 @@ pip_install() {
 	fi
 
 	if [ -z "$PIPRE_PY" ]; then
-		log_warn "pip not found, skipping: $*"
 		return 1
 	fi
 
-	# Try with --break-system-packages first (PEP 668 / Debian 12+),
-	# but skip that flag on Windows/MSYS2 where it doesn't exist.
-	# Show last few lines of output so user can see real errors.
 	if [ "$OS" = "windows" ]; then
 		PIPRE_OUT=$($PIPRE_PY -m pip install --user "$@" </dev/null 2>&1)
 		PIPRE_RC=$?
@@ -346,7 +333,6 @@ pip_install() {
 			return 0
 		fi
 		echo "$PIPRE_OUT" | tail -3
-		log_warn "pip install failed: $*"
 		return 1
 	fi
 
@@ -356,20 +342,16 @@ pip_install() {
 		echo "$PIPRE_OUT" | grep -v "already satisfied" | tail -3
 		return 0
 	fi
-	# Show the error, then try without --break-system-packages
-	echo "$PIPRE_OUT" | tail -3
 	PIPRE_OUT=$($PIPRE_PY -m pip install --user "$@" </dev/null 2>&1)
 	PIPRE_RC=$?
 	if [ $PIPRE_RC -eq 0 ]; then
 		echo "$PIPRE_OUT" | grep -v "already satisfied" | tail -3
 		return 0
 	fi
-	echo "$PIPRE_OUT" | tail -3
-	log_warn "pip install failed: $*"
 	return 1
 }
 
-# ── Install Core ──────────────────────────────────────────────
+# ── Core Install (sequential — everything depends on Node.js) ─
 log_section "Core Components"
 
 case "$OS" in
@@ -378,7 +360,6 @@ case "$OS" in
 		sudo apt-get update -qq </dev/null >/dev/null 2>&1
 		log_step "Installing core packages..."
 		pkg_install nodejs npm git build-essential radare2 binutils file python3-pip python3-venv
-		# Bootstrap pip if apt didn't provide it (use system python, not venv)
 		/usr/bin/python3 -m pip --version >/dev/null 2>&1 || /usr/bin/python3 -m ensurepip --user </dev/null >/dev/null 2>&1
 		;;
 	fedora)
@@ -400,7 +381,7 @@ case "$OS" in
 	macos)
 		if ! has brew; then
 			log_step "Installing Homebrew..."
-			/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" >/dev/null 2>&1
+			/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" </dev/null >/dev/null 2>&1
 		fi
 		log_done "Homebrew ready"
 		log_step "Installing core packages..."
@@ -416,12 +397,12 @@ case "$OS" in
 				log_step "Installing core packages..."
 				pkg_install nodejs npm git build-essential radare2 binutils file
 				;;
-				fedora|rhel|centos|rocky|alma)
+			fedora|rhel|centos|rocky|alma)
 				OS="fedora"; PKG_MGR="dnf"
 				log_step "Installing core packages..."
 				pkg_install nodejs npm git gcc make radare2 binutils file
 				;;
-				*)
+			*)
 				OS="debian"; PKG_MGR="apt"
 				log_step "Updating package index..."
 				sudo apt-get update -qq </dev/null >/dev/null 2>&1
@@ -444,14 +425,12 @@ if [ "$NODE_VER" -lt 22 ] 2>/dev/null; then
 	log_step "Upgrading Node.js..."
 	case "$OS" in
 		debian)
-			# NodeSource setup for Node.js 22
 			curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - >/dev/null 2>&1
-			sudo apt-get install -y -qq nodejs </dev/null >/dev/null 2>sudo apt-get install -y -qq nodejs >/dev/null 2>&11
+			sudo apt-get install -y -qq nodejs </dev/null >/dev/null 2>&1
 			;;
 		fedora)
-			# NodeSource RPM for Node.js 22
 			curl -fsSL https://rpm.nodesource.com/setup_22.x | sudo bash - >/dev/null 2>&1
-			sudo dnf install -y -q nodejs </dev/null >/dev/null 2>sudo dnf install -y -q nodejs >/dev/null 2>&11
+			sudo dnf install -y -q nodejs </dev/null >/dev/null 2>&1
 			;;
 		arch|windows)
 			pkg_install nodejs 2>/dev/null
@@ -465,196 +444,247 @@ else
 	log_done "Node.js $(node -v)"
 fi
 
-# ── Install Wine ──────────────────────────────────────────────
-if [ "$INSTALL_WINE" = "1" ]; then
-	log_section "Wine"
-	log_step "Installing Wine..."
+# ── Cache sudo credentials for parallel phase ─────────────────
+NEEDS_SUDO=0
+case "$OS" in
+	debian|fedora|arch|suse|alpine|wsl) NEEDS_SUDO=1 ;;
+esac
+if [ "$NEEDS_SUDO" = "1" ]; then
+	log_step "Caching sudo credentials for parallel installs..."
+	sudo -v 2>/dev/null && log_done "sudo ready" || log_warn "sudo not cached — may prompt during install"
+fi
+
+# ── Parallel Install Phase ────────────────────────────────────
+# Each component runs in the background, writing status to a temp file.
+# Main loop shows a live spinner dashboard.
+
+TMPDIR_PIRE="/tmp/pire-install-$$"
+mkdir -p "$TMPDIR_PIRE"
+
+# Status constants
+ST_PENDING="pending"
+ST_RUNNING="running"
+ST_DONE="done"
+ST_FAILED="failed"
+
+# Spinner frames (Unicode braille)
+SPIN_FRAMES="⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏"
+SPIN_IDX=0
+
+# Build list of components to install in parallel
+COMPONENTS=""
+COMP_LABELS=""
+
+add_component() {
+	COMPONENTS="$COMPONENTS $1"
+	COMP_LABELS="$COMP_LABELS|$2"
+	echo "$ST_PENDING" > "$TMPDIR_PIRE/$1.status"
+}
+
+[ "$INSTALL_WINE" = "1" ]         && add_component "wine"         "Wine"
+[ "$INSTALL_MINGW" = "1" ]        && add_component "mingw"        "MinGW-w64"
+[ "$INSTALL_GDB" = "1" ]          && add_component "gdb"          "GDB"
+[ "$INSTALL_BINWALK" = "1" ]      && add_component "binwalk"      "Binwalk"
+[ "$INSTALL_FRIDA" = "1" ]        && add_component "frida"        "Frida"
+[ "$INSTALL_JADX" = "1" ]         && add_component "jadx"         "JADX"
+[ "$INSTALL_ILSPY" = "1" ]        && add_component "ilspy"        "ILSpy"
+[ "$INSTALL_GHIDRA" = "1" ]       && add_component "ghidra"       "Ghidra"
+[ "$INSTALL_YARA" = "1" ]         && add_component "yara"         "Yara"
+[ "$INSTALL_VOLATILITY" = "1" ]   && add_component "volatility"   "Volatility"
+[ "$INSTALL_PYTHON_TOOLS" = "1" ] && add_component "python_tools" "Python RE tools"
+
+# ── Component install functions ───────────────────────────────
+
+install_wine() {
+	echo "$ST_RUNNING" > "$TMPDIR_PIRE/wine.status"
 	case "$OS" in
 		debian)  pkg_install wine64 wine ;;
 		fedora)  pkg_install wine ;;
 		arch)    pkg_install wine ;;
 		suse)    pkg_install wine ;;
-		macos)   brew install --cask wine-stable </dev/null 2>/dev/null || log_warn "Wine on macOS Apple Silicon may not work" ;;
-		windows) log_done "Wine not needed on Windows" ;;
+		macos)   brew install --cask wine-stable </dev/null 2>/dev/null || true ;;
+		windows) true ;;  # not needed
 	esac
-
+	# Init wine prefix
 	if [ "$OS" != "windows" ]; then
 		WINEPREFIX="${WINEPREFIX:-$HOME/.wine}"
-		if [ ! -d "$WINEPREFIX" ]; then
-			log_step "Initializing Wine prefix..."
-			WINEPREFIX="$WINEPREFIX" wineboot --init >/dev/null 2>&1 || log_warn "Wine init failed"
-			log_done "Wine prefix initialized at $WINEPREFIX"
-		else
-			log_done "Wine prefix exists at $WINEPREFIX"
+		if [ ! -d "$WINEPREFIX" ] && has wine; then
+			WINEPREFIX="$WINEPREFIX" wineboot --init >/dev/null 2>&1 || true
 		fi
 	fi
-fi
+	if has wine || has wine64 || [ "$OS" = "windows" ]; then
+		echo "$ST_DONE" > "$TMPDIR_PIRE/wine.status"
+	else
+		echo "$ST_FAILED" > "$TMPDIR_PIRE/wine.status"
+	fi
+}
 
-# ── Install MinGW ─────────────────────────────────────────────
-if [ "$INSTALL_MINGW" = "1" ]; then
-	log_section "MinGW-w64"
-	log_step "Installing MinGW-w64 cross-compiler..."
+install_mingw() {
+	echo "$ST_RUNNING" > "$TMPDIR_PIRE/mingw.status"
 	case "$OS" in
 		debian)  pkg_install gcc-mingw-w64-x86-64 ;;
 		fedora)  pkg_install mingw64-gcc ;;
 		arch)    pkg_install mingw-w64-gcc ;;
 		suse)    pkg_install mingw64-gcc ;;
-		macos) brew install mingw-w64 </dev/null ;;
+		macos)   brew install mingw-w64 </dev/null 2>/dev/null ;;
 		windows) pkg_install mingw-w64-x86_64-gcc ;;
 	esac
-fi
+	if has x86_64-w64-mingw32-gcc || has gcc; then
+		echo "$ST_DONE" > "$TMPDIR_PIRE/mingw.status"
+	else
+		echo "$ST_FAILED" > "$TMPDIR_PIRE/mingw.status"
+	fi
+}
 
-# ── Install GDB ───────────────────────────────────────────────
-if [ "$INSTALL_GDB" = "1" ]; then
-	log_section "GDB"
-	log_step "Installing GDB..."
+install_gdb() {
+	echo "$ST_RUNNING" > "$TMPDIR_PIRE/gdb.status"
 	case "$OS" in
 		windows) pkg_install mingw-w64-x86_64-gdb ;;
 		*)       pkg_install gdb ;;
 	esac
-fi
+	if has gdb; then
+		echo "$ST_DONE" > "$TMPDIR_PIRE/gdb.status"
+	else
+		echo "$ST_FAILED" > "$TMPDIR_PIRE/gdb.status"
+	fi
+}
 
-# ── Install Binwalk ───────────────────────────────────────────
-if [ "$INSTALL_BINWALK" = "1" ]; then
-	log_section "Binwalk"
-	log_step "Installing Binwalk..."
+install_binwalk() {
+	echo "$ST_RUNNING" > "$TMPDIR_PIRE/binwalk.status"
 	case "$OS" in
 		debian|fedora|arch|suse) pkg_install binwalk ;;
-		macos) brew install binwalk </dev/null ;;
+		macos) brew install binwalk </dev/null 2>/dev/null ;;
 		windows)
-			# Binwalk has limited Windows support — install via pip without
-			# the Linux-only --break-system-packages flag
 			if command -v python3 >/dev/null 2>&1; then
-				python3 -m pip install --user binwalk </dev/null 2>&1 | tail -3 \
-					|| python3 -m pip install binwalk </dev/null 2>&1 | tail -3 \
-					|| log_warn "Binwalk install failed — try: pip install binwalk"
+				python3 -m pip install --user binwalk </dev/null 2>&1 | tail -3
 			elif command -v python >/dev/null 2>&1; then
-				python -m pip install --user binwalk </dev/null 2>&1 | tail -3 \
-					|| python -m pip install binwalk </dev/null 2>&1 | tail -3 \
-					|| log_warn "Binwalk install failed — try: pip install binwalk"
-			else
-				log_warn "Python not found — skipping binwalk"
+				python -m pip install --user binwalk </dev/null 2>&1 | tail -3
 			fi
 			;;
 		*) pip_install binwalk ;;
 	esac
-fi
+	if has binwalk; then
+		echo "$ST_DONE" > "$TMPDIR_PIRE/binwalk.status"
+	else
+		echo "$ST_FAILED" > "$TMPDIR_PIRE/binwalk.status"
+	fi
+}
 
-# ── Install Yara ──────────────────────────────────────────────
-if [ "$INSTALL_YARA" = "1" ]; then
-	log_section "Yara"
-	log_step "Installing Yara..."
-	case "$OS" in
-		debian|fedora|arch|suse) pkg_install yara ;;
-		macos) brew install yara </dev/null ;;
-		*) pip_install yara-python ;;
-	esac
-fi
-
-# ── Install Volatility ────────────────────────────────────────
-if [ "$INSTALL_VOLATILITY" = "1" ]; then
-	log_section "Volatility"
-	log_step "Installing Volatility 3..."
-	pip_install volatility3
-fi
-
-# ── Install Frida ─────────────────────────────────────────────
-if [ "$INSTALL_FRIDA" = "1" ]; then
-	log_section "Frida"
-	log_step "Installing Frida..."
+install_frida() {
+	echo "$ST_RUNNING" > "$TMPDIR_PIRE/frida.status"
 	pip_install frida-tools
 	case "$OS" in
 		debian) pkg_install python3-frida 2>/dev/null ;;
 		arch)   pkg_install frida-tools 2>/dev/null ;;
 	esac
-fi
+	if has frida || has frida-ps; then
+		echo "$ST_DONE" > "$TMPDIR_PIRE/frida.status"
+	else
+		echo "$ST_FAILED" > "$TMPDIR_PIRE/frida.status"
+	fi
+}
 
-# ── Install JADX ──────────────────────────────────────────────
-if [ "$INSTALL_JADX" = "1" ]; then
-	log_section "JADX"
-	log_step "Installing JADX..."
+install_jadx() {
+	echo "$ST_RUNNING" > "$TMPDIR_PIRE/jadx.status"
 	case "$OS" in
 		debian|fedora|arch|suse)
-			pkg_install default-jre 2>/dev/null || log_warn "JADX needs Java (JRE)"
-			if has jadx 2>/dev/null; then
-				log_done "JADX already installed"
-			else
-				log_step "Downloading JADX v1.5.0..."
+			pkg_install default-jre 2>/dev/null || true
+			if ! has jadx 2>/dev/null; then
 				JADX_VER="1.5.0"
 				curl -fsSL "https://github.com/skylot/jadx/releases/download/v${JADX_VER}/jadx-${JADX_VER}.zip" -o /tmp/jadx.zip 2>/dev/null
 				sudo mkdir -p /opt/jadx && sudo unzip -q -o /tmp/jadx.zip -d /opt/jadx </dev/null 2>/dev/null
 				sudo ln -sf /opt/jadx/bin/jadx /usr/local/bin/jadx 2>/dev/null
 				sudo ln -sf /opt/jadx/bin/jadx-gui /usr/local/bin/jadx-gui 2>/dev/null
 				rm -f /tmp/jadx.zip
-				log_done "JADX installed to /opt/jadx"
 			fi
 			;;
 		macos)
-			brew install jadx </dev/null
+			brew install jadx </dev/null 2>/dev/null
 			;;
-		*) log_warn "JADX install not automated on $OS — see https://github.com/skylot/jadx" ;;
 	esac
-fi
+	if has jadx; then
+		echo "$ST_DONE" > "$TMPDIR_PIRE/jadx.status"
+	else
+		echo "$ST_FAILED" > "$TMPDIR_PIRE/jadx.status"
+	fi
+}
 
-# ── Install ILSpy ─────────────────────────────────────────────
-if [ "$INSTALL_ILSPY" = "1" ]; then
-	log_section "ILSpy"
-	log_step "Installing ILSpy..."
+install_ilspy() {
+	echo "$ST_RUNNING" > "$TMPDIR_PIRE/ilspy.status"
 	case "$OS" in
 		debian|fedora|arch|suse)
-			pkg_install dotnet-sdk-8.0 2>/dev/null || pkg_install dotnet-sdk 2>/dev/null || log_warn "ILSpy needs .NET SDK"
+			pkg_install dotnet-sdk-8.0 2>/dev/null || pkg_install dotnet-sdk 2>/dev/null || true
 			if has dotnet 2>/dev/null; then
-				dotnet tool install -g ilspycmd </dev/null 2>/dev/null || log_warn "ilspycmd install failed"
-				log_done "ILSpy installed via dotnet tool"
+				dotnet tool install -g ilspycmd </dev/null 2>/dev/null
 			fi
 			;;
 		macos)
-			brew install --cask dotnet-sdk </dev/null 2>/dev/null || log_warn "Install .NET SDK manually"
+			brew install --cask dotnet-sdk </dev/null 2>/dev/null || true
 			if has dotnet 2>/dev/null; then
 				dotnet tool install -g ilspycmd </dev/null 2>/dev/null
-				log_done "ILSpy installed via dotnet tool"
 			fi
 			;;
-		*) log_warn "ILSpy install not automated on $OS — see https://github.com/icsharpcode/ILSpy" ;;
 	esac
-fi
+	if has dotnet 2>/dev/null; then
+		echo "$ST_DONE" > "$TMPDIR_PIRE/ilspy.status"
+	else
+		echo "$ST_FAILED" > "$TMPDIR_PIRE/ilspy.status"
+	fi
+}
 
-# ── Install Ghidra ────────────────────────────────────────────
-if [ "$INSTALL_GHIDRA" = "1" ]; then
-	log_section "Ghidra"
-	log_step "Installing Ghidra..."
+install_ghidra() {
+	echo "$ST_RUNNING" > "$TMPDIR_PIRE/ghidra.status"
 	case "$OS" in
 		debian|fedora|arch|suse|wsl)
-			pkg_install default-jdk 2>/dev/null || log_warn "Ghidra needs Java (JDK 17+)"
+			pkg_install default-jdk 2>/dev/null || true
 			if has java 2>/dev/null; then
 				GHIDRA_VER="11.1.2"
 				GHIDRA_DATE="20240709"
-				log_step "Downloading Ghidra ${GHIDRA_VER} (~400MB)..."
 				curl -fsSL "https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_${GHIDRA_VER}_build/ghidra_${GHIDRA_VER}_PUBLIC_${GHIDRA_DATE}.zip" -o /tmp/ghidra.zip 2>/dev/null
 				if [ -f /tmp/ghidra.zip ]; then
-					log_step "Extracting..."
 					sudo unzip -q -o /tmp/ghidra.zip -d /opt/ </dev/null 2>/dev/null
 					sudo ln -sf /opt/ghidra_${GHIDRA_VER}_PUBLIC/ghidraRun /usr/local/bin/ghidra 2>/dev/null
 					rm -f /tmp/ghidra.zip
-					log_done "Ghidra installed to /opt/ghidra_${GHIDRA_VER}_PUBLIC"
-				else
-					log_warn "Download failed — install manually from https://ghidra-sre.org/"
 				fi
-			else
-				log_warn "Java not installed — Ghidra requires JDK 17+"
 			fi
 			;;
 		macos)
-			brew install --cask ghidra </dev/null 2>/dev/null || log_warn "Install Ghidra manually from https://ghidra-sre.org/"
+			brew install --cask ghidra </dev/null 2>/dev/null
 			;;
-		*) log_warn "Ghidra install not automated on $OS — see https://ghidra-sre.org/" ;;
 	esac
-fi
+	if has ghidra 2>/dev/null || has ghidraRun 2>/dev/null; then
+		echo "$ST_DONE" > "$TMPDIR_PIRE/ghidra.status"
+	else
+		echo "$ST_FAILED" > "$TMPDIR_PIRE/ghidra.status"
+	fi
+}
 
-# ── Install Python RE Tools ───────────────────────────────────
-if [ "$INSTALL_PYTHON_TOOLS" = "1" ]; then
-	log_section "Python RE Tools"
-	log_step "Installing capstone, keystone, unicorn, angr, lief..."
+install_yara() {
+	echo "$ST_RUNNING" > "$TMPDIR_PIRE/yara.status"
+	case "$OS" in
+		debian|fedora|arch|suse) pkg_install yara ;;
+		macos) brew install yara </dev/null 2>/dev/null ;;
+		*) pip_install yara-python ;;
+	esac
+	if has yara; then
+		echo "$ST_DONE" > "$TMPDIR_PIRE/yara.status"
+	else
+		echo "$ST_FAILED" > "$TMPDIR_PIRE/yara.status"
+	fi
+}
+
+install_volatility() {
+	echo "$ST_RUNNING" > "$TMPDIR_PIRE/volatility.status"
+	pip_install volatility3
+	if command -v vol 2>/dev/null || command -v vol3 2>/dev/null || python3 -c "import volatility3" 2>/dev/null; then
+		echo "$ST_DONE" > "$TMPDIR_PIRE/volatility.status"
+	else
+		echo "$ST_FAILED" > "$TMPDIR_PIRE/volatility.status"
+	fi
+}
+
+install_python_tools() {
+	echo "$ST_RUNNING" > "$TMPDIR_PIRE/python_tools.status"
 	case "$OS" in
 		debian)
 			pkg_install python3-pip python3-venv 2>/dev/null
@@ -664,6 +694,129 @@ if [ "$INSTALL_PYTHON_TOOLS" = "1" ]; then
 		arch)   pkg_install python-pip python-capstone python-lief 2>/dev/null ;;
 	esac
 	pip_install capstone keystone-engine unicorn angr lief
+	if python3 -c "import capstone" 2>/dev/null; then
+		echo "$ST_DONE" > "$TMPDIR_PIRE/python_tools.status"
+	else
+		echo "$ST_FAILED" > "$TMPDIR_PIRE/python_tools.status"
+	fi
+}
+
+# ── Launch all selected components in parallel ────────────────
+if [ -n "$COMPONENTS" ]; then
+	log_section "Parallel Installation"
+	echo "  Installing $(echo $COMPONENTS | wc -w | tr -d ' ') components in parallel..."
+	echo ""
+
+	# Launch each component in background
+	for comp in $COMPONENTS; do
+		eval "install_${comp}" </dev/null >"$TMPDIR_PIRE/$comp.log" 2>&1 &
+	done
+
+	# ── Live spinner dashboard ───────────────────────────────
+	# Get the list of labels aligned with components
+	get_label() {
+		echo "$COMP_LABELS" | tr '|' '\n' | sed -n "$1p"
+	}
+
+	# Count components
+	N_COMPS=$(echo $COMPONENTS | wc -w | tr -d ' ')
+
+	# Print initial lines (one per component) so we can overwrite them
+	i=0
+	while [ $i -lt $N_COMPS ]; do
+		i=$((i + 1))
+		label=$(get_label $i)
+		printf '  %s %s\n' " " "$label"
+	done
+
+	# Move cursor up to first line
+	printf '\033[%dA' "$N_COMPS"
+
+	# Main render loop
+	ALL_DONE=0
+	while [ $ALL_DONE -eq 0 ]; do
+		# Get current spinner char
+		SPIN_IDX=$(( (SPIN_IDX + 1) % 10 ))
+		SPIN_CHAR=$(echo "$SPIN_FRAMES" | cut -d' ' -f$((SPIN_IDX + 1)))
+
+		# Render each component line
+		idx=0
+		ALL_DONE=1
+		for comp in $COMPONENTS; do
+			idx=$((idx + 1))
+			label=$(get_label $idx)
+			status=$(cat "$TMPDIR_PIRE/$comp.status" 2>/dev/null || echo "$ST_PENDING")
+
+			case "$status" in
+				$ST_PENDING)
+					icon="\033[0;90m○\033[0m"
+					ALL_DONE=0
+					;;
+				$ST_RUNNING)
+					icon="\033[0;36m${SPIN_CHAR}\033[0m"
+					ALL_DONE=0
+					;;
+				$ST_DONE)
+					icon="\033[0;32m✓\033[0m"
+					;;
+				$ST_FAILED)
+					icon="\033[0;31m✗\033[0m"
+					;;
+			esac
+
+			# Pad label to 20 chars for alignment
+			padded=$(printf '%-20s' "$label")
+
+			# Clear line and write
+			printf '\033[2K  %b %s' "$icon" "$padded"
+
+			# Print status text
+			case "$status" in
+				$ST_PENDING)  printf '\033[0;90mwaiting\033[0m' ;;
+				$ST_RUNNING)  printf '\033[0;36minstalling...\033[0m' ;;
+				$ST_DONE)     printf '\033[0;32mdone\033[0m' ;;
+				$ST_FAILED)   printf '\033[0;31mfailed\033[0m' ;;
+			esac
+
+			# Move to next line (down, then we'll redraw)
+			if [ $idx -lt $N_COMPS ]; then
+				printf '\n'
+			fi
+		done
+
+		# Move cursor back up to first line for next redraw
+		printf '\033[%dA' "$N_COMPS"
+
+		if [ $ALL_DONE -eq 0 ]; then
+			sleep 0.3 2>/dev/null || sleep 1
+		fi
+	done
+
+	# Move cursor down past all lines
+	printf '\n\033[%dB' "$((N_COMPS - 1))"
+
+	echo ""
+	echo "  Results:"
+	for comp in $COMPONENTS; do
+		status=$(cat "$TMPDIR_PIRE/$comp.status" 2>/dev/null || echo "$ST_FAILED")
+		label=$(printf '%-20s' "$comp")
+		case "$status" in
+			$ST_DONE)   log_done "$comp" ;;
+			$ST_FAILED) log_warn "$comp — check $TMPDIR_PIRE/$comp.log" ;;
+		esac
+	done
+
+	# Clean up temp files (keep logs if failures)
+	HAD_FAILURE=0
+	for comp in $COMPONENTS; do
+		status=$(cat "$TMPDIR_PIRE/$comp.status" 2>/dev/null || echo "")
+		if [ "$status" = "$ST_FAILED" ]; then
+			HAD_FAILURE=1
+		fi
+	done
+	if [ "$HAD_FAILURE" = "0" ]; then
+		rm -rf "$TMPDIR_PIRE"
+	fi
 fi
 
 # ── Verify ────────────────────────────────────────────────────
@@ -723,7 +876,6 @@ if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/package.json" ]; then
 	# Link pire CLI
 	if [ -f "$SCRIPT_DIR/packages/re-agent/src/cli.ts" ]; then
 		log_step "Linking pire CLI..."
-		# Create a wrapper script that runs cli.ts with tsx
 		PIRE_WRAPPER="/usr/local/bin/pire"
 		if [ -w /usr/local/bin ]; then
 			printf '#!/bin/sh\nexec npx tsx "%s/packages/re-agent/src/cli.ts" "$@"\n' "$SCRIPT_DIR" > "$PIRE_WRAPPER"
@@ -739,7 +891,7 @@ if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/package.json" ]; then
 		fi
 		if ! has tsx 2>/dev/null; then
 			log_step "Installing tsx..."
-			npm install -g tsx </dev/null 2>/dev/null || log_warn "Install tsx manually: npm install -g tsx"
+			npm install -g tsx </dev/null >/dev/null 2>&1 || log_warn "Install tsx manually: npm install -g tsx"
 		fi
 		log_done "pire command available"
 	fi

@@ -46,8 +46,16 @@ function Write-Section($Title) {
     Write-Host "===========================================================" -ForegroundColor Magenta
 }
 
+function Write-Step($Msg)   { Write-Host "-> $Msg" -ForegroundColor Cyan }
+function Write-Ok($Msg)     { Write-Host "[OK] $Msg" -ForegroundColor Green }
+function Write-Warn2($Msg)  { Write-Host "[!] $Msg" -ForegroundColor Yellow }
+function Write-Err($Msg)    { Write-Host "[X] $Msg" -ForegroundColor Red }
+
+function Has-Command($Name) {
+    return [bool](Get-Command $Name -ErrorAction SilentlyContinue)
+}
+
 function Invoke-Pip {
-    # Run pip safely — pip writes normal output to stderr which can crash PowerShell
     param([Parameter(ValueFromRemainingArguments=$true)][string[]]$PipArgs)
     $prevEAP = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
@@ -56,202 +64,105 @@ function Invoke-Pip {
     return $LASTEXITCODE -eq 0
 }
 
-function Write-Step($Msg)   { Write-Host "-> $Msg" -ForegroundColor Cyan }
-function Write-Ok($Msg)     { Write-Host "[OK] $Msg" -ForegroundColor Green }
-function Write-Warn2($Msg)  { Write-Host "[!] $Msg" -ForegroundColor Yellow }
-function Write-Err2($Msg)   { Write-Host "[X] $Msg" -ForegroundColor Red }
-
-function Has-Command($name) {
-    return [bool](Get-Command $name -ErrorAction SilentlyContinue)
-}
-
-function Prompt-YesNo {
-    param([string]$Question, [string]$Default = "n")
-
-    if ($NonInteractive) {
-        return ($Default -eq "y")
-    }
-
-    $suffix = if ($Default -eq "y") { "[Y/n]" } else { "[y/N]" }
-    Write-Host "$Question $suffix " -NoNewline
-    $answer = Read-Host
-    $answer = $answer.Trim().ToLower()
-
-    if ([string]::IsNullOrWhiteSpace($answer)) {
-        return ($Default -eq "y")
-    }
-    return ($answer -eq "y" -or $answer -eq "yes")
-}
-
 # ── Parse args ────────────────────────────────────────────────
 
 if ($Help) {
-    Write-Host "pire install — cross-platform installer for Windows"
+    Write-Host "pire install — Windows installer"
     Write-Host ""
     Write-Host "Usage: .\install.ps1 [options]"
     Write-Host ""
     Write-Host "Options:"
-    Write-Host "  -All             Install everything (no prompts)"
-    Write-Host "  -CoreOnly        Install only core components (no prompts)"
-    Write-Host "  -NoWine          Skip Wine installation"
-    Write-Host "  -NonInteractive  Non-interactive (accept all defaults)"
-    Write-Host "  -Help            Show this help"
-    Write-Host ""
-    Write-Host "One-liner:"
-    Write-Host "  irm https://raw.githubusercontent.com/evangit2/pire/main/install.ps1 | iex"
+    Write-Host "  -All            Install everything (no prompts)"
+    Write-Host "  -CoreOnly       Install only core components (no prompts)"
+    Write-Host "  -NoWine         Skip Wine installation"
+    Write-Host "  -NonInteractive No prompts (accept all defaults)"
+    Write-Host "  -Help           Show this help"
     exit 0
 }
 
-if ($All) { $NonInteractive = $true }
-
 Write-Banner
 
-# ── Component flags ───────────────────────────────────────────
+# ── Detect Platform ───────────────────────────────────────────
+Write-Section "Platform Detection"
 
-$InstallWine        = $false
-$InstallMinGW       = $false
-$InstallGhidra      = $false
-$InstallFrida       = $false
-$InstallGDB         = $false
-$InstallBinwalk     = $false
-$InstallJADX        = $false
-$InstallILSpy       = $false
-$InstallYara        = $false
-$InstallVolatility  = $false
-$InstallPythonTools = $false
+$PkgMgr = ""
+if (Has-Command "choco")      { $PkgMgr = "choco";  Write-Ok "Package manager: choco" }
+elseif (Has-Command "winget") { $PkgMgr = "winget"; Write-Ok "Package manager: winget" }
+elseif (Has-Command "scoop")  { $PkgMgr = "scoop";  Write-Ok "Package manager: scoop" }
+else {
+    Write-Warn2 "No package manager found (choco/winget/scoop)"
+    Write-Warn2 "Install winget or chocolatey first."
+    exit 1
+}
 
 # ── Component Selection ──────────────────────────────────────
-
 Write-Section "Component Selection"
 
 Write-Host "  Core (always installed):"
 Write-Host "    Node.js, npm, git, radare2, binutils (file, nm, strings, objdump)"
 Write-Host ""
 
+$InstallWine         = $false
+$InstallMinGW        = $false
+$InstallGhidra       = $false
+$InstallFrida        = $false
+$InstallGDB          = $false
+$InstallBinwalk      = $false
+$InstallJADX         = $false
+$InstallILSpy        = $false
+$InstallYara         = $false
+$InstallVolatility   = $false
+$InstallPythonTools  = $false
+
 if ($All) {
     Write-Host "  Installing ALL components" -ForegroundColor Green
-    $InstallWine = -not $NoWine
-    $InstallMinGW = $true
-    $InstallGhidra = $true
-    $InstallFrida = $true
-    $InstallGDB = $true
-    $InstallBinwalk = $true
-    $InstallJADX = $true
-    $InstallILSpy = $true
-    $InstallYara = $true
-    $InstallVolatility = $true
-    $InstallPythonTools = $true
+    $InstallWine = $true; $InstallMinGW = $true; $InstallGhidra = $true
+    $InstallFrida = $true; $InstallGDB = $true; $InstallBinwalk = $true
+    $InstallJADX = $true; $InstallILSpy = $true; $InstallYara = $true
+    $InstallVolatility = $true; $InstallPythonTools = $true
+    if ($NoWine) { $InstallWine = $false }
 } elseif ($CoreOnly) {
     Write-Host "  Installing CORE components only" -ForegroundColor Green
 } else {
     Write-Host "  Select optional components:"
     Write-Host ""
 
-    if (-not $NoWine) {
-        if (Prompt-YesNo "  Wine (run Linux/ELF binaries via WSL)" "y") {
-            $InstallWine = $true
-            Write-Host "    [OK] Wine" -ForegroundColor Green
-        } else {
-            Write-Host "    [X] Wine" -ForegroundColor Red
-        }
+    $prompt = {
+        param($q, $default)
+        if ($NonInteractive) { return ($default -ieq 'y') }
+        $suffix = if ($default -ieq 'y') { "[Y/n]" } else { "[y/N]" }
+        Write-Host -NoNewline "  $q $suffix "
+        $r = Read-Host
+        if ($r -eq "") { return ($default -ieq 'y') }
+        return $r -imatch '^[yY]'
     }
 
-    if (Prompt-YesNo "  MinGW-w64 (cross-compile Windows binaries)" "y") {
-        $InstallMinGW = $true
-        Write-Host "    [OK] MinGW-w64" -ForegroundColor Green
-    } else {
-        Write-Host "    [X] MinGW-w64" -ForegroundColor Red
-    }
-
-    if (Prompt-YesNo "  Python RE tools (capstone, keystone, unicorn, angr, lief)" "y") {
-        $InstallPythonTools = $true
-        Write-Host "    [OK] Python RE tools" -ForegroundColor Green
-    } else {
-        Write-Host "    [X] Python RE tools" -ForegroundColor Red
-    }
+    if (& $prompt "Wine (run Linux/ELF binaries via WSL)" "y") { $InstallWine = $true;       Write-Host "    [OK] Wine" }       else { Write-Host "    --  Wine" }
+    if (& $prompt "MinGW-w64 (cross-compile Windows binaries)" "y") { $InstallMinGW = $true;  Write-Host "    [OK] MinGW-w64" } else { Write-Host "    --  MinGW-w64" }
+    if (& $prompt "Python RE tools (capstone, keystone, unicorn, angr, lief)" "y") { $InstallPythonTools = $true; Write-Host "    [OK] Python RE tools" } else { Write-Host "    --  Python RE tools" }
 
     Write-Host ""
     Write-Host "  Advanced tools (optional):"
     Write-Host ""
 
-    if (Prompt-YesNo "  Ghidra (decompiler — ~400MB download)" "y") {
-        $InstallGhidra = $true
-        Write-Host "    [OK] Ghidra" -ForegroundColor Green
-    } else { Write-Host "    [X] Ghidra" -ForegroundColor Red }
-
-    if (Prompt-YesNo "  Frida (dynamic instrumentation)" "n") {
-        $InstallFrida = $true
-        Write-Host "    [OK] Frida" -ForegroundColor Green
-    } else { Write-Host "    [X] Frida" -ForegroundColor Red }
-
-    if (Prompt-YesNo "  GDB (scripted debugging)" "n") {
-        $InstallGDB = $true
-        Write-Host "    [OK] GDB" -ForegroundColor Green
-    } else { Write-Host "    [X] GDB" -ForegroundColor Red }
-
-    if (Prompt-YesNo "  Binwalk (firmware extraction)" "n") {
-        $InstallBinwalk = $true
-        Write-Host "    [OK] Binwalk" -ForegroundColor Green
-    } else { Write-Host "    [X] Binwalk" -ForegroundColor Red }
-
-    if (Prompt-YesNo "  JADX (APK/DEX -> Java decompiler)" "n") {
-        $InstallJADX = $true
-        Write-Host "    [OK] JADX" -ForegroundColor Green
-    } else { Write-Host "    [X] JADX" -ForegroundColor Red }
-
-    if (Prompt-YesNo "  ILSpy (.NET -> C# decompiler)" "n") {
-        $InstallILSpy = $true
-        Write-Host "    [OK] ILSpy" -ForegroundColor Green
-    } else { Write-Host "    [X] ILSpy" -ForegroundColor Red }
-
-    if (Prompt-YesNo "  Yara (pattern matching)" "n") {
-        $InstallYara = $true
-        Write-Host "    [OK] Yara" -ForegroundColor Green
-    } else { Write-Host "    [X] Yara" -ForegroundColor Red }
-
-    if (Prompt-YesNo "  Volatility (memory forensics)" "n") {
-        $InstallVolatility = $true
-        Write-Host "    [OK] Volatility" -ForegroundColor Green
-    } else { Write-Host "    [X] Volatility" -ForegroundColor Red }
+    if (& $prompt "Ghidra (decompiler -- ~400MB download)" "y") { $InstallGhidra = $true;     Write-Host "    [OK] Ghidra" }     else { Write-Host "    --  Ghidra" }
+    if (& $prompt "Frida (dynamic instrumentation)" "n") { $InstallFrida = $true;             Write-Host "    [OK] Frida" }      else { Write-Host "    --  Frida" }
+    if (& $prompt "GDB (scripted debugging)" "n") { $InstallGDB = $true;                       Write-Host "    [OK] GDB" }        else { Write-Host "    --  GDB" }
+    if (& $prompt "Binwalk (firmware extraction)" "n") { $InstallBinwalk = $true;             Write-Host "    [OK] Binwalk" }    else { Write-Host "    --  Binwalk" }
+    if (& $prompt "JADX (APK/DEX -> Java decompiler)" "n") { $InstallJADX = $true;            Write-Host "    [OK] JADX" }       else { Write-Host "    --  JADX" }
+    if (& $prompt "ILSpy (.NET -> C# decompiler)" "n") { $InstallILSpy = $true;               Write-Host "    [OK] ILSpy" }      else { Write-Host "    --  ILSpy" }
+    if (& $prompt "Yara (pattern matching)" "n") { $InstallYara = $true;                       Write-Host "    [OK] Yara" }       else { Write-Host "    --  Yara" }
+    if (& $prompt "Volatility (memory forensics)" "n") { $InstallVolatility = $true;          Write-Host "    [OK] Volatility" } else { Write-Host "    --  Volatility" }
 }
 
-# ── Detect Package Manager ────────────────────────────────────
-
-Write-Section "Platform Detection"
-
-$PkgMgr = ""
-if (Has-Command "choco") {
-    $PkgMgr = "choco"
-    Write-Ok "Package manager: Chocolatey"
-} elseif (Has-Command "winget") {
-    $PkgMgr = "winget"
-    Write-Ok "Package manager: winget"
-} elseif (Has-Command "scoop") {
-    $PkgMgr = "scoop"
-    Write-Ok "Package manager: Scoop"
-} else {
-    Write-Step "No package manager found. Installing Chocolatey..."
-    Set-ExecutionPolicy Bypass -Scope Process -Force
-    [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
-    iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
-    $env:PATH += ";$env:ALLUSERSPROFILE\chocolatey\bin"
-    $PkgMgr = "choco"
-    Write-Ok "Chocolatey installed"
-}
-
-# ── Install Core ──────────────────────────────────────────────
-
+# ── Core Install (sequential) ────────────────────────────────
 Write-Section "Core Components"
 
-function Pkg-Install {
-    param([string[]]$Packages)
-    foreach ($pkg in $Packages) {
-        Write-Step "Installing $pkg..."
-        switch ($PkgMgr) {
-            "choco"  { choco install $pkg -y --no-progress 2>&1 | Out-Null }
-            "winget" { winget install --id $pkg -e --accept-source-agreements --accept-package-agreements 2>&1 | Out-Null }
-            "scoop"  { scoop install $pkg 2>&1 | Out-Null }
-        }
+function Install-Pkg($pkg) {
+    switch ($PkgMgr) {
+        "choco"  { choco install $pkg -y --no-progress 2>&1 | Out-Null }
+        "winget" { winget install --id $pkg -e --accept-source-agreements --accept-package-agreements 2>&1 | Out-Null }
+        "scoop"  { scoop install $pkg 2>&1 | Out-Null }
     }
 }
 
@@ -275,304 +186,326 @@ $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH", "Machine") + ";
 
 Write-Step "Checking Node.js..."
 if (Has-Command "node") {
-    $nodeVer = node -v
-    Write-Ok "Node.js $nodeVer"
+    Write-Ok "Node.js $(node -v)"
 } else {
-    Write-Err2 "Node.js installation failed"
-    Write-Warn2 "Install manually from https://nodejs.org/"
+    Write-Err "Node.js not installed"
+    exit 1
 }
+if (Has-Command "npm") { Write-Ok "npm $(npm -v)" } else { Write-Err "npm not installed"; exit 1 }
+if (Has-Command "git") { Write-Ok "git installed" } else { Write-Warn2 "git not found" }
 
-if (Has-Command "npm") {
-    Write-Ok "npm $(npm -v)"
-}
+# ── Parallel Install Phase ───────────────────────────────────
+# Each component runs as a background job. Main loop shows a live
+# spinner dashboard with per-component status.
 
-if (Has-Command "git") {
-    Write-Ok "git installed"
-}
+$Components = @()
+if ($InstallWine)        { $Components += @{ Name="Wine";         Key="wine" } }
+if ($InstallMinGW)       { $Components += @{ Name="MinGW-w64";    Key="mingw" } }
+if ($InstallGDB)         { $Components += @{ Name="GDB";          Key="gdb" } }
+if ($InstallBinwalk)     { $Components += @{ Name="Binwalk";      Key="binwalk" } }
+if ($InstallFrida)       { $Components += @{ Name="Frida";        Key="frida" } }
+if ($InstallJADX)        { $Components += @{ Name="JADX";         Key="jadx" } }
+if ($InstallILSpy)       { $Components += @{ Name="ILSpy";        Key="ilspy" } }
+if ($InstallGhidra)      { $Components += @{ Name="Ghidra";       Key="ghidra" } }
+if ($InstallYara)        { $Components += @{ Name="Yara";         Key="yara" } }
+if ($InstallVolatility)  { $Components += @{ Name="Volatility";   Key="volatility" } }
+if ($InstallPythonTools) { $Components += @{ Name="Python RE";    Key="python" } }
 
-if (Has-Command "r2") {
-    Write-Ok "radare2 installed"
-}
+if ($Components.Count -gt 0) {
+    Write-Section "Parallel Installation"
+    Write-Host "  Installing $($Components.Count) components in parallel..."
+    Write-Host ""
 
-# ── Install Wine ──────────────────────────────────────────────
-
-if ($InstallWine) {
-    Write-Section "Wine"
-    if ($PkgMgr -eq "choco") {
-        Write-Step "Installing Wine..."
-        choco install wine -y --no-progress 2>&1 | Out-Null
-        if (Has-Command "wine") { Write-Ok "Wine installed" } else { Write-Warn2 "Wine install may need restart" }
-    } else {
-        Write-Warn2 "Wine install on Windows via $PkgMgr not automated."
-        Write-Warn2 "Consider using WSL for Linux binary analysis."
-    }
-}
-
-# ── Install MinGW ─────────────────────────────────────────────
-
-if ($InstallMinGW) {
-    Write-Section "MinGW-w64"
-    Write-Step "Installing MinGW-w64..."
-    switch ($PkgMgr) {
-        "choco"  { choco install mingw -y --no-progress 2>&1 | Out-Null }
-        "winget" { winget install --id MartinStorsjo.LLVM-MinGW.UCRT -e --accept-source-agreements --accept-package-agreements 2>&1 | Out-Null }
-        "scoop"  { scoop install mingw 2>&1 | Out-Null }
-    }
-    if (Has-Command "gcc") { Write-Ok "MinGW-w64 installed" } else { Write-Warn2 "MinGW install may need restart" }
-}
-
-# ── Install GDB ───────────────────────────────────────────────
-
-if ($InstallGDB) {
-    Write-Section "GDB"
-    Write-Step "Installing GDB..."
-    $gdbOk = $false
-    switch ($PkgMgr) {
-        "choco"  {
-            choco install gdb -y --no-progress 2>&1 | Out-Null
-            $gdbOk = Has-Command "gdb"
-        }
-        "winget" {
-            # winget doesn't have a direct GDB package.
-            # Try MSYS2 first (best option on Windows), then pip fallback.
-            if (Has-Command "pacman") {
-                pacman -S --noconfirm --needed mingw-w64-x86_64-gdb 2>&1 | Out-Null
-                $gdbOk = Has-Command "gdb"
+    # Define install script blocks for each component
+    $InstallScripts = @{
+        "wine" = {
+            switch ($PkgMgr) {
+                "choco"  { choco install wine -y --no-progress 2>&1 | Out-Null }
+                "winget" { Write-Warn2 "Wine install on Windows via winget not automated." }
+                "scoop"  { scoop install wine 2>&1 | Out-Null }
             }
-            if (-not $gdbOk) {
-                Write-Warn2 "GDB not available via winget directly."
-                Write-Warn2 "Install MSYS2 (https://www.msys2.org/) then run:"
-                Write-Warn2 "  pacman -S mingw-w64-x86_64-gdb"
+            return (Has-Command "wine")
+        }
+        "mingw" = {
+            switch ($PkgMgr) {
+                "choco"  { choco install mingw -y --no-progress 2>&1 | Out-Null }
+                "winget" { winget install --id MartinStorsjo.LLVM-MinGW.UCRT -e --accept-source-agreements --accept-package-agreements 2>&1 | Out-Null }
+                "scoop"  { scoop install mingw 2>&1 | Out-Null }
+            }
+            return (Has-Command "gcc")
+        }
+        "gdb" = {
+            $gdbOk = $false
+            switch ($PkgMgr) {
+                "choco"  {
+                    choco install gdb -y --no-progress 2>&1 | Out-Null
+                    $gdbOk = Has-Command "gdb"
+                }
+                "winget" {
+                    if (Has-Command "pacman") {
+                        pacman -S --noconfirm --needed mingw-w64-x86_64-gdb 2>&1 | Out-Null
+                        $gdbOk = Has-Command "gdb"
+                    }
+                    if (-not $gdbOk) {
+                        Write-Warn2 "GDB not available via winget directly."
+                        Write-Warn2 "Install MSYS2 (https://www.msys2.org/) then run:"
+                        Write-Warn2 "  pacman -S mingw-w64-x86_64-gdb"
+                    }
+                }
+                "scoop"  { scoop install gdb 2>&1 | Out-Null; $gdbOk = Has-Command "gdb" }
+            }
+            return $gdbOk
+        }
+        "binwalk" = {
+            if (Has-Command "pip") {
+                return (Invoke-Pip "install" "binwalk")
+            }
+            return $false
+        }
+        "frida" = {
+            if (Has-Command "pip") {
+                return (Invoke-Pip "install" "frida-tools")
+            }
+            return $false
+        }
+        "jadx" = {
+            switch ($PkgMgr) {
+                "choco"  { choco install jadx -y --no-progress 2>&1 | Out-Null }
+                "winget" { winget install --id JesseGallagher.jadx -e --accept-source-agreements --accept-package-agreements 2>&1 | Out-Null }
+                "scoop"  { scoop install jadx 2>&1 | Out-Null }
+            }
+            return (Has-Command "jadx")
+        }
+        "ilspy" = {
+            switch ($PkgMgr) {
+                "choco"  { choco install dotnet-sdk -y --no-progress 2>&1 | Out-Null }
+                "winget" { winget install --id Microsoft.DotNet.SDK.8 -e --accept-source-agreements --accept-package-agreements 2>&1 | Out-Null }
+                "scoop"  { scoop install dotnet-sdk 2>&1 | Out-Null }
+            }
+            $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("PATH", "User")
+            if (Has-Command "dotnet") {
+                dotnet tool install -g ilspycmd 2>&1 | Out-Null
+                return $true
+            }
+            return $false
+        }
+        "ghidra" = {
+            switch ($PkgMgr) {
+                "choco"  { choco install ghidra -y --no-progress 2>&1 | Out-Null }
+                "winget" {
+                    $ghidraDir = "$env:LOCALAPPDATA\ghidra"
+                    $GHIDRA_VER = "11.1.2"
+                    $GHIDRA_DATE = "20240709"
+                    $url = "https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_${GHIDRA_VER}_build/ghidra_${GHIDRA_VER}_PUBLIC_${GHIDRA_DATE}.zip"
+                    $zip = "$env:TEMP\ghidra.zip"
+                    try {
+                        Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
+                        Expand-Archive -Path $zip -DestinationPath $ghidraDir -Force
+                        Remove-Item $zip
+                        # Create a wrapper
+                        $ghidraExe = Get-ChildItem "$ghidraDir\*\ghidraRun.bat" -Recurse | Select-Object -First 1
+                        if ($ghidraExe) {
+                            $wrapperDir = "$env:LOCALAPPDATA\bin"
+                            New-Item -ItemType Directory -Force -Path $wrapperDir | Out-Null
+                            $wrapperPath = "$wrapperDir\ghidra.bat"
+                            "@echo off`r`n`"$($ghidraExe.FullName)`" %*" | Set-Content $wrapperPath
+                            if ($env:PATH -notlike "*$wrapperDir*") {
+                                [System.Environment]::SetEnvironmentVariable("PATH", "$env:PATH;$wrapperDir", "User")
+                                $env:PATH += ";$wrapperDir"
+                            }
+                            return $true
+                        }
+                    } catch {
+                        Write-Warn2 "Ghidra download failed: $_"
+                    }
+                }
+                "scoop"  { scoop install ghidra 2>&1 | Out-Null }
+            }
+            return (Has-Command "ghidra")
+        }
+        "yara" = {
+            switch ($PkgMgr) {
+                "choco"  { choco install yara -y --no-progress 2>&1 | Out-Null }
+                "winget" { Write-Warn2 "Yara not in winget -- trying pip..." }
+                "scoop"  { scoop install yara 2>&1 | Out-Null }
+            }
+            if (-not (Has-Command "yara")) {
+                if (Has-Command "pip") { Invoke-Pip "install" "yara-python" }
+            }
+            return (Has-Command "yara")
+        }
+        "volatility" = {
+            if (Has-Command "pip") {
+                return (Invoke-Pip "install" "volatility3")
+            }
+            return $false
+        }
+        "python" = {
+            if (Has-Command "pip") {
+                return (Invoke-Pip "install" "capstone" "keystone-engine" "unicorn" "angr" "lief")
+            }
+            return $false
+        }
+    }
+
+    # Launch all components as background jobs
+    $jobs = @()
+    foreach ($comp in $Components) {
+        $script = $InstallScripts[$comp.Key]
+        $job = Start-Job -ScriptBlock {
+            param($ScriptBlock, $PkgMgr, $Functions)
+            . $Functions
+            & $ScriptBlock
+        } -ArgumentList $script, $PkgMgr, ${function:Write-Warn2}, ${function:Has-Command}, ${function:Invoke-Pip}, ${function:Install-Pkg}
+        $jobs += @{ Job=$job; Name=$comp.Name; Key=$comp.Key; Status="pending" }
+    }
+
+    # ── Live spinner dashboard ───────────────────────────────
+    $spinFrames = @('⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏')
+    $spinIdx = 0
+
+    # Print initial lines
+    for ($i = 0; $i -lt $jobs.Count; $i++) {
+        Write-Host "  ○ $($jobs[$i].Name)"
+    }
+
+    # Move cursor up
+    [Console]::SetCursorPosition(0, [Console]::CursorTop - $jobs.Count)
+
+    # Main render loop
+    $allDone = $false
+    while (-not $allDone) {
+        $allDone = $true
+        $spinIdx = ($spinIdx + 1) % 10
+        $spinChar = $spinFrames[$spinIdx]
+
+        for ($i = 0; $i -lt $jobs.Count; $i++) {
+            $j = $jobs[$i]
+            $job = $j.Job
+
+            if ($j.Status -in @("done", "failed")) {
+                # Already finished — skip
+                continue
+            }
+
+            if ($job.State -eq "Running") {
+                $j.Status = "running"
+                $allDone = $false
+            } elseif ($job.State -eq "Completed") {
+                $result = Receive-Job $job
+                Remove-Job $job -Force
+                if ($result) {
+                    $j.Status = "done"
+                } else {
+                    $j.Status = "failed"
+                }
+            } elseif ($job.State -eq "Failed") {
+                Receive-Job $job 2>&1 | Out-Null
+                Remove-Job $job -Force
+                $j.Status = "failed"
+            }
+
+            $icon = switch ($j.Status) {
+                "pending"  { "○" }
+                "running"  { $spinChar }
+                "done"     { "✓" }
+                "failed"   { "✗" }
+            }
+
+            $color = switch ($j.Status) {
+                "pending"  { "Gray" }
+                "running"  { "Cyan" }
+                "done"     { "Green" }
+                "failed"   { "Red" }
+            }
+
+            $statusText = switch ($j.Status) {
+                "pending"  { "waiting" }
+                "running"  { "installing..." }
+                "done"     { "done" }
+                "failed"   { "failed" }
+            }
+
+            # Clear line and write
+            [Console]::SetCursorPosition(0, [Console]::CursorTop)
+            Write-Host -NoNewline ("  " + $icon + " " + $j.Name.PadRight(20) + " ")
+            Write-Host -NoNewline -ForegroundColor $color $statusText
+            Write-Host -NoNewline "          "  # clear rest of line
+
+            # Move down to next line
+            if ($i -lt ($jobs.Count - 1)) {
+                [Console]::SetCursorPosition(0, [Console]::CursorTop + 1)
             }
         }
-        "scoop"  {
-            scoop install gdb 2>&1 | Out-Null
-            $gdbOk = Has-Command "gdb"
+
+        # Move cursor back to first line
+        [Console]::SetCursorPosition(0, [Console]::CursorTop - ($jobs.Count - 1))
+
+        if (-not $allDone) {
+            Start-Sleep -Milliseconds 300
         }
     }
-    if ($gdbOk) { Write-Ok "GDB installed" } elseif (-not $gdbOk) { Write-Warn2 "GDB install failed" }
-}
 
-# ── Install Binwalk ───────────────────────────────────────────
+    # Move cursor past all lines
+    [Console]::SetCursorPosition(0, [Console]::CursorTop + $jobs.Count)
+    Write-Host ""
 
-if ($InstallBinwalk) {
-    Write-Section "Binwalk"
-    Write-Step "Installing Binwalk via pip..."
-    if (Has-Command "pip") {
-        if (Invoke-Pip "install" "binwalk") {
-            Write-Ok "Binwalk installed"
-        } else {
-            Write-Warn2 "Binwalk install had issues (may still work)"
-        }
-    } else {
-        Write-Warn2 "pip not found — install Python first"
-    }
-}
-
-# ── Install Yara ──────────────────────────────────────────────
-
-if ($InstallYara) {
-    Write-Section "Yara"
-    Write-Step "Installing Yara..."
-    switch ($PkgMgr) {
-        "choco"  { choco install yara -y --no-progress 2>&1 | Out-Null }
-        "winget" { Write-Warn2 "Yara not in winget — trying pip..." }
-        "scoop"  { scoop install yara 2>&1 | Out-Null }
-    }
-    if (Has-Command "yara") { Write-Ok "Yara installed" } else {
-        if (Has-Command "pip") { Invoke-Pip "install" "yara-python" }
-        Write-Warn2 "Yara CLI not found — python binding may be installed"
-    }
-}
-
-# ── Install Volatility ────────────────────────────────────────
-
-if ($InstallVolatility) {
-    Write-Section "Volatility"
-    Write-Step "Installing Volatility 3 via pip..."
-    if (Has-Command "pip") {
-        if (Invoke-Pip "install" "volatility3") {
-            Write-Ok "Volatility 3 installed"
-        } else {
-            Write-Warn2 "Volatility 3 install had issues"
-        }
-    } else {
-        Write-Warn2 "pip not found — install Python first"
-    }
-}
-
-# ── Install Frida ─────────────────────────────────────────────
-
-if ($InstallFrida) {
-    Write-Section "Frida"
-    Write-Step "Installing Frida..."
-    if (Has-Command "pip") {
-        if (Invoke-Pip "install" "frida-tools") {
-            Write-Ok "Frida installed"
-        } else {
-            Write-Warn2 "Frida install failed"
-        }
-        if (Has-Command "frida") { Write-Ok "Frida CLI available" }
-    } else {
-        Write-Warn2 "pip not found — install Python first"
-    }
-}
-
-# ── Install JADX ──────────────────────────────────────────────
-
-if ($InstallJADX) {
-    Write-Section "JADX"
-    Write-Step "Installing JADX..."
-    $jadxVer = "1.5.0"
-    $jadxUrl = "https://github.com/skylot/jadx/releases/download/v${jadxVer}/jadx-${jadxVer}.zip"
-    $jadxDir = "$env:LOCALAPPDATA\pire-tools\jadx"
-    $jadxZip = "$env:TEMP\jadx.zip"
-
-    Write-Step "Downloading JADX v$jadxVer..."
-    try {
-        Invoke-WebRequest -Uri $jadxUrl -OutFile $jadxZip -UseBasicParsing
-        New-Item -ItemType Directory -Path $jadxDir -Force | Out-Null
-        Expand-Archive -Path $jadxZip -DestinationPath $jadxDir -Force
-        $jadxBat = "$jadxDir\bin\jadx.bat"
-        if (Test-Path $jadxBat) {
-            $binDir = "$env:LOCALAPPDATA\pire-tools\bin"
-            New-Item -ItemType Directory -Path $binDir -Force | Out-Null
-            Copy-Item $jadxBat "$binDir\jadx.bat" -Force
-            $env:PATH += ";$binDir"
-            Write-Ok "JADX installed to $jadxDir"
-        } else {
-            Write-Warn2 "JADX extraction failed"
-        }
-        Remove-Item $jadxZip -Force -ErrorAction SilentlyContinue
-    } catch {
-        Write-Warn2 "JADX download failed: $_"
-    }
-}
-
-# ── Install ILSpy ─────────────────────────────────────────────
-
-if ($InstallILSpy) {
-    Write-Section "ILSpy"
-    Write-Step "Installing ILSpy..."
-    switch ($PkgMgr) {
-        "choco"  { choco install dotnet-sdk -y --no-progress 2>&1 | Out-Null }
-        "winget" { winget install --id Microsoft.DotNet.SDK.8 -e --accept-source-agreements --accept-package-agreements 2>&1 | Out-Null }
-        "scoop"  { scoop install dotnet-sdk 2>&1 | Out-Null }
-    }
-    $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("PATH", "User")
-    if (Has-Command "dotnet") {
-        Write-Step "Installing ilspycmd..."
-        dotnet tool install -g ilspycmd 2>&1 | Out-Null
-        Write-Ok "ILSpy installed via dotnet tool"
-    } else {
-        Write-Warn2 ".NET SDK not found — install from https://dotnet.microsoft.com/"
-    }
-}
-
-# ── Install Ghidra ────────────────────────────────────────────
-
-if ($InstallGhidra) {
-    Write-Section "Ghidra"
-    Write-Step "Installing Ghidra..."
-    $ghidraVer = "11.1.2"
-    $ghidraDate = "20240709"
-    $ghidraUrl = "https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_${ghidraVer}_build/ghidra_${ghidraVer}_PUBLIC_${ghidraDate}.zip"
-    $ghidraDir = "$env:LOCALAPPDATA\pire-tools\ghidra"
-    $ghidraZip = "$env:TEMP\ghidra.zip"
-
-    # Ensure Java
-    if (-not (Has-Command "java")) {
-        Write-Step "Installing Java JDK..."
-        switch ($PkgMgr) {
-            "choco"  { choco install microsoft-openjdk17 -y --no-progress 2>&1 | Out-Null }
-            "winget" { winget install --id Microsoft.OpenJDK.17 -e --accept-source-agreements --accept-package-agreements 2>&1 | Out-Null }
-        }
-        $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("PATH", "User")
-    }
-
-    if (Has-Command "java") {
-        Write-Step "Downloading Ghidra v$ghidraVer (~400MB)..."
-        try {
-            Invoke-WebRequest -Uri $ghidraUrl -OutFile $ghidraZip -UseBasicParsing
-            Write-Step "Extracting..."
-            New-Item -ItemType Directory -Path $ghidraDir -Force | Out-Null
-            Expand-Archive -Path $ghidraZip -DestinationPath $ghidraDir -Force
-            $ghidraExe = Get-ChildItem -Path $ghidraDir -Filter "ghidraRun.bat" -Recurse | Select-Object -First 1
-            if ($ghidraExe) {
-                $binDir = "$env:LOCALAPPDATA\pire-tools\bin"
-                New-Item -ItemType Directory -Path $binDir -Force | Out-Null
-                # Create a wrapper batch file
-                "@echo off`r`ncall `"$($ghidraExe.FullName)`" %*" | Set-Content "$binDir\ghidra.bat" -Encoding ASCII
-                $env:PATH += ";$binDir"
-                Write-Ok "Ghidra installed to $ghidraDir"
-            } else {
-                Write-Warn2 "Ghidra extraction failed"
-            }
-            Remove-Item $ghidraZip -Force -ErrorAction SilentlyContinue
-        } catch {
-            Write-Warn2 "Ghidra download failed: $_"
-            Write-Warn2 "Install manually from https://ghidra-sre.org/"
-        }
-    } else {
-        Write-Warn2 "Java not installed — Ghidra requires JDK 17+"
-    }
-}
-
-# ── Install Python RE Tools ───────────────────────────────────
-
-if ($InstallPythonTools) {
-    Write-Section "Python RE Tools"
-    Write-Step "Installing capstone, keystone, unicorn, angr, lief..."
-    if (Has-Command "pip") {
-        if (Invoke-Pip "install" "capstone" "keystone-engine" "unicorn" "angr" "lief") {
-            Write-Ok "Python RE tools installed"
-        } else {
-            Write-Warn2 "Some Python RE tools failed to install"
-        }
-    } else {
-        Write-Warn2 "pip not found — installing Python..."
-        switch ($PkgMgr) {
-            "choco"  { choco install python -y --no-progress 2>&1 | Out-Null }
-            "winget" { winget install --id Python.Python.3.12 -e --accept-source-agreements --accept-package-agreements 2>&1 | Out-Null }
-            "scoop"  { scoop install python 2>&1 | Out-Null }
-        }
-        $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("PATH", "User")
-        if (Has-Command "pip") {
-            if (Invoke-Pip "install" "capstone" "keystone-engine" "unicorn" "angr" "lief") {
-                Write-Ok "Python RE tools installed"
-            } else {
-                Write-Warn2 "Some Python RE tools failed to install"
-            }
-        } else {
-            Write-Warn2 "Python installation failed"
+    # Print results
+    Write-Host "  Results:"
+    foreach ($j in $jobs) {
+        switch ($j.Status) {
+            "done"   { Write-Ok $j.Name }
+            "failed" { Write-Warn2 "$($j.Name) — install failed" }
         }
     }
 }
 
-# ── Verification ──────────────────────────────────────────────
-
+# ── Verify ────────────────────────────────────────────────────
 Write-Section "Verification"
-
 Write-Host ""
-if (Has-Command "node")    { Write-Ok "Node.js $(node -v)" } else { Write-Err2 "Node.js not installed" }
-if (Has-Command "npm")     { Write-Ok "npm $(npm -v)" }      else { Write-Err2 "npm not installed" }
-if (Has-Command "git")     { Write-Ok "git" }                else { Write-Warn2 "git not installed" }
-if (Has-Command "r2")      { Write-Ok "radare2" }            else { Write-Warn2 "radare2 not installed" }
 
-if ($InstallWine -and (Has-Command "wine"))        { Write-Ok "wine" }
-if ($InstallMinGW -and (Has-Command "gcc"))         { Write-Ok "MinGW-w64" }
-if ($InstallGDB -and (Has-Command "gdb"))           { Write-Ok "gdb" }
-if ($InstallBinwalk -and (Has-Command "binwalk"))   { Write-Ok "binwalk" }
-if ($InstallFrida -and (Has-Command "frida"))       { Write-Ok "frida" }
-if ($InstallJADX -and (Has-Command "jadx"))         { Write-Ok "jadx" }
-if ($InstallYara -and (Has-Command "yara"))         { Write-Ok "yara" }
+if (Has-Command "node")    { Write-Ok "Node.js $(node -v)" }  else { Write-Err "Node.js not installed" }
+if (Has-Command "npm")     { Write-Ok "npm $(npm -v)" }       else { Write-Err "npm not installed" }
+if (Has-Command "git")     { Write-Ok "git" }                  else { Write-Warn2 "git not installed" }
+if (Has-Command "gcc")     { Write-Ok "gcc" }                  else { Write-Warn2 "gcc not installed" }
+if (Has-Command "r2")      { Write-Ok "radare2" }              else { Write-Warn2 "radare2 not installed" }
+if (Has-Command "strings") { Write-Ok "strings" }              else { Write-Warn2 "strings not installed" }
+if (Has-Command "objdump") { Write-Ok "objdump" }              else { Write-Warn2 "objdump not installed" }
 
-# ── Install npm Dependencies ─────────────────────────────────
+if ($InstallWine)       { if (Has-Command "wine") { Write-Ok "wine" } else { Write-Warn2 "wine not installed" } }
+if ($InstallMinGW)      { if (Has-Command "gcc")  { Write-Ok "MinGW-w64" } else { Write-Warn2 "MinGW-w64 not installed" } }
+if ($InstallGDB)        { if (Has-Command "gdb")  { Write-Ok "gdb" } else { Write-Warn2 "gdb not installed" } }
+if ($InstallBinwalk)    { if (Has-Command "binwalk") { Write-Ok "binwalk" } else { Write-Warn2 "binwalk not installed" } }
+if ($InstallFrida)      { if (Has-Command "frida") { Write-Ok "frida" } else { Write-Warn2 "frida not installed" } }
+if ($InstallJADX)       { if (Has-Command "jadx") { Write-Ok "jadx" } else { Write-Warn2 "jadx not installed" } }
+if ($InstallYara)       { if (Has-Command "yara") { Write-Ok "yara" } else { Write-Warn2 "yara not installed" } }
+if ($InstallPythonTools) {
+    $pyOk = $true
+    try { python -c "import capstone" 2>&1 | Out-Null } catch { $pyOk = $false }
+    if ($pyOk) { Write-Ok "capstone" } else { Write-Warn2 "capstone not installed" }
+}
 
-$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-if (-not $ScriptDir) { $ScriptDir = (Get-Location).Path }
+# ── Install npm dependencies & link CLI ────────────────────────
+$ScriptDir = ""
+if (Test-Path "$PSScriptRoot\package.json") {
+    $ScriptDir = $PSScriptRoot
+} elseif (Test-Path ".\package.json") {
+    $ScriptDir = (Get-Location).Path
+}
 
-if (Test-Path (Join-Path $ScriptDir "package.json")) {
+if (-not $ScriptDir -or -not (Test-Path "$ScriptDir\package.json")) {
+    $PireDir = "$env:USERPROFILE\.pire"
+    if (Test-Path "$PireDir\.git") {
+        Write-Step "Updating pire repo..."
+        git -C $PireDir pull --ff-only -q 2>&1 | Out-Null
+    } else {
+        Write-Step "Cloning pire repo..."
+        git clone -q https://github.com/evangit2/pire.git $PireDir 2>&1 | Out-Null
+    }
+    $ScriptDir = $PireDir
+}
+
+if ($ScriptDir -and (Test-Path "$ScriptDir\package.json")) {
     Write-Section "Node.js Dependencies"
     Write-Step "Installing npm dependencies..."
     Push-Location $ScriptDir
@@ -588,14 +521,43 @@ if (Test-Path (Join-Path $ScriptDir "package.json")) {
         Pop-Location
     }
 
+    # Link pire CLI
+    if (Test-Path "$ScriptDir\packages\re-agent\src\cli.ts") {
+        Write-Step "Linking pire CLI..."
+        $pireWrapper = "$env:LOCALAPPDATA\bin\pire.cmd"
+        $wrapperDir = Split-Path $pireWrapper
+        if (-not (Test-Path $wrapperDir)) {
+            New-Item -ItemType Directory -Force -Path $wrapperDir | Out-Null
+        }
+        "@echo off`r`nnpx tsx `"$ScriptDir\packages\re-agent\src\cli.ts`" %*" | Set-Content $pireWrapper
+        if ($env:PATH -notlike "*$wrapperDir*") {
+            [System.Environment]::SetEnvironmentVariable("PATH", "$env:PATH;$wrapperDir", "User")
+            $env:PATH += ";$wrapperDir"
+        }
+        if (Has-Command "pire") {
+            Write-Ok "pire command available"
+        } else {
+            Write-Warn2 "Could not create pire command"
+        }
+        if (-not (Has-Command "tsx")) {
+            Write-Step "Installing tsx..."
+            npm install -g tsx 2>&1 | Out-Null
+        }
+        Write-Ok "pire command available"
+    }
+
     # Run tests
-    $testSuite = Join-Path $ScriptDir "packages\re-agent\test\test-suite.cjs"
-    if (Test-Path $testSuite) {
+    if (Test-Path "$ScriptDir\packages\re-agent\test\test-suite.cjs") {
         Write-Step "Running test suite..."
         Push-Location $ScriptDir
         try {
-            node $testSuite 2>&1 | Select-Object -Last 3
-            if ($LASTEXITCODE -eq 0) { Write-Ok "Tests passed" } else { Write-Warn2 "Some tests failed" }
+            $testOut = node packages/re-agent/test/test-suite.cjs 2>&1 | Select-Object -Last 3
+            $testOut | ForEach-Object { Write-Host $_ }
+            if ($LASTEXITCODE -eq 0) {
+                Write-Ok "Tests passed"
+            } else {
+                Write-Warn2 "Some tests failed"
+            }
         } finally {
             Pop-Location
         }
@@ -603,7 +565,6 @@ if (Test-Path (Join-Path $ScriptDir "package.json")) {
 }
 
 # ── Done ──────────────────────────────────────────────────────
-
 Write-Section "Installation Complete"
 
 Write-Host ""
@@ -623,6 +584,14 @@ Write-Host "    2. Start pire:"
 Write-Host "       pire                              # start chat (Pi TUI)"
 Write-Host "       pire -cli                         # plain CLI mode"
 Write-Host "       pire C:\Windows\System32\notepad.exe  # analyze a binary"
+Write-Host "       pire https://example.com/app.exe  # download & analyze"
 Write-Host ""
+
+if (-not $InstallWine) {
+    Write-Host "  [!] Wine not installed -- can't run Linux/ELF binaries." -ForegroundColor Yellow
+    Write-Host "        Re-run: .\install.ps1"
+    Write-Host ""
+}
+
 Write-Host "  Docs: https://github.com/evangit2/pire" -ForegroundColor Cyan
 Write-Host ""

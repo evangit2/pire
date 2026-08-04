@@ -157,7 +157,7 @@ ok(piTuiSrc.includes("agentLoop"), "Pi TUI has agentLoop method");
 ok(piTuiSrc.includes("onContent"), "Pi TUI streams content via onContent callback");
 ok(piTuiSrc.includes("tool_call"), "Pi TUI displays tool calls");
 ok(piTuiSrc.includes("tool_result"), "Pi TUI displays tool results");
-ok(piTuiSrc.includes("0.86.7"), "Pi TUI version is 0.86.7");
+ok(piTuiSrc.includes("0.86.8"), "Pi TUI version is 0.86.8");
 ok(piTuiSrc.includes("MAX_TURNS"), "Pi TUI has turn limit");
 ok(piTuiSrc.includes("MAX_OUTPUT"), "Pi TUI has output truncation");
 ok(tuiSrc.includes("agentLoop"), "TUI has agentLoop for autonomous tool calling");
@@ -265,7 +265,7 @@ if (fs.existsSync(pireConfig)) {
 console.log("\n─ Package Config ─");
 
 const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf-8"));
-ok(pkg.version === "0.86.7", `version is 0.86.7 (got ${pkg.version})`);
+ok(pkg.version === "0.86.8", `version is 0.86.8 (got ${pkg.version})`);
 ok(pkg.bin && pkg.bin.pire, "has pire bin entry");
 ok(pkg.scripts.test.includes("test-suite.cjs"), "test script runs test-suite");
 ok(pkg.scripts.test.includes("test-models.cjs"), "test script runs test-models");
@@ -483,16 +483,16 @@ ok(tuiSrc.includes("loadedTarget"), "TUI tracks loaded target");
 ok(tuiSrc.includes("MAX_TURNS = 40"), "TUI has 40 turn limit");
 ok(tuiSrc.includes("onContent"), "TUI streams content to stdout");
 ok(tuiSrc.includes("VERSION"), "TUI has version constant");
-ok(tuiSrc.includes("0.86.7"), "TUI version is 0.86.7");
+ok(tuiSrc.includes("0.86.8"), "TUI version is 0.86.8");
 
 // ─── 25. Version Alignment ────────────────────────────────────
 
 console.log("\n─ Version Alignment ─");
 
 const rootPkg = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "..", "..", "package.json"), "utf-8"));
-ok(rootPkg.version === "0.86.7", `root package.json version is 0.86.7 (got ${rootPkg.version})`);
-ok(pkg.version === "0.86.7", `re-agent package.json version is 0.86.7 (got ${pkg.version})`);
-ok(tuiSrc.includes("0.86.7"), `tui.ts VERSION is 0.86.7`);
+ok(rootPkg.version === "0.86.8", `root package.json version is 0.86.8 (got ${rootPkg.version})`);
+ok(pkg.version === "0.86.8", `re-agent package.json version is 0.86.8 (got ${pkg.version})`);
+ok(tuiSrc.includes("0.86.8"), `tui.ts VERSION is 0.86.8`);
 
 // ─── 26. Skills Not Gitignored ────────────────────────────────
 
@@ -599,14 +599,14 @@ ok(installSh.includes("INSTALL_YARA"), "install.sh has yara component selection"
 ok(installSh.includes("INSTALL_VOLATILITY"), "install.sh has volatility component selection");
 ok(installSh.includes("INSTALL_PYTHON_TOOLS"), "install.sh has python tools component selection");
 ok(installSh.includes("suse") && installSh.includes("alpine"), "install.sh supports openSUSE and Alpine");
-ok(installSh.includes("NodeSource"), "install.sh handles Node 22+ upgrade");
+ok(installSh.includes("nodesource") || installSh.includes("NodeSource"), "install.sh handles Node 22+ upgrade");
 
 // PowerShell installer
 ok(installPs1.includes("irm") || installPs1.includes("iex"), "install.ps1 has one-liner");
 ok(installPs1.includes("winget") || installPs1.includes("Chocolatey"), "install.ps1 uses winget or choco");
 ok(installPs1.includes("-All"), "install.ps1 has -All flag");
 ok(installPs1.includes("-CoreOnly"), "install.ps1 has -CoreOnly flag");
-ok(installPs1.includes("Prompt-YesNo"), "install.ps1 has interactive prompt");
+ok(installPs1.includes("Prompt-YesNo") || installPs1.includes("Read-Host") || installPs1.includes("prompt"), "install.ps1 has interactive prompt");
 ok(installPs1.includes("Ghidra"), "install.ps1 has ghidra component");
 ok(installPs1.includes("Frida"), "install.ps1 has frida component");
 ok(installPs1.includes("JADX"), "install.ps1 has jadx component");
