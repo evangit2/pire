@@ -1,6 +1,6 @@
 # pire
 
-Autonomous reverse-engineering agent. Give it a binary, URL, or directory. It auto-detects the format (PE, ELF, Mach-O, APK, .NET, firmware) and runs the right tools.
+Reverse-engineering agent. Give it a binary, URL, or directory and it figures out what to do. It can triage, decompile, document, reimplement, or whatever the task calls for — not locked to one workflow.
 
 ## Quick start
 
@@ -18,20 +18,29 @@ The installer detects your platform and asks which components you want (Wine, Gh
 
 **Then run:**
 ```bash
-pire                              # start chat
-pire /bin/ls                      # analyze a local binary
-pire https://example.com/app.exe  # download & analyze from URL
+pire
+```
+
+And just tell it what you need:
+```
+> analyze /bin/ls and write up what it does
+> decompile this binary and reimplement it in C
+> what does this firmware image contain?
 ```
 
 ## What it does
 
-1. **Fetch** — download from URL if needed
-2. **Auto-detect** — identify file type (PE, ELF, Mach-O, APK, .NET, firmware, archive)
-3. **Triage** — extract strings, map sections, parse imports/exports
-4. **Disassemble & decompile** — use Radare2, Ghidra, or format-specific tools
-5. **Document** — write a detailed `analysis.md` describing behavior
-6. **Reimplement** — write portable C source matching the original's behavior
-7. **Verify** — compile and run differential tests
+pire has 36 RE tools available and picks the right ones based on what you ask for. A typical workflow might include some of:
+
+- **Fetch** — download from URL if needed
+- **Auto-detect** — identify file type (PE, ELF, Mach-O, APK, .NET, firmware, archive)
+- **Triage** — extract strings, map sections, parse imports/exports
+- **Disassemble & decompile** — use Radare2, Ghidra, or format-specific tools
+- **Document** — write an `analysis.md` describing behavior
+- **Reimplement** — write portable C source matching the original's behavior
+- **Verify** — compile and run differential tests
+
+But you can also just ask it to extract strings from a file, check entropy, trace a specific function, or anything else the tools support. The workflow adapts to the task.
 
 ## Requirements
 
