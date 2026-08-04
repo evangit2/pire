@@ -21,7 +21,7 @@ param(
     [switch]$Help
 )
 
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Continue"
 $ProgressPreference = "SilentlyContinue"
 
 # Force UTF-8 so box-drawing chars render correctly
@@ -47,11 +47,11 @@ function Write-Section($Title) {
 }
 
 function Invoke-Pip {
-    # Run pip without ErrorActionPreference="Stop" killing us on stderr output
-    param([string[]]$Args)
+    # Run pip safely — pip writes normal output to stderr which can crash PowerShell
+    param([Parameter(ValueFromRemainingArguments=$true)][string[]]$PipArgs)
     $prevEAP = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
-    $out = & pip @Args 2>&1
+    $out = & pip @PipArgs 2>&1
     $ErrorActionPreference = $prevEAP
     return $LASTEXITCODE -eq 0
 }
@@ -248,9 +248,9 @@ function Pkg-Install {
     foreach ($pkg in $Packages) {
         Write-Step "Installing $pkg..."
         switch ($PkgMgr) {
-            "choco"  { choco install $pkg -y --no-progress 2>$null }
-            "winget" { winget install --id $pkg -e --accept-source-agreements --accept-package-agreements 2>$null }
-            "scoop"  { scoop install $pkg 2>$null }
+            "choco"  { choco install $pkg -y --no-progress 2>&1 | Out-Null }
+            "winget" { winget install --id $pkg -e --accept-source-agreements --accept-package-agreements 2>&1 | Out-Null }
+            "scoop"  { scoop install $pkg 2>&1 | Out-Null }
         }
     }
 }
@@ -258,15 +258,15 @@ function Pkg-Install {
 Write-Step "Installing core packages..."
 switch ($PkgMgr) {
     "choco" {
-        choco install nodejs-lts git radare2 -y --no-progress 2>$null
+        choco install nodejs-lts git radare2 -y --no-progress 2>&1 | Out-Null
     }
     "winget" {
-        winget install --id OpenJS.NodeJS.LTS -e --accept-source-agreements --accept-package-agreements 2>$null
-        winget install --id Git.Git -e --accept-source-agreements --accept-package-agreements 2>$null
-        winget install --id radare.radare2 -e --accept-source-agreements --accept-package-agreements 2>$null
+        winget install --id OpenJS.NodeJS.LTS -e --accept-source-agreements --accept-package-agreements 2>&1 | Out-Null
+        winget install --id Git.Git -e --accept-source-agreements --accept-package-agreements 2>&1 | Out-Null
+        winget install --id radare.radare2 -e --accept-source-agreements --accept-package-agreements 2>&1 | Out-Null
     }
     "scoop" {
-        scoop install nodejs-lts git radare2 2>$null
+        scoop install nodejs-lts git radare2 2>&1 | Out-Null
     }
 }
 
@@ -300,7 +300,7 @@ if ($InstallWine) {
     Write-Section "Wine"
     if ($PkgMgr -eq "choco") {
         Write-Step "Installing Wine..."
-        choco install wine -y --no-progress 2>$null
+        choco install wine -y --no-progress 2>&1 | Out-Null
         if (Has-Command "wine") { Write-Ok "Wine installed" } else { Write-Warn2 "Wine install may need restart" }
     } else {
         Write-Warn2 "Wine install on Windows via $PkgMgr not automated."
@@ -314,9 +314,9 @@ if ($InstallMinGW) {
     Write-Section "MinGW-w64"
     Write-Step "Installing MinGW-w64..."
     switch ($PkgMgr) {
-        "choco"  { choco install mingw -y --no-progress 2>$null }
-        "winget" { winget install --id MartinStorsjo.LLVM-MinGW.UCRT -e --accept-source-agreements --accept-package-agreements 2>$null }
-        "scoop"  { scoop install mingw 2>$null }
+        "choco"  { choco install mingw -y --no-progress 2>&1 | Out-Null }
+        "winget" { winget install --id MartinStorsjo.LLVM-MinGW.UCRT -e --accept-source-agreements --accept-package-agreements 2>&1 | Out-Null }
+        "scoop"  { scoop install mingw 2>&1 | Out-Null }
     }
     if (Has-Command "gcc") { Write-Ok "MinGW-w64 installed" } else { Write-Warn2 "MinGW install may need restart" }
 }
@@ -375,9 +375,9 @@ if ($InstallYara) {
     Write-Section "Yara"
     Write-Step "Installing Yara..."
     switch ($PkgMgr) {
-        "choco"  { choco install yara -y --no-progress 2>$null }
+        "choco"  { choco install yara -y --no-progress 2>&1 | Out-Null }
         "winget" { Write-Warn2 "Yara not in winget — trying pip..." }
-        "scoop"  { scoop install yara 2>$null }
+        "scoop"  { scoop install yara 2>&1 | Out-Null }
     }
     if (Has-Command "yara") { Write-Ok "Yara installed" } else {
         if (Has-Command "pip") { Invoke-Pip "install" "yara-python" }
@@ -455,14 +455,14 @@ if ($InstallILSpy) {
     Write-Section "ILSpy"
     Write-Step "Installing ILSpy..."
     switch ($PkgMgr) {
-        "choco"  { choco install dotnet-sdk -y --no-progress 2>$null }
-        "winget" { winget install --id Microsoft.DotNet.SDK.8 -e --accept-source-agreements --accept-package-agreements 2>$null }
-        "scoop"  { scoop install dotnet-sdk 2>$null }
+        "choco"  { choco install dotnet-sdk -y --no-progress 2>&1 | Out-Null }
+        "winget" { winget install --id Microsoft.DotNet.SDK.8 -e --accept-source-agreements --accept-package-agreements 2>&1 | Out-Null }
+        "scoop"  { scoop install dotnet-sdk 2>&1 | Out-Null }
     }
     $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("PATH", "User")
     if (Has-Command "dotnet") {
         Write-Step "Installing ilspycmd..."
-        dotnet tool install -g ilspycmd 2>$null
+        dotnet tool install -g ilspycmd 2>&1 | Out-Null
         Write-Ok "ILSpy installed via dotnet tool"
     } else {
         Write-Warn2 ".NET SDK not found — install from https://dotnet.microsoft.com/"
@@ -484,8 +484,8 @@ if ($InstallGhidra) {
     if (-not (Has-Command "java")) {
         Write-Step "Installing Java JDK..."
         switch ($PkgMgr) {
-            "choco"  { choco install microsoft-openjdk17 -y --no-progress 2>$null }
-            "winget" { winget install --id Microsoft.OpenJDK.17 -e --accept-source-agreements --accept-package-agreements 2>$null }
+            "choco"  { choco install microsoft-openjdk17 -y --no-progress 2>&1 | Out-Null }
+            "winget" { winget install --id Microsoft.OpenJDK.17 -e --accept-source-agreements --accept-package-agreements 2>&1 | Out-Null }
         }
         $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("PATH", "User")
     }
@@ -577,11 +577,11 @@ if (Test-Path (Join-Path $ScriptDir "package.json")) {
     Write-Step "Installing npm dependencies..."
     Push-Location $ScriptDir
     try {
-        npm install --ignore-scripts 2>$null
+        npm install --ignore-scripts 2>&1 | Out-Null
         if ($LASTEXITCODE -eq 0) {
             Write-Ok "npm dependencies installed"
         } else {
-            npm install 2>$null
+            npm install 2>&1 | Out-Null
             Write-Warn2 "npm install had issues"
         }
     } finally {
