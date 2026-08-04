@@ -236,7 +236,7 @@ async function handleRequest(req: RPCRequest): Promise<RPCResponse> {
 			case "initialize": {
 				return ok(id, {
 					protocolVersion: "2024-11-05",
-					serverInfo: { name: "pire", version: "0.88.0" },
+					serverInfo: { name: "pire", version: "0.88.1" },
 					capabilities: { tools: {}, resources: {}, prompts: {} },
 					tools: RE_TOOLS.map(t => ({
 						name: t.name,
@@ -273,6 +273,13 @@ async function handleRequest(req: RPCRequest): Promise<RPCResponse> {
 				}
 				const result: ToolResult = await tool.execute("pire", toolArgs);
 				const text = result.content.map((c: { text: string }) => c.text).join("\n");
+				// Record in session history if sessionId provided
+				const sid = p.sessionId as string | undefined;
+				if (sid && sessions.has(sid)) {
+					const session = sessions.get(sid)!;
+					session.messages.push({ role: "tool", tool_call_id: `tool_${id}`, content: text });
+					session.messages.push({ role: "assistant", content: `Tool ${toolName} result: ${text.slice(0, 200)}${text.length > 200 ? "..." : ""}` });
+				}
 				return ok(id, { content: [{ type: "text", text }] });
 			}
 
@@ -362,7 +369,7 @@ async function handleRequest(req: RPCRequest): Promise<RPCResponse> {
 					return err(id, -32602, `Session not found: ${sid}`);
 				}
 				const data = JSON.stringify({
-					version: "0.88.0",
+					version: "0.88.1",
 					target: session.target,
 					messages: session.messages,
 				}, null, 2);

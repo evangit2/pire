@@ -128,7 +128,7 @@ const decompileSection = src.match(/const decompileTool[\s\S]*?\n\};/);
 if (decompileSection) {
 	ok(decompileSection[0].includes("isAnalyzed"), "decompile tool uses isAnalyzed check");
 	ok(decompileSection[0].includes("aaa; s"), "decompile tool prepends aaa when not analyzed");
-	ok(decompileSection[0].includes("s ${params.address}; pdc"), "decompile tool skips aaa when already analyzed");
+	ok(decompileSection[0].includes("s ${seekTarget}; pdc"), "decompile tool skips aaa when already analyzed");
 } else {
 	ok(false, "could not extract decompile tool source");
 }

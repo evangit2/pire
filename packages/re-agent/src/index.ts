@@ -304,13 +304,13 @@ class R2Session {
 			try { this.proc.child.kill(); } catch {}
 			this.proc = null;
 		}
+		// -q0: quiet mode + emit null byte on startup (so we know it's ready)
 		const child = spawn(this.r2path, ["-q0", path], { stdio: ["pipe", "pipe", "pipe"] });
-		const stdout: string[] = [];
-		child.stdout.on("data", (chunk) => stdout.push(chunk.toString()));
 		this.proc = { child, stdin: child.stdin, stdout: "" };
 		this.currentFile = path;
-		// Read initial null byte that r2 emits with -0 flag
-		this.proc.stdout = stdout.join("");
+		// Don't attach a persistent data listener here — the run() method
+		// attaches its own per-command listener with a marker for framing.
+		// The initial null byte will be consumed and stripped by run().
 	}
 
 	async run(path: string, command: string): Promise<string> {
@@ -340,7 +340,9 @@ class R2Session {
 					clearTimeout(timeout);
 					child.stdout?.removeListener("data", onData);
 					// Extract output before the marker
-					const output = text.split(marker)[0];
+					let output = text.split(marker)[0];
+					// Strip leading null bytes from r2 -q0 startup
+					output = output.replace(/^\x00+/, "");
 					resolve(output.trim());
 				}
 			};
@@ -383,16 +385,38 @@ const r2Tool: AgentTool<{ path: string; command: string }> = {
 
 const decompileTool: AgentTool<{ path: string; address: string }> = {
 	name: "decompile",
-	description: "Decompile a function at an address using radare2's pdc (pseudo-C). Requires r2 with analysis (aaa) already run.",
+	description: "Decompile a function at an address using radare2's pdc (pseudo-C). Accepts hex addresses (e.g. 0x1140) or symbol names (e.g. main, entry0). Auto-runs aaa analysis on first call per file.",
 	parameters: Type.Object({
 		path: Type.String({ description: "Path to the binary" }),
-		address: Type.String({ description: "Function address (hex, e.g. 0x1400016b0)" }),
+		address: Type.String({ description: "Function address (hex, e.g. 0x1400016b0) or symbol name (e.g. main)" }),
 	}),
 	async execute(_id, params) {
+		// For symbol names, resolve via r2 first so we seek to the right place
+		let seekTarget = params.address;
+		if (!/^0x[0-9a-fA-F]+$/.test(params.address) && !/^[0-9a-fA-F]+$/.test(params.address)) {
+			// It's a symbol name — r2's `s` command can handle it directly
+			// but we use `?v` to validate it resolves
+			const checkCmd = r2Session.isAnalyzed(params.path)
+				? `?v ${params.address}`
+				: `aaa; ?v ${params.address}`;
+			const resolved = await r2Session.run(params.path, checkCmd);
+			const cleaned = resolved.replace(/\x00/g, "").trim();
+			if (!cleaned || cleaned === "0x0" || cleaned === "0") {
+				return textResult(`Symbol "${params.address}" not found in binary. Use 'r2' with 'afl' to list valid function addresses.`);
+			}
+			seekTarget = params.address; // r2's `s` handles symbol names natively
+		}
 		const cmd = r2Session.isAnalyzed(params.path)
-			? `s ${params.address}; pdc`
-			: `aaa; s ${params.address}; pdc`;
-		return textResult(await r2Session.run(params.path, cmd));
+			? `s ${seekTarget}; pdc`
+			: `aaa; s ${seekTarget}; pdc`;
+		const result = await r2Session.run(params.path, cmd);
+		// r2 pdc outputs a null byte or empty string when there's nothing to decompile
+		// at the given address (e.g. data section, padding, invalid address)
+		const cleaned = result.replace(/\x00/g, "").trim();
+		if (!cleaned) {
+			return textResult(`No decompilable function found at ${params.address}. The address may be in a data section, alignment padding, or not a function entry point. Use 'r2' with 'afl' to list valid function addresses.`);
+		}
+		return textResult(cleaned);
 	},
 };
 
@@ -685,11 +709,30 @@ const disasmFuncTool: AgentTool<{ path: string; startAddress: string; maxBytes?:
 		maxBytes: Type.Optional(Type.Number({ description: "Max bytes to scan (default: 8192)", default: 8192 })),
 	}),
 	async execute(_id, params) {
-		const addr = params.startAddress.replace(/^0x/, "");
+		let addr = params.startAddress.replace(/^0x/, "");
 		const maxBytes = params.maxBytes ?? 8192;
 
-		// Detect PE binary by reading the first 2 bytes (MZ header)
-		const isPE = isPEBinary(params.path);
+	// Resolve symbolic addresses (e.g. "main", "entry0") to hex via r2
+	if (!/^[0-9a-fA-F]+$/.test(addr)) {
+		const r2path = which("r2") ?? which("radare2");
+		if (r2path) {
+			const resolved = run(
+				`${r2path} -qc "?v ${params.startAddress}" ${shellEscape(params.path)} ${DEVNULL}`,
+				{ timeout: 15000 },
+			).trim();
+			// r2 ?v prints the resolved address as a hex number
+			if (/^0x[0-9a-fA-F]+$/.test(resolved) || /^[0-9a-fA-F]+$/.test(resolved)) {
+				addr = resolved.replace(/^0x/, "");
+			} else {
+				return textResult(`Could not resolve symbol "${params.startAddress}" to an address. Use a hex address like 0x1140. r2 output: ${resolved}`);
+			}
+		} else {
+			return textResult(`Cannot resolve symbol "${params.startAddress}" without radare2. Provide a hex address like 0x1140.`);
+		}
+	}
+
+	// Detect PE binary by reading the first 2 bytes (MZ header)
+	const isPE = isPEBinary(params.path);
 
 		if (isPE) {
 			// Use r2 for PE binaries — objdump is unreliable on PE
