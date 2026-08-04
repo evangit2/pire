@@ -289,12 +289,12 @@ fi
 # ── Package Manager Abstraction ───────────────────────────────
 pkg_install() {
 	case "$PKG_MGR" in
-		apt)    sudo apt-get install -y -qq "$@" 2>/dev/null ;;
-		dnf)    sudo dnf install -y -q "$@" 2>/dev/null ;;
-		pacman) sudo pacman -S --noconfirm --needed "$@" 2>/dev/null ;;
-		zypper) sudo zypper install -y -q "$@" 2>/dev/null ;;
-		apk)    sudo apk add -q "$@" 2>/dev/null ;;
-		brew)   brew install "$@" 2>/dev/null ;;
+		apt)    sudo apt-get install -y -qq "$@" >/dev/null 2>&1 ;;
+		dnf)    sudo dnf install -y -q "$@" >/dev/null 2>&1 ;;
+		pacman) sudo pacman -S --noconfirm --needed "$@" >/dev/null 2>&1 ;;
+		zypper) sudo zypper install -y -q "$@" >/dev/null 2>&1 ;;
+		apk)    sudo apk add -q "$@" >/dev/null 2>&1 ;;
+		brew)   brew install "$@" >/dev/null 2>&1 ;;
 		*)      log_warn "Unknown package manager for: $*" ;;
 	esac
 }
@@ -315,7 +315,7 @@ log_section "Core Components"
 case "$OS" in
 	debian)
 		log_step "Updating package index..."
-		sudo apt-get update -qq 2>/dev/null
+		sudo apt-get update -qq >/dev/null 2>&1
 		log_step "Installing core packages..."
 		pkg_install nodejs npm git build-essential radare2 binutils file
 		;;
@@ -338,7 +338,7 @@ case "$OS" in
 	macos)
 		if ! has brew; then
 			log_step "Installing Homebrew..."
-			/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+			/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" >/dev/null 2>&1
 		fi
 		log_done "Homebrew ready"
 		log_step "Installing core packages..."
@@ -350,7 +350,7 @@ case "$OS" in
 			ubuntu|debian|linuxmint|pop)
 				OS="debian"; PKG_MGR="apt"
 				log_step "Updating package index..."
-				sudo apt-get update -qq 2>/dev/null
+				sudo apt-get update -qq >/dev/null 2>&1
 				log_step "Installing core packages..."
 				pkg_install nodejs npm git build-essential radare2 binutils file
 				;;
@@ -362,7 +362,7 @@ case "$OS" in
 			*)
 				OS="debian"; PKG_MGR="apt"
 				log_step "Updating package index..."
-				sudo apt-get update -qq 2>/dev/null
+				sudo apt-get update -qq >/dev/null 2>&1
 				log_step "Installing core packages..."
 				pkg_install nodejs npm git build-essential radare2 binutils file
 				;;
@@ -383,13 +383,13 @@ if [ "$NODE_VER" -lt 22 ] 2>/dev/null; then
 	case "$OS" in
 		debian)
 			# NodeSource setup for Node.js 22
-			curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - 2>/dev/null
-			sudo apt-get install -y -qq nodejs 2>/dev/null
+			curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - >/dev/null 2>&1
+			sudo apt-get install -y -qq nodejs >/dev/null 2>&1
 			;;
 		fedora)
 			# NodeSource RPM for Node.js 22
-			curl -fsSL https://rpm.nodesource.com/setup_22.x | sudo bash - 2>/dev/null
-			sudo dnf install -y -q nodejs 2>/dev/null
+			curl -fsSL https://rpm.nodesource.com/setup_22.x | sudo bash - >/dev/null 2>&1
+			sudo dnf install -y -q nodejs >/dev/null 2>&1
 			;;
 		arch|windows)
 			pkg_install nodejs 2>/dev/null
@@ -420,7 +420,7 @@ if [ "$INSTALL_WINE" = "1" ]; then
 		WINEPREFIX="${WINEPREFIX:-$HOME/.wine}"
 		if [ ! -d "$WINEPREFIX" ]; then
 			log_step "Initializing Wine prefix..."
-			WINEPREFIX="$WINEPREFIX" wineboot --init 2>/dev/null || log_warn "Wine init failed"
+			WINEPREFIX="$WINEPREFIX" wineboot --init >/dev/null 2>&1 || log_warn "Wine init failed"
 			log_done "Wine prefix initialized at $WINEPREFIX"
 		else
 			log_done "Wine prefix exists at $WINEPREFIX"
@@ -624,7 +624,7 @@ if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/package.json" ]; then
 	log_section "Node.js Dependencies"
 	log_step "Installing npm dependencies..."
 	cd "$SCRIPT_DIR"
-	npm install --ignore-scripts 2>/dev/null || npm install 2>/dev/null || log_warn "npm install had issues"
+	npm install --ignore-scripts >/dev/null 2>&1 || npm install >/dev/null 2>&1 || log_warn "npm install had issues"
 	log_done "npm dependencies installed"
 
 	# Link pire CLI
