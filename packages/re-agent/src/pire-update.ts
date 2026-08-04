@@ -17,7 +17,9 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import chalk from "chalk";
 
-const PIRE_DIR = join(process.env.HOME || "/tmp", ".pire");
+const PIRE_DIR = join(process.env.HOME || process.env.USERPROFILE || "/tmp", ".pire");
+const IS_WIN = process.platform === "win32";
+const DEVNULL = IS_WIN ? "2>nul" : "2>/dev/null";
 const BACKUP_FILE = join(PIRE_DIR, ".update-backup");
 
 function git(args: string, opts: { cwd: string; stdio?: "pipe" | "ignore" } = { cwd: process.cwd() }): string {
@@ -51,7 +53,8 @@ function findPireRepo(): string | null {
 
 	// Try resolving from the pire binary
 	try {
-		const bin = execSync("which pire 2>/dev/null", { encoding: "utf-8" }).trim();
+		const checker = IS_WIN ? "where" : "which";
+		const bin = execSync(`${checker} pire ${DEVNULL}`, { encoding: "utf-8" }).trim();
 		if (bin) {
 			const content = readFileSync(bin, "utf-8");
 			const match = content.match(/cd\s+(\S+)\s+&&/);
@@ -105,7 +108,7 @@ async function doUpdate(): Promise<void> {
 
 	if (currentSha === remoteSha) {
 		console.log(chalk.green("✓ Already up to date."));
-		const version = git("describe --tags --abbrev=0 2>/dev/null", { cwd: repo }) || "unknown";
+		const version = git(`describe --tags --abbrev=0 ${DEVNULL}`, { cwd: repo }) || "unknown";
 		console.log(chalk.dim(`  Version: ${version}`));
 		process.exit(0);
 	}
@@ -163,7 +166,7 @@ async function doUpdate(): Promise<void> {
 			execSync("npx tsc --noEmit", { cwd: repo, stdio: "ignore", timeout: 60000 });
 		}
 
-		const newVersion = git("describe --tags --abbrev=0 2>/dev/null", { cwd: repo }) || "unknown";
+		const newVersion = git(`describe --tags --abbrev=0 ${DEVNULL}`, { cwd: repo }) || "unknown";
 		console.log(chalk.green(`\n✓ Updated to ${newVersion}`));
 		console.log(chalk.dim(`  ${currentSha.slice(0, 8)} → ${remoteSha.slice(0, 8)}`));
 		console.log(chalk.dim(`  Run 'pire update reverse' to roll back if needed.`));

@@ -17,6 +17,12 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
+// ─── Platform helpers ──────────────────────────────────────────
+const IS_WIN = process.platform === "win32";
+const DEVNULL = IS_WIN ? "2>nul" : "2>/dev/null";
+const PYTHON = IS_WIN ? "python" : "python3";
+const NULL_DEVICE = IS_WIN ? "NUL" : "/dev/null";
+
 // ─── Types ─────────────────────────────────────────────────────
 
 export interface ToolResult {
@@ -42,7 +48,8 @@ function shellEscape(s: string): string {
 
 function which(cmd: string): string | null {
 	try {
-		const p = execSync(`which ${cmd} 2>/dev/null`, { encoding: "utf-8" }).trim();
+		const checker = IS_WIN ? "where" : "which";
+		const p = execSync(`${checker} ${cmd} ${DEVNULL}`, { encoding: "utf-8" }).trim();
 		return p || null;
 	} catch {
 		return null;
@@ -51,7 +58,7 @@ function which(cmd: string): string | null {
 
 function pythonModule(name: string): boolean {
 	try {
-		execSync(`python3 -c "import ${name}" 2>/dev/null`, { encoding: "utf-8" });
+		execSync(`${PYTHON} -c "import ${name}" ${DEVNULL}`, { encoding: "utf-8" });
 		return true;
 	} catch {
 		return false;
@@ -123,7 +130,7 @@ class GhidraBridge {
 		// Try to auto-start the bridge if we found it
 		if (this.bridgePath) {
 			try {
-				spawn("python3", [this.bridgePath, "--no-lazy"], {
+				spawn(PYTHON, [this.bridgePath, "--no-lazy"], {
 					detached: true, stdio: "ignore",
 				}).unref();
 				// Wait briefly for startup
@@ -254,7 +261,7 @@ const hexdumpTool: AgentTool<{ path: string; offset?: number; length?: number }>
 	async execute(_id, params) {
 		const offset = params.offset ?? 0;
 		const length = params.length ?? 256;
-		return textResult(run(`dd if=${shellEscape(params.path)} bs=1 skip=${offset} count=${length} 2>/dev/null | hexdump -C`), { offset, length });
+		return textResult(run(`dd if=${shellEscape(params.path)} bs=1 skip=${offset} count=${length} ${DEVNULL} | hexdump -C`), { offset, length });
 	},
 };
 
@@ -456,7 +463,7 @@ const liefTool: AgentTool<{ path: string; action: string }> = {
 		};
 		const action = actions[params.action] ?? 'print("Unknown action")';
 		const script = `import lief, json, sys; b=lief.parse("${params.path}"); ${action}`;
-		return textResult(run(`python3 -c '${script.replace(/'/g, "'\\''")}' 2>/dev/null`, { timeout: 15000 }));
+		return textResult(run(`${PYTHON} -c '${script.replace(/'/g, "'\\''")}' ${DEVNULL}`, { timeout: 15000 }));
 	},
 };
 
@@ -478,7 +485,7 @@ const angrTool: AgentTool<{ path: string; action: string; target?: string }> = {
 		} else {
 			script = `import angr; p=angr.Project("${params.path}", auto_load_libs=False); print(f"Arch: {p.arch} Entry: {p.entry:#x} PIE: {p.loader.main_object.pic}")`;
 		}
-		return textResult(run(`python3 -c '${script.replace(/'/g, "'\\''")}' 2>/dev/null`, { timeout: 120000, maxBuffer: 20 * 1024 * 1024 }));
+		return textResult(run(`${PYTHON} -c '${script.replace(/'/g, "'\\''")}' ${DEVNULL}`, { timeout: 120000, maxBuffer: 20 * 1024 * 1024 }));
 	},
 };
 
@@ -499,7 +506,7 @@ const capstoneTool: AgentTool<{ path: string; offset?: number; count?: number; a
 		const arch = params.arch ?? "x86";
 		const mode = params.mode ?? "64";
 		const script = `from capstone import *; import struct; data=open("${params.path}","rb").read()[${offset}:${offset}+${count*15}]; md=Cs(CS_ARCH_${arch.toUpperCase()},CS_MODE_${mode=="64"?"64":mode=="32"?"32":"ARM"}); [print(f"0x{i.address:x}: {i.mnemonic} {i.op_str}") for i in md.disasm(data,${offset})][:${count}]`;
-		return textResult(run(`python3 -c '${script.replace(/'/g, "'\\''")}' 2>/dev/null`, { timeout: 15000 }));
+		return textResult(run(`${PYTHON} -c '${script.replace(/'/g, "'\\''")}' ${DEVNULL}`, { timeout: 15000 }));
 	},
 };
 
@@ -516,7 +523,7 @@ const keystoneTool: AgentTool<{ assembly: string; arch?: string; mode?: string }
 		const arch = params.arch ?? "x86";
 		const mode = params.mode ?? "64";
 		const script = `from keystone import *; ks=Ks(KS_ARCH_${arch.toUpperCase()},KS_MODE_${mode=="64"?"64":mode=="32"?"32":"ARM"}); encoding,count=ks.asm("${params.assembly.replace(/"/g, '\\"')}"); print(" ".join(f"{b:02x}" for b in encoding))`;
-		return textResult(run(`python3 -c '${script.replace(/'/g, "'\\''")}' 2>/dev/null`, { timeout: 10000 }));
+		return textResult(run(`${PYTHON} -c '${script.replace(/'/g, "'\\''")}' ${DEVNULL}`, { timeout: 10000 }));
 	},
 };
 
@@ -538,7 +545,7 @@ const unicornTool: AgentTool<{ path: string; entry?: string; arch?: string; mode
 		const entry = params.entry ?? "0";
 		const script = `from unicorn import *; from unicorn.x86_const import *; import struct; data=open("${params.path}","rb").read(); uc=Uc(UC_ARCH_${arch.toUpperCase()},UC_MODE_${mode=="64"?"64":mode=="32"?"32":"ARM"}); uc.mem_map(0x10000, 2*1024*1024); uc.mem_write(0x10000, data); uc.emu_start(0x10000+int("${entry}",16) if "${entry}" else 0x10000, 0x10000+len(data), count=${steps}); rax=uc.reg_read(UC_X86_REG_RAX); print(f"Emulated ${steps} steps. RAX={rax:#x}")`;
 		try {
-			return textResult(run(`python3 -c '${script.replace(/'/g, "'\\''")}' 2>/dev/null`, { timeout: 30000 }));
+			return textResult(run(`${PYTHON} -c '${script.replace(/'/g, "'\\''")}' ${DEVNULL}`, { timeout: 30000 }));
 		} catch (e: any) {
 			const stderr = e.stderr ? e.stderr.toString() : "";
 			const errLine = stderr.split("\n").find((l: string) => l.includes("Error:") || l.includes("error:")) || e.message;
@@ -559,7 +566,7 @@ const yaraTool: AgentTool<{ path: string; rule: string }> = {
 		const tmpRule = `/tmp/pire_yara_${Date.now()}.yar`;
 		writeFileSync(tmpRule, params.rule);
 		try {
-			const result = run(`python3 -c "import yara; r=yara.compile('${tmpRule}'); m=r.match('${params.path}'); print('\\\\n'.join(f'{s}: {t}' for m2 in m for s,t in [(m2.rule, 'matched')]) if m else print('No matches'))" 2>/dev/null`, { timeout: 15000 });
+			const result = run(`${PYTHON} -c "import yara; r=yara.compile('${tmpRule}'); m=r.match('${params.path}'); print('\\\\n'.join(f'{s}: {t}' for m2 in m for s,t in [(m2.rule, 'matched')]) if m else print('No matches'))" ${DEVNULL}`, { timeout: 15000 });
 			return textResult(result);
 		} finally {
 			try { run(`rm -f ${tmpRule}`); } catch {}
@@ -579,7 +586,7 @@ const fridaTool: AgentTool<{ target: string; script: string; action: string }> =
 		const fridaBin = which("frida") ?? which("frida-trace");
 		if (!fridaBin && !pythonModule("frida")) return textResult("frida not installed. Install: pip install frida-tools");
 		if (params.action === "list") {
-			return textResult(run(`frida-ps -a 2>/dev/null || python3 -c "import frida; [print(f'{p.pid}: {p.name}') for p in frida.enumerate_devices()[0].enumerate_processes()]"`, { timeout: 10000 }));
+			return textResult(run(`frida-ps -a ${DEVNULL} || ${PYTHON} -c "import frida; [print(f'{p.pid}: {p.name}') for p in frida.enumerate_devices()[0].enumerate_processes()]"`, { timeout: 10000 }));
 		}
 		const tmpScript = `/tmp/pire_frida_${Date.now()}.js`;
 		writeFileSync(tmpScript, params.script ?? "");
@@ -617,9 +624,9 @@ const volatilityTool: AgentTool<{ memdump: string; plugin: string; extraArgs?: s
 	async execute(_id, params) {
 		const vol = which("vol") ?? which("volatility3");
 		if (!vol && !pythonModule("volatility3")) return textResult("volatility3 not installed. Install: pip install volatility3");
-		const cmd = vol ?? "python3 -m volatility3";
+		const cmd = vol ?? `${PYTHON} -m volatility3`;
 		try {
-			return textResult(run(`${cmd} -f ${shellEscape(params.memdump)} ${params.plugin} ${params.extraArgs ?? ""} 2>/dev/null`, { timeout: 60000 }));
+			return textResult(run(`${cmd} -f ${shellEscape(params.memdump)} ${params.plugin} ${params.extraArgs ?? ""} ${DEVNULL}`, { timeout: 60000 }));
 		} catch (e: any) {
 			const stderr = e.stderr ? e.stderr.toString() : "";
 			const errLine = stderr.split("\n").find((l: string) => l.includes("Error") || l.includes("error")) || e.message;
@@ -658,7 +665,7 @@ const disasmFuncTool: AgentTool<{ path: string; startAddress: string; maxBytes?:
 			const r2path = which("r2") ?? which("radare2");
 			if (r2path) {
 				const result = run(
-					`${r2path} -qc "aaa; s 0x${addr}; pdf" ${shellEscape(params.path)} 2>/dev/null`,
+					`${r2path} -qc "aaa; s 0x${addr}; pdf" ${shellEscape(params.path)} ${DEVNULL}`,
 					{ timeout: 60000 },
 				);
 				if (result.trim()) {
@@ -668,7 +675,7 @@ const disasmFuncTool: AgentTool<{ path: string; startAddress: string; maxBytes?:
 			// Fall back to objdump with PE target if r2 not available
 			const stopAddr = parseInt(addr, 16) + maxBytes;
 			const raw = run(
-				`objdump -d --target=pei-x86-64 --start-address=0x${addr} --stop-address=0x${stopAddr.toString(16)} ${shellEscape(params.path)} 2>/dev/null`,
+				`objdump -d --target=pei-x86-64 --start-address=0x${addr} --stop-address=0x${stopAddr.toString(16)} ${shellEscape(params.path)} ${DEVNULL}`,
 				{ timeout: 15000 },
 			);
 			return textResult(raw || `No disassembly found at 0x${addr} (PE binary, r2 not available).`, {
@@ -679,7 +686,7 @@ const disasmFuncTool: AgentTool<{ path: string; startAddress: string; maxBytes?:
 		// ELF path — use objdump with function boundary detection
 		const stopAddr = parseInt(addr, 16) + maxBytes;
 		const raw = run(
-			`objdump -d --start-address=0x${addr} --stop-address=0x${stopAddr.toString(16)} ${shellEscape(params.path)} 2>/dev/null`,
+			`objdump -d --start-address=0x${addr} --stop-address=0x${stopAddr.toString(16)} ${shellEscape(params.path)} ${DEVNULL}`,
 			{ timeout: 15000 },
 		);
 		const lines = raw.split("\n");
@@ -796,9 +803,11 @@ const fetchTool: AgentTool<{ url: string; outputDir?: string }> = {
 		try {
 			run(cmd, { timeout: 120000 });
 			if (existsSync(outPath)) {
-				const stat = run(`stat -c %s ${shellEscape(outPath)} 2>/dev/null || stat -f %z ${shellEscape(outPath)} 2>/dev/null`);
-				const fileType = run(`file ${shellEscape(outPath)}`);
-				return textResult(`Downloaded to: ${outPath}\nSize: ${stat.trim()} bytes\nType: ${fileType.split(":")[1]?.trim() ?? "unknown"}`, {
+				const statResult = IS_WIN
+					? String(require("node:fs").statSync(outPath).size)
+					: run(`stat -c %s ${shellEscape(outPath)} ${DEVNULL} || stat -f %z ${shellEscape(outPath)} ${DEVNULL}`);
+				const fileType = IS_WIN ? "unknown" : run(`file ${shellEscape(outPath)}`);
+				return textResult(`Downloaded to: ${outPath}\nSize: ${statResult.trim()} bytes\nType: ${fileType.split(":")[1]?.trim() ?? "unknown"}`, {
 					path: outPath,
 					url: params.url,
 				});
@@ -848,8 +857,8 @@ const entropyTool: AgentTool<{ path: string; blockSize?: number }> = {
 		blockSize: Type.Optional(Type.Number({ description: "Block size in bytes (default: whole file)" })),
 	}),
 	async execute(_id, params) {
-		const py = which("python3");
-		if (!py) return textResult("python3 not installed");
+		const py = which(PYTHON);
+		if (!py) return textResult("Python not installed");
 		const bs = params.blockSize || 0;
 		const script = `
 import sys, math, collections
@@ -873,7 +882,7 @@ else:
     elif e < 3.0: print("NOTE: low entropy — mostly text/structured data")
 `;
 		try {
-			const out = run(`python3 -c '${script.replace(/'/g, "'\\''")}' 2>/dev/null`, { timeout: 30000 });
+			const out = run(`${PYTHON} -c '${script.replace(/'/g, "'\\''")}' ${DEVNULL}`, { timeout: 30000 });
 			return textResult(out);
 		} catch (e: any) {
 			return textResult(`Entropy calculation failed: ${e.message}`);
@@ -1092,11 +1101,14 @@ const patchTool: AgentTool<{ path: string; offset: string; bytes: string; backup
 		const backupPath = params.path + ".bak";
 
 		if (backup && !existsSync(backupPath)) {
-			try { run(`cp ${shellEscape(params.path)} ${shellEscape(backupPath)} 2>/dev/null`); } catch {}
+			try {
+				if (IS_WIN) { run(`copy ${shellEscape(params.path)} ${shellEscape(backupPath)}`); }
+				else { run(`cp ${shellEscape(params.path)} ${shellEscape(backupPath)} ${DEVNULL}`); }
+			} catch {}
 		}
 
-		const py = which("python3");
-		if (!py) return textResult("python3 not installed");
+		const py = which(PYTHON);
+		if (!py) return textResult("Python not installed");
 		const script = `
 import struct
 path = ${JSON.stringify(params.path)}
@@ -1113,7 +1125,7 @@ with open(path, "r+b") as f:
     print(f"New:      {data.hex()}")
 `;
 		try {
-			const out = run(`python3 -c '${script.replace(/'/g, "'\\''")}' 2>/dev/null`, { timeout: 10000 });
+			const out = run(`${PYTHON} -c '${script.replace(/'/g, "'\\''")}' ${DEVNULL}`, { timeout: 10000 });
 			return textResult(out, { backupPath: backup ? backupPath : undefined });
 		} catch (e: any) {
 			// Extract just the error line, not the full traceback
@@ -1135,8 +1147,8 @@ const searchTool: AgentTool<{ path: string; pattern: string; isHex?: boolean }> 
 		isHex: Type.Optional(Type.Boolean({ description: "Treat pattern as hex (default: false = text)" })),
 	}),
 	async execute(_id, params) {
-		const py = which("python3");
-		if (!py) return textResult("python3 not installed");
+		const py = which(PYTHON);
+		if (!py) return textResult("Python not installed");
 		const hexMode = params.isHex === true;
 		const script = `
 data = open(${JSON.stringify(params.path)}, "rb").read()
@@ -1159,7 +1171,7 @@ else:
     print("No matches found")
 `;
 		try {
-			const out = run(`python3 -c '${script.replace(/'/g, "'\\''")}' 2>/dev/null`, { timeout: 30000 });
+			const out = run(`${PYTHON} -c '${script.replace(/'/g, "'\\''")}' ${DEVNULL}`, { timeout: 30000 });
 			return textResult(out);
 		} catch (e: any) {
 			return textResult(`Search failed: ${e.message}`);
@@ -1226,20 +1238,20 @@ export function probeTools(): Record<string, boolean> {
 		shell: true,
 		fetch: !!which("wget") || !!which("curl"),
 		extract: !!which("unzip") || !!which("tar") || !!which("7z") || !!which("binwalk"),
-		strings: !!which("strings"),
+		strings: !!which("strings") || !!which("Strings"),
 		filetype: !!which("file"),
 		objdump: !!which("objdump"),
 		disasm_func: !!which("objdump") || !!which("r2") || !!which("radare2"),
 		readelf: !!which("readelf"),
-		hexdump: !!which("hexdump"),
+		hexdump: !!which("hexdump") || IS_WIN,
 		nm: !!which("nm"),
 		size: !!which("size"),
-		search: !!which("python3"),
-		patch: !!which("python3"),
+		search: !!which(PYTHON),
+		patch: !!which(PYTHON),
 		r2: !!which("r2") || !!which("radare2"),
 		decompile: !!which("r2") || !!which("radare2"),
-		hash: !!which("md5sum") || !!which("sha256sum"),
-		entropy: !!which("python3"),
+		hash: !!which("md5sum") || !!which("sha256sum") || (IS_WIN && !!which("certutil")),
+		entropy: !!which(PYTHON),
 		diff: !!which("diff"),
 		ghidra_status: ghidraOk,
 		ghidra_decompile: ghidraOk,

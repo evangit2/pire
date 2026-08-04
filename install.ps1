@@ -138,6 +138,8 @@ if ($All) {
     }
 
     if (& $prompt "Wine (run Linux/ELF binaries via WSL)" "y") { $InstallWine = $true;       Write-Host "    [OK] Wine" }       else { Write-Host "    --  Wine" }
+    # Note: On Windows, Wine is auto-skipped during install (Windows runs PE natively)
+    # Wine install is only meaningful on Linux/macOS
     if (& $prompt "MinGW-w64 (cross-compile Windows binaries)" "y") { $InstallMinGW = $true;  Write-Host "    [OK] MinGW-w64" } else { Write-Host "    --  MinGW-w64" }
     if (& $prompt "Python RE tools (capstone, keystone, unicorn, angr, lief)" "y") { $InstallPythonTools = $true; Write-Host "    [OK] Python RE tools" } else { Write-Host "    --  Python RE tools" }
 
@@ -277,12 +279,10 @@ $ok = $false
 
 switch ($Component) {
     "wine" {
-        switch ($PkgMgr) {
-            "choco"  { Lock-Pkg; choco install wine -y --no-progress 2>&1 | Out-Null; Unlock-Pkg }
-            "winget" { Write-Host "Wine install on Windows via winget not automated." }
-            "scoop"  { Lock-Pkg; scoop install wine 2>&1 | Out-Null; Unlock-Pkg }
-        }
-        $ok = Has-Cmd "wine"
+        # Wine is not needed on Windows — Windows runs PE binaries natively
+        $ok = $true
+        Set-Content -Path $statusFile -Value "skipped" -NoNewline
+        return
     }
     "mingw" {
         switch ($PkgMgr) {
@@ -438,7 +438,7 @@ if ($ok) {
             $status = Read-Status $p.Key
 
             # Check if the process is still running
-            if ($status -notin @("done", "failed")) {
+            if ($status -notin @("done", "failed", "skipped")) {
                 if ($p.Proc.HasExited) {
                     # Process exited — read final status
                     $status = Read-Status $p.Key
@@ -457,6 +457,7 @@ if ($ok) {
                 "running"  { $spinChar }
                 "done"     { [char]0x2713 }  # ✓
                 "failed"   { [char]0x2717 }  # ✗
+                "skipped"  { [char]0x2014 }  # —
             }
 
             $color = switch ($status) {
@@ -464,6 +465,7 @@ if ($ok) {
                 "running"  { "Cyan" }
                 "done"     { "Green" }
                 "failed"   { "Red" }
+                "skipped"  { "DarkGray" }
             }
 
             $statusText = switch ($status) {
@@ -471,6 +473,7 @@ if ($ok) {
                 "running"  { "installing..." }
                 "done"     { "done" }
                 "failed"   { "failed" }
+                "skipped"  { "skipped" }
             }
 
             # Clear line and write
@@ -501,8 +504,9 @@ if ($ok) {
     foreach ($p in $processes) {
         $status = Read-Status $p.Key
         switch ($status) {
-            "done"   { Write-Ok $p.Name }
-            "failed" { Write-Warn2 "$($p.Name) — install failed" }
+            "done"    { Write-Ok $p.Name }
+            "failed"  { Write-Warn2 "$($p.Name) — install failed" }
+            "skipped" { Write-Host "  --  $($p.Name) (skipped)" -ForegroundColor DarkGray }
         }
     }
 
@@ -528,13 +532,18 @@ if (Has-Command "r2")      { Write-Ok "radare2" }              else { Write-Warn
 if (Has-Command "strings") { Write-Ok "strings" }              else { Write-Warn2 "strings not installed" }
 if (Has-Command "objdump") { Write-Ok "objdump" }              else { Write-Warn2 "objdump not installed" }
 
-if ($InstallWine)       { if (Has-Command "wine") { Write-Ok "wine" } else { Write-Warn2 "wine not installed" } }
+if ($InstallWine)       { Write-Host "  --  Wine (skipped — not needed on Windows)" -ForegroundColor DarkGray }
 if ($InstallMinGW)      { if (Has-Command "gcc")  { Write-Ok "MinGW-w64" } else { Write-Warn2 "MinGW-w64 not installed" } }
 if ($InstallGDB)        { if (Has-Command "gdb")  { Write-Ok "gdb" } else { Write-Warn2 "gdb not installed" } }
 if ($InstallBinwalk)    { if (Has-Command "binwalk") { Write-Ok "binwalk" } else { Write-Warn2 "binwalk not installed" } }
 if ($InstallFrida)      { if (Has-Command "frida") { Write-Ok "frida" } else { Write-Warn2 "frida not installed" } }
 if ($InstallJADX)       { if (Has-Command "jadx") { Write-Ok "jadx" } else { Write-Warn2 "jadx not installed" } }
-if ($InstallYara)       { if (Has-Command "yara") { Write-Ok "yara" } else { Write-Warn2 "yara not installed" } }
+if ($InstallYara)       {
+    $yaraOk = $false
+    if (Has-Command "yara") { $yaraOk = $true }
+    else { try { python -c "import yara" 2>&1 | Out-Null; $yaraOk = $true } catch {} }
+    if ($yaraOk) { Write-Ok "yara" } else { Write-Warn2 "yara not installed" }
+}
 if ($InstallPythonTools) {
     $pyOk = $true
     try { python -c "import capstone" 2>&1 | Out-Null } catch { $pyOk = $false }
@@ -660,8 +669,7 @@ Write-Host "       pire https://example.com/app.exe  # download & analyze"
 Write-Host ""
 
 if (-not $InstallWine) {
-    Write-Host "  [!] Wine not installed -- can't run Linux/ELF binaries." -ForegroundColor Yellow
-    Write-Host "        Re-run: .\install.ps1"
+    Write-Host "  Note: Wine is not needed on Windows — PE binaries run natively." -ForegroundColor DarkGray
     Write-Host ""
 }
 
