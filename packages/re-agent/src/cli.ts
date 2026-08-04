@@ -90,22 +90,23 @@ if (args[0] === "--help" || args[0] === "-h") {
 	console.log(`pire — Reverse Engineering Agent
 
 Usage:
-  pire                      Start chat (just tell it what to analyze)
-  pire <path|URL>           Start and auto-analyze a binary, directory, or download from URL
+  pire                      Start chat
+  pire <path|URL>           Start with a target loaded (tell it what to do in chat)
   pire --tools              List available RE tools
   pire --skills             List available RE skills
   pire --probe              Probe system for installed tools
   pire --version            Print version
 
 Chat Commands:
+  :load <path|URL>          Load a target into context
   :tools                    List all tools
   :probe                    Re-probe system
   :skills                   List skills
   :help                     Show help
   :quit                     Exit
 
-  Just type naturally — the agent runs tools for you.
-  e.g. "analyze /bin/ls" or "reverse engineer https://example.com/app.exe"
+  Just type naturally — I'll run tools as needed.
+  e.g. "analyze /bin/ls", "decompile main in ./crackme", "check entropy of firmware.bin"
 `);
 	process.exit(0);
 }

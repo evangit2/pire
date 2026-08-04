@@ -1,12 +1,11 @@
 /**
- * pire TUI — Autonomous RE agent chat
+ * pire TUI — RE agent chat
  *
- * Just start chatting. The agent can run tools itself.
- * Say "analyze /bin/ls" or "reverse engineer https://example.com/app.exe" — it figures out what to do.
- * Point it at a directory, a binary, a URL — it auto-detects file type and routes accordingly.
+ * Chat with the agent. It runs tools itself when needed.
+ * Say "analyze /bin/ls", "decompile main in ./crackme", "extract strings from app.exe" — whatever you need.
  *
  * Commands:
- *  :load <path|URL> — Load a binary or download from URL for analysis
+ *  :load <path|URL> — Load a target (binary, directory, or URL) into context
  *  :tools           — List all tools
  *  :probe           — Probe system
  *  :skills          — List skills
@@ -52,14 +51,13 @@ export class PireTUI {
 				this.pendingUrl = target;
 			} else {
 				this.loadedTarget = target;
-				this.messages.push({ role: "user", content: `I want to analyze: ${target}` });
 			}
 		}
 	}
 
 	async start() {
 		this.print("info", `pire v${VERSION} — Reverse Engineering Agent`);
-		this.print("info", `Just tell me what to analyze. I'll run the tools myself.`);
+		this.print("info", `Tell me what you need. I'll run the tools myself.`);
 
 		if (this.llm) {
 			this.print("info", `LLM: ${this.llm.model}`);
@@ -74,13 +72,8 @@ export class PireTUI {
 
 		for (const tool of RE_TOOLS) this.toolMap.set(tool.name, tool);
 
-		if (this.messages.length > 0) {
+		if (this.pendingUrl) {
 			this.render();
-			await this.agentLoop(this.messages[0].content!);
-			this.messages = [];
-		} else if (this.pendingUrl) {
-			this.render();
-			// Download URL before entering agent loop
 			this.print("info", `Downloading from ${this.pendingUrl}...`);
 			this.render();
 			const fetchResult = await fetchTool.execute("pire", { url: this.pendingUrl });
@@ -90,14 +83,15 @@ export class PireTUI {
 			const localPath = pathMatch?.[1] || fetchResult.details?.path as string;
 			if (localPath && existsSync(localPath)) {
 				this.loadedTarget = localPath;
-				this.print("info", text);
-				this.render();
-				await this.agentLoop(`Analyze this binary: ${localPath}`);
+				this.print("info", `Loaded: ${localPath}`);
 			} else {
 				this.print("err", `Download failed: ${text}`);
-				this.render();
 			}
 			this.pendingUrl = null;
+		}
+
+		if (this.loadedTarget) {
+			this.print("info", `Target loaded: ${this.loadedTarget}`);
 		}
 
 		this.render();
@@ -131,10 +125,8 @@ export class PireTUI {
 You have ${RE_TOOLS.length} tools available. Available on this system: ${availTools}.${targetInfo}
 
 When the user mentions a path, binary, or directory — run tools on it yourself. Don't ask them to type commands.
-When the user provides a URL — use the fetch tool to download it first, then analyze.
-If given a directory, list its contents first (use shell), identify interesting files, then analyze them.
-If given a binary, start with filetype + strings + readelf, then dig deeper.
-Be proactive — run multiple tools in sequence to build a complete picture.`;
+When the user provides a URL — use the fetch tool to download it first.
+Pick the right tools for whatever the user is asking for. Don't follow a fixed workflow — adapt to the task.`;
 
 		const messages: ChatMessage[] = [
 			{ role: "system", content: systemPrompt },
@@ -215,13 +207,13 @@ Be proactive — run multiple tools in sequence to build a complete picture.`;
 		if (cmd === ":quit" || cmd === ":q" || cmd === "exit") { this.stop(); return; }
 
 		if (cmd === ":help" || cmd === ":h") {
-			this.print("info", "Just type naturally — the agent will run tools for you.");
+			this.print("info", "Just type naturally — I'll run tools as needed.");
 			this.print("info", "Examples:");
 			this.print("info", "  analyze /bin/ls");
-			this.print("info", "  reverse engineer https://example.com/suspicious.exe");
-			this.print("info", "  what's in /opt/game/?");
-			this.print("info", "  disassemble the main function in ./crackme");
-			this.print("info", "  download and analyze https://example.com/app.apk");
+			this.print("info", "  decompile the main function in ./crackme");
+			this.print("info", "  extract strings from app.exe and find URLs");
+			this.print("info", "  what's the entropy of this firmware?");
+			this.print("info", "  download and check https://example.com/app.apk");
 			this.print("info", "");
 			this.print("info", "Commands: :load <path|URL> :tools :probe :skills :save [path] :help :quit");
 			this.render();
@@ -274,19 +266,15 @@ Be proactive — run multiple tools in sequence to build a complete picture.`;
 				const fetchResult = await fetchTool.execute("pire", { url: path });
 				const text = fetchResult.content.map((c: { text: string }) => c.text).join("\n");
 				this.print("tool", `fetch(${path})`);
-				this.render();
-				// Extract the downloaded path from the result text
 				const pathMatch = text.match(/Downloaded to: (.+)/);
 				const localPath = pathMatch?.[1] || fetchResult.details?.path as string;
 				if (localPath && existsSync(localPath)) {
 					this.loadedTarget = localPath;
-					this.print("info", text);
-					this.render();
-					await this.agentLoop(`Analyze this binary: ${localPath}`);
+					this.print("info", `Loaded: ${localPath}`);
 				} else {
 					this.print("err", `Download failed: ${text}`);
-					this.render();
 				}
+				this.render();
 				return;
 			}
 			if (!existsSync(path)) {
@@ -297,7 +285,6 @@ Be proactive — run multiple tools in sequence to build a complete picture.`;
 			this.loadedTarget = path;
 			this.print("info", `Loaded: ${path}`);
 			this.render();
-			await this.agentLoop(`Analyze this binary: ${path}`);
 			return;
 		}
 

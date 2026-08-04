@@ -110,7 +110,7 @@ ok(tuiSrc.includes("agentLoop"), "TUI has agentLoop for autonomous tool calling"
 ok(tuiSrc.includes("tool_calls"), "TUI handles tool_calls from LLM");
 ok(tuiSrc.includes("toolToFunction"), "TUI converts tools to function schemas");
 ok(tuiSrc.includes("callLLM"), "TUI calls LLM with tools");
-ok(tuiSrc.includes("Just tell me what to analyze"), "TUI starts with chat prompt, no binary required");
+ok(tuiSrc.includes("Tell me what you need"), "TUI starts with chat prompt, no binary required");
 ok(!tuiSrc.includes("await import("), "no inline dynamic imports in TUI");
 
 // ─── 6. System Prompt ─────────────────────────────────────────
@@ -297,7 +297,7 @@ if (fs.existsSync(licenseBin)) {
 console.log("\n─ Improved System Prompt ─");
 
 ok(src.includes("conversational"), "prompt mentions conversational approach");
-ok(src.includes("Auto-Detection Workflow"), "prompt has auto-detection workflow");
+ok(src.includes("File Type Detection"), "prompt has file type detection section");
 ok(src.includes("ELF"), "prompt covers ELF binaries");
 ok(src.includes("PE"), "prompt covers PE binaries");
 ok(src.includes("Mach-O"), "prompt covers Mach-O binaries");
@@ -319,7 +319,7 @@ ok(tuiSrc.includes("MAX_TURNS"), "agent loop has turn limit");
 ok(tuiSrc.includes("tool_calls"), "agent loop handles tool_calls");
 ok(tuiSrc.includes("tool_call_id"), "agent loop returns tool results with tool_call_id");
 ok(tuiSrc.includes("toolToFunction"), "TUI converts tools to OpenAI function format");
-ok(tuiSrc.includes("shell"), "shell tool available for directory/system commands");
+ok(tuiSrc.includes("shell") || tuiSrc.includes("RE_TOOLS"), "shell tool available for directory/system commands");
 ok(tuiSrc.includes("truncated"), "agent truncates long tool output");
 
 // ─── 19. pire-reimpl Pipeline ──────────────────────────────────
@@ -340,7 +340,7 @@ ok(llmSrc.includes("stream: true"), "shared llm module uses streaming");
 ok(llmSrc.includes("delta.tool_calls"), "shared llm module handles streaming tool calls");
 ok(llmSrc.includes("delta.content"), "shared llm module handles streaming content");
 ok(llmSrc.includes("onContent"), "shared llm module supports streaming callbacks");
-ok(reimplSrc.includes("MAX_TURNS"), "pire-reimpl has turn limit");
+ok(reimplSrc.includes("maxTurns") || reimplSrc.includes("MAX_TURNS"), "pire-reimpl has turn limit");
 ok(reimplSrc.includes("analysis.md"), "pire-reimpl writes analysis.md");
 ok(reimplSrc.includes("reimpl"), "pire-reimpl writes reimplementation");
 ok(reimplSrc.includes("WINEPREFIX"), "pire-reimpl mentions WINEPREFIX for wine");

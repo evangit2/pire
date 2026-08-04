@@ -1,13 +1,16 @@
 #!/usr/bin/env node
 /**
- * pire-reimpl.ts — Full RE + Reimplementation pipeline
+ * pire-reimpl.ts — Autonomous RE pipeline
  *
- * Gives pire a binary and asks it to:
- * 1. Reverse engineer it completely (filetype, strings, disasm, decompile)
- * 2. Write a reimplementation in C
- * 3. Compile and test it
+ * Gives pire a binary and a task, then lets it run autonomously with
+ * tool-call deadlines. Defaults to full RE + reimplementation, but
+ * accepts custom task prompts for any RE workflow:
  *
- * The agent runs autonomously with up to 80 tool-call turns.
+ *   pire-reimpl <binary>                      — full RE + reimplement in C
+ *   pire-reimpl <binary> --task "extract all strings and find C2 URLs"
+ *   pire-reimpl <binary> --task "document the crypto algorithm in analysis.md"
+ *   pire-reimpl <binary> --task "identify the packing mechanism and unpack it"
+ *   pire-reimpl <binary> --turns 40                           — shorter budget
  */
 
 import { writeFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
@@ -16,11 +19,11 @@ import { RE_TOOLS, RE_SYSTEM_PROMPT, probeTools, type AgentTool } from "./index.
 import { loadLLMConfig, toolToFunction, callLLM, type ChatMessage } from "./llm.js";
 import { Type } from "typebox";
 
-// ─── Write file tool (lets agent save reimplementation) ────────
+// ─── Write file tool (lets agent save files) ──────────────────
 
 const writeFileTool: AgentTool<{ path: string; content: string }> = {
 	name: "write_file",
-	description: "Write content to a file. Use to save reimplementation source code, notes, etc.",
+	description: "Write content to a file. Use to save source code, analysis, notes, etc.",
 	parameters: Type.Object({
 		path: Type.String({ description: "File path to write" }),
 		content: Type.String({ description: "File content" }),
@@ -32,45 +35,21 @@ const writeFileTool: AgentTool<{ path: string; content: string }> = {
 	},
 };
 
-// ─── Main ──────────────────────────────────────────────────────
+// ─── Default task: full RE + reimplementation ─────────────────
 
-async function main() {
-	const binaryPath = process.argv[2];
-	if (!binaryPath) {
-		console.error("Usage: pire-reimpl <binary.exe>");
-		process.exit(1);
-	}
+const DEFAULT_TASK = `Reverse engineer the binary at {BINARY} and create a working open-source reimplementation.
 
-	if (!existsSync(binaryPath)) {
-		console.error(`Binary not found: ${binaryPath}`);
-		process.exit(1);
-	}
+1. Analyze the binary (filetype, strings, disassembly)
+2. Understand the complete algorithm
+3. Write your analysis to {DIR}/analysis.md
+4. Write a C reimplementation to {DIR}/reimpl.c
+5. Compile it with gcc and test it against the original (using WINEPREFIX={WINEPREFIX} wine for the original)
+6. Test with multiple inputs — both valid and invalid
+7. Iterate until your reimplementation matches the original's behavior
 
-	const config = loadLLMConfig();
-	if (!config) {
-		console.error("No LLM config found.");
-		process.exit(1);
-	}
+Go!`;
 
-	const model = process.env.PIRE_MODEL || config.model;
-	config.model = model;
-
-	console.log(`pire-reimpl — Full RE + Reimplementation`);
-	console.log(`Target: ${binaryPath}`);
-	console.log(`LLM: ${config.model}`);
-	console.log(`Tools: ${RE_TOOLS.length + 1} (including write_file)`);
-	console.log("");
-
-	const tools = [...RE_TOOLS, writeFileTool];
-	const toolMap = new Map<string, AgentTool<any>>();
-	for (const tool of tools) toolMap.set(tool.name, tool);
-	const toolSchemas = tools.map(toolToFunction);
-
-	const toolsAvail = Object.entries(probeTools()).filter(([,v]) => v).map(([k]) => k).join(", ");
-
-	const systemPrompt = `${RE_SYSTEM_PROMPT}
-
-You are an expert reverse engineer. Your goal is to FULLY reverse engineer a binary and produce a working open-source reimplementation.
+const DEFAULT_SYSTEM = `You are an expert reverse engineer. Your goal is to FULLY reverse engineer a binary and produce a working open-source reimplementation.
 
 ## Workflow
 1. **Triage** (turns 1-5): Run filetype, strings, r2 to understand the binary
@@ -78,7 +57,7 @@ You are an expert reverse engineer. Your goal is to FULLY reverse engineer a bin
 3. **Deep Analysis** (turns 10-25): Disassemble key functions, understand the algorithm
 4. **Write analysis.md** (by turn 25): Document your findings
 5. **Write reimpl.c** (by turn 30): Write a C source file that replicates the binary's behavior
-6. **Test** (turns 30+): Compile and compare outputs against the original binary
+6. **Test** (turns 30+): Compile with gcc and compare outputs against the original binary
 7. **Iterate** (remaining turns): Fix and retest
 
 ## CRITICAL: Time Management
@@ -91,15 +70,15 @@ You are an expert reverse engineer. Your goal is to FULLY reverse engineer a bin
 - You have a shell tool — use it to run wine, gcc, diff, etc.
 - You have a write_file tool — use it to save source code
 - You have a decompile tool — use it for r2 pseudo-C decompilation (pdc) at any address
-- The original binary can be run with: WINEPREFIX=${process.env.WINEPREFIX || "$HOME/.wine"} wine ${binaryPath} <args>
+- The original binary can be run with: WINEPREFIX={WINEPREFIX} wine {BINARY} <args>
 - Your reimplementation should be compiled with: gcc -o reimpl reimpl.c
 - Compare outputs: run both the original and your reimplementation with the same inputs
-- Available tools: ${toolsAvail}
+- Available tools: {TOOLS}
 
 ## Output Format Matching
-- Windows binaries typically output CRLF (\\r\\n) line endings
+- Windows binaries typically output CRLF (\\\\r\\\\n) line endings
 - Always check: pipe both original and reimpl output through xxd | head -5
-- If the original uses CRLF, your reimpl must too (use \\r\\n in printf/fprintf)
+- If the original uses CRLF, your reimpl must too (use \\\\r\\\\n in printf/fprintf)
 - Match exit codes exactly (test with: echo "exit:$?")
 - Match error messages exactly (case, punctuation, spacing)
 
@@ -112,34 +91,142 @@ You are an expert reverse engineer. Your goal is to FULLY reverse engineer a bin
 - Focus on behavior, not instruction-for-instruction matching
 
 ## Output
-Write your reimplementation to: ${join(dirname(binaryPath), "reimpl.c")}
-Write your analysis to: ${join(dirname(binaryPath), "analysis.md")}
-`;
+Write your reimplementation to: {DIR}/reimpl.c
+Write your analysis to: {DIR}/analysis.md`;
 
-	const userMessage = `Reverse engineer the binary at ${binaryPath} and create a working open-source reimplementation.
+// ─── Custom task system prompt (no deadlines, flexible) ──────
 
-Steps:
-1. Analyze the binary (filetype, strings, disassembly)
-2. Understand the complete algorithm
-3. Write your analysis to ${join(dirname(binaryPath), "analysis.md")}
-4. Write a C reimplementation to ${join(dirname(binaryPath), "reimpl.c")}
-5. Compile it with gcc and test it against the original (using WINEPREFIX=${process.env.WINEPREFIX || "$HOME/.wine"} wine for the original)
-6. Test with multiple inputs — both valid and invalid
-7. Iterate until your reimplementation matches the original's behavior
+const CUSTOM_SYSTEM = `You are an expert reverse engineer. The user has given you a binary and a specific task.
 
-Go!`;
+## Rules
+- You have a shell tool — use it to run wine, gcc, diff, etc.
+- You have a write_file tool — use it to save any output files
+- You have a decompile tool — use it for r2 pseudo-C decompilation (pdc) at any address
+- The original binary can be run with: WINEPREFIX={WINEPREFIX} wine {BINARY} <args>
+- Available tools: {TOOLS}
+- Adapt your approach to the task — don't follow a fixed workflow
+- Be thorough but focused on what the task asks for
+
+## Output
+Write any output files to: {DIR}/`;
+
+// ─── Parse args ───────────────────────────────────────────────
+
+interface Args {
+	binaryPath: string;
+	task: string;
+	customSystem: boolean;
+	maxTurns: number;
+}
+
+function parseArgs(argv: string[]): Args {
+	const args = argv.slice(2);
+	let binaryPath = "";
+	let task = "";
+	let customSystem = false;
+	let maxTurns = 80;
+
+	for (let i = 0; i < args.length; i++) {
+		if (args[i] === "--task" || args[i] === "-t") {
+			task = args[++i] ?? "";
+			customSystem = true;
+		} else if (args[i] === "--turns" || args[i] === "-n") {
+			maxTurns = parseInt(args[++i] ?? "80", 10) || 80;
+		} else if (args[i] === "--help" || args[i] === "-h") {
+			console.log(`pire — Autonomous RE pipeline
+
+Usage:
+  pire-reimpl <binary>                      Full RE + reimplementation
+  pire-reimpl <binary> --task "..."         Custom task prompt
+  pire-reimpl <binary> --turns 40           Set turn budget (default 80)
+
+Options:
+  --task, -t "prompt"   Custom task for the agent
+  --turns, -n N         Max tool-call turns (default 80)
+  --help, -h            Show this help
+
+Examples:
+  pire-reimpl malware.exe
+  pire-reimpl malware.exe --task "extract all strings and find C2 URLs"
+  pire-reimpl firmware.bin --task "identify the packing mechanism and unpack it"
+  pire-reimpl app.exe --task "document the crypto algorithm in analysis.md" --turns 40
+`);
+			process.exit(0);
+		} else if (!args[i].startsWith("-")) {
+			binaryPath = args[i];
+		}
+	}
+
+	if (!binaryPath) {
+		console.error("Usage: pire-reimpl <binary> [--task \"...\"] [--turns N]");
+		process.exit(1);
+	}
+
+	if (!existsSync(binaryPath)) {
+		console.error(`Binary not found: ${binaryPath}`);
+		process.exit(1);
+	}
+
+	return { binaryPath, task, customSystem, maxTurns };
+}
+
+// ─── Main ─────────────────────────────────────────────────────
+
+async function main() {
+	const { binaryPath, task, customSystem, maxTurns } = parseArgs(process.argv);
+
+	const config = loadLLMConfig();
+	if (!config) {
+		console.error("No LLM config found.");
+		process.exit(1);
+	}
+
+	const model = process.env.PIRE_MODEL || config.model;
+	config.model = model;
+
+	const winePrefix = process.env.WINEPREFIX || "$HOME/.wine";
+	const dir = dirname(binaryPath);
+	const toolsAvail = Object.entries(probeTools()).filter(([,v]) => v).map(([k]) => k).join(", ");
+
+	// Build task prompt
+	const taskPrompt = (task || DEFAULT_TASK)
+		.replace("{BINARY}", binaryPath)
+		.replace("{DIR}", dir)
+		.replace("{WINEPREFIX}", winePrefix);
+
+	// Build system prompt
+	const systemTemplate = customSystem ? CUSTOM_SYSTEM : DEFAULT_SYSTEM;
+	const systemPrompt = `${RE_SYSTEM_PROMPT}
+
+${systemTemplate
+		.replace("{BINARY}", binaryPath)
+		.replace("{DIR}", dir)
+		.replace("{WINEPREFIX}", winePrefix)
+		.replace("{TOOLS}", toolsAvail)}`;
+
+	console.log(`pire — Autonomous RE pipeline`);
+	console.log(`Target: ${binaryPath}`);
+	console.log(`Task: ${customSystem ? task.slice(0, 80) + (task.length > 80 ? "..." : "") : "Full RE + reimplementation"}`);
+	console.log(`LLM: ${config.model}`);
+	console.log(`Turns: ${maxTurns}`);
+	console.log(`Tools: ${RE_TOOLS.length + 1} (including write_file)`);
+	console.log("");
+
+	const tools = [...RE_TOOLS, writeFileTool];
+	const toolMap = new Map<string, AgentTool<any>>();
+	for (const tool of tools) toolMap.set(tool.name, tool);
+	const toolSchemas = tools.map(toolToFunction);
 
 	const messages: ChatMessage[] = [
 		{ role: "system", content: systemPrompt },
-		{ role: "user", content: userMessage },
+		{ role: "user", content: taskPrompt },
 	];
 
-	const MAX_TURNS = 80;
-	const reimplPath = join(dirname(binaryPath), "reimpl.c");
-	const analysisPath = join(dirname(binaryPath), "analysis.md");
+	const reimplPath = join(dir, "reimpl.c");
+	const analysisPath = join(dir, "analysis.md");
 
-	for (let turn = 0; turn < MAX_TURNS; turn++) {
-		console.log(`\n--- Turn ${turn + 1}/${MAX_TURNS} ---`);
+	for (let turn = 0; turn < maxTurns; turn++) {
+		console.log(`\n--- Turn ${turn + 1}/${maxTurns} ---`);
 
 		let resp;
 		try {
@@ -149,38 +236,40 @@ Go!`;
 			break;
 		}
 
-		// ─── Deadline enforcement ───────────────────────────────
-		const analysisExists = existsSync(analysisPath);
-		const reimplExists = existsSync(reimplPath);
-		if (turn === 24 && !analysisExists) {
-			const msg = "⚠️ DEADLINE: You are at turn 25. You MUST write analysis.md NOW using write_file. Stop testing and write your analysis immediately.";
-			messages.push({ role: "user", content: msg });
-			console.log(`  ${msg}`);
-		}
-		if (turn === 29 && !reimplExists) {
-			const msg = "⚠️ DEADLINE: You are at turn 30. You MUST write reimpl.c NOW using write_file. Write your best C reimplementation immediately — you can test and fix it in remaining turns.";
-			messages.push({ role: "user", content: msg });
-			console.log(`  ${msg}`);
-		}
-		if (turn === 39 && !reimplExists) {
-			const msg = "⚠️ URGENT: You are at turn 40. You have NOT written reimpl.c yet. Write it NOW. Do not run any more shell commands. Call write_file with your C source code immediately.";
-			messages.push({ role: "user", content: msg });
-			console.log(`  ${msg}`);
-		}
-		if (turn === 49 && !reimplExists) {
-			const msg = "⚠️ FINAL DEADLINE: You are at turn 50. Write reimpl.c IMMEDIATELY. Even if imperfect, a partial reimplementation is better than none. Use write_file now.";
-			messages.push({ role: "user", content: msg });
-			console.log(`  ${msg}`);
-		}
-		if (turn === 69 && !reimplExists) {
-			const msg = "⚠️ LAST CHANCE: Turn 70. Write reimpl.c RIGHT NOW with write_file. Do not call any other tool.";
-			messages.push({ role: "user", content: msg });
-			console.log(`  ${msg}`);
+		// ─── Deadline enforcement (only for default reimpl task) ──
+		if (!customSystem) {
+			const analysisExists = existsSync(analysisPath);
+			const reimplExists = existsSync(reimplPath);
+			if (turn === 24 && !analysisExists) {
+				const msg = "⚠️ DEADLINE: You are at turn 25. You MUST write analysis.md NOW using write_file. Stop testing and write your analysis immediately.";
+				messages.push({ role: "user", content: msg });
+				console.log(`  ${msg}`);
+			}
+			if (turn === 29 && !reimplExists) {
+				const msg = "⚠️ DEADLINE: You are at turn 30. You MUST write reimpl.c NOW using write_file. Write your best C reimplementation immediately — you can test and fix it in remaining turns.";
+				messages.push({ role: "user", content: msg });
+				console.log(`  ${msg}`);
+			}
+			if (turn === 39 && !reimplExists) {
+				const msg = "⚠️ URGENT: You are at turn 40. You have NOT written reimpl.c yet. Write it NOW. Do not run any more shell commands. Call write_file with your C source code immediately.";
+				messages.push({ role: "user", content: msg });
+				console.log(`  ${msg}`);
+			}
+			if (turn === 49 && !reimplExists) {
+				const msg = "⚠️ FINAL DEADLINE: You are at turn 50. Write reimpl.c IMMEDIATELY. Even if imperfect, a partial reimplementation is better than none. Use write_file now.";
+				messages.push({ role: "user", content: msg });
+				console.log(`  ${msg}`);
+			}
+			if (turn === 69 && !reimplExists) {
+				const msg = "⚠️ LAST CHANCE: Turn 70. Write reimpl.c RIGHT NOW with write_file. Do not call any other tool.";
+				messages.push({ role: "user", content: msg });
+				console.log(`  ${msg}`);
+			}
 		}
 
 		if (resp.tool_calls && resp.tool_calls.length > 0) {
-			// ─── Hard deadline: block non-write_file calls past turn 40 ──
-			if (turn >= 39 && !reimplExists) {
+			// ─── Hard deadline: block non-write_file calls past turn 40 (reimpl only) ──
+			if (!customSystem && turn >= 39 && !existsSync(reimplPath)) {
 				const nonWriteCalls = resp.tool_calls.filter((tc) => tc.function.name !== "write_file");
 				if (nonWriteCalls.length > 0) {
 					for (const tc of nonWriteCalls) {
@@ -244,14 +333,18 @@ Go!`;
 
 	// Check results
 	console.log("\n=== Results ===");
-	console.log(`Analysis: ${existsSync(analysisPath) ? "✓ " + analysisPath : "✗ not written"}`);
-	console.log(`Reimplementation: ${existsSync(reimplPath) ? "✓ " + reimplPath : "✗ not written"}`);
+	if (customSystem) {
+		console.log(`Task completed (${maxTurns} turn budget).`);
+	} else {
+		console.log(`Analysis: ${existsSync(analysisPath) ? "✓ " + analysisPath : "✗ not written"}`);
+		console.log(`Reimplementation: ${existsSync(reimplPath) ? "✓ " + reimplPath : "✗ not written"}`);
 
-	if (existsSync(reimplPath)) {
-		console.log(`\nReimpl size: ${readFileSync(reimplPath, "utf-8").length} bytes`);
-	}
-	if (existsSync(analysisPath)) {
-		console.log(`Analysis size: ${readFileSync(analysisPath, "utf-8").length} bytes`);
+		if (existsSync(reimplPath)) {
+			console.log(`\nReimpl size: ${readFileSync(reimplPath, "utf-8").length} bytes`);
+		}
+		if (existsSync(analysisPath)) {
+			console.log(`Analysis size: ${readFileSync(analysisPath, "utf-8").length} bytes`);
+		}
 	}
 }
 
