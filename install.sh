@@ -342,16 +342,16 @@ pkg_install() {
 	return $PKG_RC
 }
 
-PIP_INSTALL_TIMEOUT=600
+PIP_INSTALL_TIMEOUT=180
 
 # Run a command with a timeout. On Linux, uses GNU `timeout`.
 # On macOS (no timeout/gtimeout), uses a Perl wrapper that kills the
 # entire process group so child processes (gcc, cc, ld) don't survive.
 run_with_timeout() {
 	if command -v timeout >/dev/null 2>&1; then
-		timeout "$PIP_INSTALL_TIMEOUT" "$@"
+		timeout -k 5 "$PIP_INSTALL_TIMEOUT" "$@"
 	elif command -v gtimeout >/dev/null 2>&1; then
-		gtimeout "$PIP_INSTALL_TIMEOUT" "$@"
+		gtimeout -k 5 "$PIP_INSTALL_TIMEOUT" "$@"
 	else
 		perl -e '
 			use POSIX qw(setpgid);
@@ -403,32 +403,43 @@ pip_install() {
 		PIPRE_FLAGS="--user --break-system-packages"
 	fi
 
+	# Write output to a temp file, NOT $(...) — command substitution
+	# uses a pipe; if child processes (gcc, cc, ld) survive the timeout,
+	# they keep the pipe open and $(...) hangs forever.
+	PIPRE_LOG="${TMPDIR_PIRE:-/tmp}/pip_$$.log"
+
 	if [ "$OS" = "windows" ]; then
-		PIPRE_OUT=$(run_with_timeout "$PIPRE_PY" -m pip install --user "$@" </dev/null 2>&1)
+		run_with_timeout "$PIPRE_PY" -m pip install --user "$@" </dev/null >"$PIPRE_LOG" 2>&1
 		PIPRE_RC=$?
 		if [ $PIPRE_RC -eq 0 ]; then
-			echo "$PIPRE_OUT" | grep -v "already satisfied" | tail -3
+			grep -v "already satisfied" "$PIPRE_LOG" | tail -3
+			rm -f "$PIPRE_LOG" 2>/dev/null
 			return 0
 		fi
-		echo "$PIPRE_OUT" | tail -3
+		tail -3 "$PIPRE_LOG"
+		rm -f "$PIPRE_LOG" 2>/dev/null
 		return 1
 	fi
 
-	PIPRE_OUT=$(run_with_timeout "$PIPRE_PY" -m pip install $PIPRE_FLAGS "$@" </dev/null 2>&1)
+	run_with_timeout "$PIPRE_PY" -m pip install $PIPRE_FLAGS "$@" </dev/null >"$PIPRE_LOG" 2>&1
 	PIPRE_RC=$?
 	if [ $PIPRE_RC -eq 0 ]; then
-		echo "$PIPRE_OUT" | grep -v "already satisfied" | tail -3
+		grep -v "already satisfied" "$PIPRE_LOG" | tail -3
+		rm -f "$PIPRE_LOG" 2>/dev/null
 		return 0
 	fi
 	# Fallback: try without --break-system-packages
 	if [ "$PIPRE_FLAGS" != "--user" ]; then
-		PIPRE_OUT=$(run_with_timeout "$PIPRE_PY" -m pip install --user "$@" </dev/null 2>&1)
+		run_with_timeout "$PIPRE_PY" -m pip install --user "$@" </dev/null >"$PIPRE_LOG" 2>&1
 		PIPRE_RC=$?
 		if [ $PIPRE_RC -eq 0 ]; then
-			echo "$PIPRE_OUT" | grep -v "already satisfied" | tail -3
+			grep -v "already satisfied" "$PIPRE_LOG" | tail -3
+			rm -f "$PIPRE_LOG" 2>/dev/null
 			return 0
 		fi
 	fi
+	tail -3 "$PIPRE_LOG" 2>/dev/null
+	rm -f "$PIPRE_LOG" 2>/dev/null
 	return 1
 }
 
@@ -803,10 +814,13 @@ install_python_tools() {
 		arch)   pkg_install python-pip python-capstone python-lief 2>/dev/null ;;
 	esac
 	# Install packages individually — angr is slow to compile and
-	# shouldn't block capstone/keystone/unicorn/lief
-	for pkg in capstone keystone-engine unicorn lief angr; do
+	# shouldn't block capstone/keystone/unicorn/lief.
+	# Use --only-binary when available to avoid source compilation.
+	for pkg in capstone keystone-engine unicorn lief; do
 		pip_install "$pkg" 2>/dev/null || true
 	done
+	# angr is heavy — try binary wheel first, fall back to source
+	pip_install "angr" 2>/dev/null || true
 	if python3 -c "import capstone" 2>/dev/null || python -c "import capstone" 2>/dev/null; then
 		echo "$ST_DONE" > "$TMPDIR_PIRE/python_tools.status"
 	else
