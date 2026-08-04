@@ -1,16 +1,23 @@
 /**
  * pire-pi-tui.ts — Rich TUI built on Pi's actual TUI framework
  *
- * Uses @earendil-works/pi-tui: TuiMainScreen, ScrollView, VStack, HStack,
- * Text, Container, ProcessTerminal. Proper differential rendering,
- * component tree, and input handling from Pi's TUI library.
+ * Uses @earendil-works/pi-tui components: TuiMainScreen, Container,
+ * ScrollView, VStack, HStack, Box, Text, Spacer, Input, Markdown.
+ * Proper differential rendering, component tree, focus management,
+ * and input handling from Pi's TUI library.
  *
  * Layout (TuiMainScreen — main screen with scrollback):
- *   ┌─────────────────────────────────────────┐
- *   │  HStack: [ToolSidebar | VStack]          │
- *   │    VStack: [ScrollView(transcript),      │
- *   │             StatusBar, InputLine]        │
- *   └─────────────────────────────────────────┘
+ *   ┌──────────────────────────────────────────┐
+ *   │  Container (vertical stack)               │
+ *   │    Box(padding=1) → sidebar title         │
+ *   │    HStack: [sidebar | chatContainer]      │
+ *   │      sidebar: Box → tool list             │
+ *   │      chatContainer:                        │
+ *   │        ScrollView(transcript)             │
+ *   │        DynamicBorder (separator)          │
+ *   │        Box → status bar                    │
+ *   │        Input (focused)                     │
+ *   └──────────────────────────────────────────┘
  */
 
 import {
@@ -18,9 +25,14 @@ import {
 	TuiMainScreen,
 	Container,
 	Text,
+	Box,
+	Spacer,
 	ScrollView,
 	VStack,
 	HStack,
+	Input,
+	visibleWidth,
+	truncateToWidth,
 	type Component,
 } from "@earendil-works/pi-tui";
 import { RE_TOOLS, RE_SYSTEM_PROMPT, probeTools } from "./index.js";
@@ -32,6 +44,9 @@ import { fileURLToPath } from "node:url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const VERSION = "0.85.0";
 
+// Use chalk for proper Pi-style colors
+import chalk from "chalk";
+
 const BANNER = `
   ____  _ _____  _       
  |  _ \\(_) ____|| |      
@@ -40,60 +55,22 @@ const BANNER = `
  |_|   |_|______||_____|  v${VERSION}
 `;
 
-const C = {
-	reset: "\x1b[0m",
-	bold: "\x1b[1m",
-	dim: "\x1b[2m",
-	red: "\x1b[31m",
-	green: "\x1b[32m",
-	yellow: "\x1b[33m",
-	blue: "\x1b[34m",
-	magenta: "\x1b[35m",
-	cyan: "\x1b[36m",
-	gray: "\x1b[90m",
-	boldGreen: "\x1b[1;32m",
-	boldCyan: "\x1b[1;36m",
-	boldYellow: "\x1b[1;33m",
-	boldRed: "\x1b[1;31m",
-};
-
 const MAX_TURNS = 40;
 const MAX_OUTPUT = 16000;
 
-// Strip ANSI for visible length
-function visLen(s: string): number {
-	return s.replace(/\x1b\[[0-9;]*m/g, "").length;
-}
+// ─── DynamicBorder (inline, like Pi's coding-agent) ────────────
+class DynamicBorder implements Component {
+	private colorFn: (s: string) => string;
 
-function padRight(s: string, width: number): string {
-	const len = visLen(s);
-	if (len >= width) return s;
-	return s + " ".repeat(width - len);
-}
-
-function trunc(s: string, max: number): string {
-	const plain = s.replace(/\x1b\[[0-9;]*m/g, "");
-	if (plain.length <= max) return s;
-	return plain.slice(0, max - 3) + "..." + C.reset;
-}
-
-function wrapText(text: string, width: number): string[] {
-	if (width <= 0) return [text];
-	const out: string[] = [];
-	for (const rawLine of text.split("\n")) {
-		const words = rawLine.split(" ");
-		let cur = "";
-		for (const word of words) {
-			if (visLen(cur + " " + word) > width && cur) {
-				out.push(cur);
-				cur = word;
-			} else {
-				cur = cur ? cur + " " + word : word;
-			}
-		}
-		out.push(cur);
+	constructor(colorFn: (s: string) => string = chalk.dim) {
+		this.colorFn = colorFn;
 	}
-	return out.length > 0 ? out : [""];
+
+	invalidate(): void {}
+
+	render(width: number): string[] {
+		return [this.colorFn("─".repeat(Math.max(1, width)))];
+	}
 }
 
 // ─── ToolSidebar ───────────────────────────────────────────────
@@ -112,18 +89,19 @@ class ToolSidebar implements Component {
 	render(width: number): string[] {
 		if (this.cached && this.cachedW === width) return this.cached;
 		const lines: string[] = [];
-		lines.push(padRight(`${C.boldCyan}Tools${C.reset}`, width));
-		lines.push(padRight(`${C.gray}${"─".repeat(Math.min(width, 20))}${C.reset}`, width));
+		lines.push(chalk.bold.cyan("Tools"));
+		lines.push(chalk.dim("─".repeat(Math.min(width, 20))));
 		lines.push("");
 		for (const tool of RE_TOOLS) {
 			const ok = this.status[tool.name] ?? false;
-			const icon = ok ? `${C.green}✓${C.reset}` : `${C.gray}✗${C.reset}`;
-			lines.push(padRight(`${icon} ${C.dim}${trunc(tool.name, width - 4)}${C.reset}`, width));
+			const icon = ok ? chalk.green("✓") : chalk.gray("✗");
+			const name = truncateToWidth(tool.name, width - 4);
+			lines.push(`${icon} ${chalk.dim(name)}`);
 		}
 		const avail = Object.values(this.status).filter(Boolean).length;
-		const total = Object.keys(this.status).length;
+		const total = RE_TOOLS.length;
 		lines.push("");
-		lines.push(padRight(`${C.gray}${avail}/${total} available${C.reset}`, width));
+		lines.push(chalk.dim(`${avail}/${total} available`));
 		this.cached = lines;
 		this.cachedW = width;
 		return lines;
@@ -163,20 +141,31 @@ class TranscriptView implements Component {
 		const lines: string[] = [];
 		for (const e of this.entries) {
 			let prefix = "";
-			let color = "";
+			let color = (s: string) => s;
 			switch (e.type) {
-				case "user":      prefix = `${C.boldCyan}you${C.reset} > `;    break;
-				case "assistant": prefix = `${C.boldGreen}pire${C.reset} > `;  break;
-				case "tool_call": prefix = `${C.boldYellow}⚙${C.reset} `;      color = C.yellow; break;
-				case "tool_result": prefix = `${C.gray}↳${C.reset} `;          color = C.dim; break;
-				case "system":    prefix = `${C.bold}system${C.reset} > `;     color = C.blue; break;
-				case "error":     prefix = `${C.boldRed}error${C.reset} > `;   color = C.red; break;
+				case "user":      prefix = `${chalk.bold.cyan("you")} > `;    break;
+				case "assistant": prefix = `${chalk.bold.green("pire")} > `;  break;
+				case "tool_call": prefix = `${chalk.bold.yellow("⚙")} `;      color = chalk.yellow; break;
+				case "tool_result": prefix = `${chalk.dim("↳")} `;            color = chalk.dim; break;
+				case "system":    prefix = `${chalk.bold("system")} > `;      color = chalk.blue; break;
+				case "error":     prefix = `${chalk.bold.red("error")} > `;   color = chalk.red; break;
 			}
-			const prefixLen = visLen(prefix.replace(/\x1b\[[0-9;]*m/g, ""));
-			const wrapped = wrapText(e.text, width - prefixLen);
-			for (let i = 0; i < wrapped.length; i++) {
-				if (i === 0) lines.push(prefix + color + wrapped[i] + C.reset);
-				else lines.push(" ".repeat(prefixLen) + color + wrapped[i] + C.reset);
+			const prefixLen = visibleWidth(prefix);
+			// Simple word-wrap that preserves ANSI
+			for (const rawLine of e.text.split("\n")) {
+				const words = rawLine.split(" ");
+				let cur = "";
+				for (const word of words) {
+					if (visibleWidth(cur + " " + word) > width - prefixLen && cur) {
+						lines.push(prefix + color(cur));
+						cur = word;
+					} else {
+						cur = cur ? cur + " " + word : word;
+					}
+				}
+				lines.push(prefix + color(cur));
+				// Continuation lines use spaces
+				prefix = " ".repeat(prefixLen);
 			}
 		}
 		this.cached = lines;
@@ -201,54 +190,12 @@ class StatusBar implements Component {
 
 	render(width: number): string[] {
 		if (this.cached && this.cachedW === width) return this.cached;
-		const left = `${C.dim}target:${C.reset} ${this.target}  ${C.dim}model:${C.reset} ${this.model || "default"}`;
-		const right = this.processing ? `${C.boldYellow}⟳ working${C.reset}` : `${C.green}● ready${C.reset}`;
-		const lLen = visLen(left.replace(/\x1b\[[0-9;]*m/g, ""));
-		const rLen = visLen(right.replace(/\x1b\[[0-9;]*m/g, ""));
+		const left = `${chalk.dim("target:")} ${this.target}  ${chalk.dim("model:")} ${this.model || "default"}`;
+		const right = this.processing ? chalk.bold.yellow("⟳ working") : chalk.green("● ready");
+		const lLen = visibleWidth(left);
+		const rLen = visibleWidth(right);
 		const gap = Math.max(1, width - lLen - rLen);
-		const border = `${C.gray}${"─".repeat(width)}${C.reset}`;
-		this.cached = [border, left + " ".repeat(gap) + right];
-		this.cachedW = width;
-		return this.cached;
-	}
-
-	invalidate(): void { this.cached = undefined; }
-}
-
-// ─── InputLine ─────────────────────────────────────────────────
-class InputLine implements Component {
-	private buf = "";
-	private prompt = `${C.boldCyan}>${C.reset} `;
-	private cached?: string[];
-	private cachedW = -1;
-
-	get value(): string { return this.buf; }
-
-	clear(): void { this.buf = ""; this.cached = undefined; }
-
-	type(ch: string): void {
-		this.buf += ch;
-		this.cached = undefined;
-	}
-
-	backspace(): void {
-		if (this.buf.length > 0) {
-			this.buf = this.buf.slice(0, -1);
-			this.cached = undefined;
-		}
-	}
-
-	render(width: number): string[] {
-		if (this.cached && this.cachedW === width) return this.cached;
-		const promptLen = visLen(this.prompt.replace(/\x1b\[[0-9;]*m/g, ""));
-		const availWidth = width - promptLen;
-		let display = this.buf;
-		if (visLen(display) > availWidth) {
-			// Scroll horizontally: show last N chars
-			const plain = display;
-			display = plain.slice(Math.max(0, visLen(plain) - availWidth));
-		}
-		this.cached = [this.prompt + display];
+		this.cached = [left + " ".repeat(gap) + right];
 		this.cachedW = width;
 		return this.cached;
 	}
@@ -263,10 +210,10 @@ export class PirePiTUI {
 	private transcript: TranscriptView;
 	private sidebar: ToolSidebar;
 	private statusBar: StatusBar;
-	private inputLine: InputLine;
+	private input: Input;
 	private scrollView: ScrollView;
-	private rightPanel: VStack;
-	private layout: HStack;
+	private rootContainer: Container;
+	private chatContainer: Container;
 
 	private messages: ChatMessage[] = [];
 	private loadedTarget: string | null = null;
@@ -282,12 +229,14 @@ export class PirePiTUI {
 		this.transcript = new TranscriptView();
 		this.sidebar = new ToolSidebar();
 		this.statusBar = new StatusBar();
-		this.inputLine = new InputLine();
-		this.scrollView = new ScrollView(this.transcript, {
-			follow: "end",
-			primary: true,
-			scrollbar: "auto",
-		});
+
+		// Use Pi's Input component with onSubmit
+		this.input = new Input();
+		this.input.onSubmit = (value: string) => {
+			if (value.trim() && !this.processing) {
+				void this.handleInput(value);
+			}
+		};
 
 		this.llm = loadLLMConfig();
 
@@ -301,83 +250,61 @@ export class PirePiTUI {
 		}
 		if (this.llm?.model) this.statusBar.setModel(this.llm.model);
 
+		// Initial transcript content
 		this.transcript.add("system", BANNER);
 		this.transcript.add("system", "Tell me what you need — load a binary with :load, or just describe what you're looking for.");
 		this.transcript.add("system", "Type :help for commands, :quit to exit.");
 
-		// Build layout: HStack [sidebar | VStack [scrollview, status, input]]
-		this.rightPanel = new VStack([
-			{ component: this.scrollView, basis: 0, grow: 1, shrink: 1, minSize: 3 },
-			{ component: this.statusBar, basis: "auto", grow: 0, shrink: 0 },
-			{ component: this.inputLine, basis: "auto", grow: 0, shrink: 0, minSize: 1 },
-		]);
-
-		this.layout = new HStack([
-			{ component: this.sidebar, basis: 22, grow: 0, shrink: 0, minSize: 15 },
-			{ component: this.rightPanel, basis: 0, grow: 1, shrink: 1, minSize: 20 },
-		]);
-
-		// TuiMainScreen extends Container — use addChild for the root layout
-		this.ui.addChild(this.layout);
-		this.setupInput();
-	}
-
-	private setupInput(): void {
-		this.ui.addInputListener((data: string) => {
-			// Enter
-			if (data === "\r" || data === "\n") {
-				const value = this.inputLine.value;
-				this.inputLine.clear();
-				this.ui.requestRender();
-				if (value.trim()) {
-					void this.handleInput(value);
-				}
-				return { consume: true };
-			}
-
-			// Ctrl+C
-			if (data === "\x03") {
-				this.stop();
-				process.exit(0);
-			}
-
-			// Ctrl+D
-			if (data === "\x04") {
-				this.stop();
-				process.exit(0);
-			}
-
-			// Backspace
-			if (data === "\x7f" || data === "\b") {
-				this.inputLine.backspace();
-				this.ui.requestRender();
-				return { consume: true };
-			}
-
-			// Tab — ignore for now
-			if (data === "\t") return { consume: true };
-
-			// Escape — clear input
-			if (data === "\x1b") {
-				this.inputLine.clear();
-				this.ui.requestRender();
-				return { consume: true };
-			}
-
-			// Printable single char
-			if (data.length === 1 && data >= " " && data <= "~") {
-				this.inputLine.type(data);
-				this.ui.requestRender();
-				return { consume: true };
-			}
-
-			return { consume: true };
+		// Build layout using Pi components
+		// ScrollView wraps the transcript
+		this.scrollView = new ScrollView(this.transcript, {
+			follow: "end",
+			primary: true,
+			scrollbar: "auto",
 		});
+
+		// Chat container: scrollview + border + status + input
+		this.chatContainer = new Container();
+		this.chatContainer.addChild(this.scrollView);
+		this.chatContainer.addChild(new DynamicBorder());
+		this.chatContainer.addChild(new Box(1, 0, (s: string) => chalk.dim(s)));
+		// Box wraps status bar with padding
+		const statusBox = new Box(1, 0);
+		statusBox.addChild(this.statusBar);
+		this.chatContainer.addChild(statusBox);
+		this.chatContainer.addChild(this.input);
+
+		// HStack: sidebar | chat
+		const sidebarBox = new Box(1, 1);
+		sidebarBox.addChild(this.sidebar);
+		const sidebarVStack = new VStack([
+			{ component: sidebarBox, basis: "auto", grow: 0, shrink: 1, minSize: 3 },
+		]);
+		const chatVStack = new VStack([
+			{ component: this.chatContainer, basis: 0, grow: 1, shrink: 1, minSize: 10 },
+		]);
+		const mainHStack = new HStack([
+			{ component: sidebarVStack, basis: 24, grow: 0, shrink: 0, minSize: 15 },
+			{ component: chatVStack, basis: 0, grow: 1, shrink: 1, minSize: 20 },
+		]);
+
+		// Root container
+		this.rootContainer = new Container();
+		this.rootContainer.addChild(mainHStack);
+
+		this.ui.addChild(this.rootContainer);
+
+		// Focus the input
+		this.ui.setFocus(this.input);
 	}
 
 	private async handleInput(input: string): Promise<void> {
-		if (this.processing) return;
 		const trimmed = input.trim();
+		if (!trimmed) return;
+
+		// Clear the input field
+		this.input.setValue("");
+		this.ui.requestRender();
 
 		if (trimmed.startsWith(":")) {
 			await this.handleCommand(trimmed);
@@ -438,7 +365,7 @@ export class PirePiTUI {
 				this.sidebar.refresh();
 				const status = probeTools();
 				const avail = Object.values(status).filter(Boolean).length;
-				const total = Object.keys(status).length;
+				const total = RE_TOOLS.length;
 				this.transcript.add("system", `${avail}/${total} tools available`);
 				break;
 
@@ -523,17 +450,16 @@ export class PirePiTUI {
 				this.ui.requestRender();
 
 				let assistantContent = "";
-				const toolCalls: ToolCall[] = [];
 
 				const resp = await callLLM(this.llm, [{ role: "system", content: systemPrompt }, ...this.messages], toolSchemas, {
 					onContent: (chunk: string) => {
 						assistantContent += chunk;
-						const last = (this.transcript as any).entries?.[(this.transcript as any).entries.length - 1];
+						const last = this.transcript["entries"][this.transcript["entries"].length - 1];
 						if (last && last.type === "assistant" && last.streaming) {
 							this.transcript.updateLast(assistantContent);
 						} else {
 							this.transcript.add("assistant", assistantContent);
-							(this.transcript as any).entries[(this.transcript as any).entries.length - 1].streaming = true;
+							this.transcript["entries"][this.transcript["entries"].length - 1].streaming = true;
 						}
 						this.ui.requestRender();
 					},
@@ -546,7 +472,6 @@ export class PirePiTUI {
 					break;
 				}
 
-				// Collect tool calls accumulated during streaming
 				const allToolCalls = resp.tool_calls;
 				this.messages.push({
 					role: "assistant",
