@@ -311,29 +311,41 @@ pip_install() {
 		PIPRE_PY="python"
 	fi
 
-	if [ -n "$PIPRE_PY" ]; then
-		# --break-system-packages overrides PEP 668 (Debian externally-managed)
-		# --user keeps packages in ~/.local, not system-wide
-		$PIPRE_PY -m pip install --user --break-system-packages -q "$@" </dev/null 2>/dev/null \
-			|| $PIPRE_PY -m pip install --user -q "$@" </dev/null 2>/dev/null \
-			|| log_warn "pip install failed: $*"
-	else
-		# Try to bootstrap pip via ensurepip, then retry
-		PIPRE_BS=""
+	if [ -z "$PIPRE_PY" ]; then
+		# Try to bootstrap pip via ensurepip
 		for p in /usr/bin/python3 python3 python; do
 			if command -v "$p" >/dev/null 2>&1 && "$p" -m ensurepip --user </dev/null >/dev/null 2>&1; then
-				PIPRE_BS="$p"
+				PIPRE_PY="$p"
 				break
 			fi
 		done
-		if [ -n "$PIPRE_BS" ]; then
-			"$PIPRE_BS" -m pip install --user --break-system-packages -q "$@" </dev/null 2>/dev/null \
-				|| "$PIPRE_BS" -m pip install --user -q "$@" </dev/null 2>/dev/null \
-				|| log_warn "pip install failed: $*"
-		else
-			log_warn "pip not found, skipping: $*"
-		fi
 	fi
+
+	if [ -z "$PIPRE_PY" ]; then
+		log_warn "pip not found, skipping: $*"
+		return 1
+	fi
+
+	# Try with --break-system-packages first (PEP 668 / Debian 12+),
+	# fall back to plain --user for older distros.
+	# Show last few lines of output so user can see real errors.
+	PIPRE_OUT=$($PIPRE_PY -m pip install --user --break-system-packages "$@" </dev/null 2>&1)
+	PIPRE_RC=$?
+	if [ $PIPRE_RC -eq 0 ]; then
+		echo "$PIPRE_OUT" | grep -v "already satisfied" | tail -3
+		return 0
+	fi
+	# Show the error, then try without --break-system-packages
+	echo "$PIPRE_OUT" | tail -3
+	PIPRE_OUT=$($PIPRE_PY -m pip install --user "$@" </dev/null 2>&1)
+	PIPRE_RC=$?
+	if [ $PIPRE_RC -eq 0 ]; then
+		echo "$PIPRE_OUT" | grep -v "already satisfied" | tail -3
+		return 0
+	fi
+	echo "$PIPRE_OUT" | tail -3
+	log_warn "pip install failed: $*"
+	return 1
 }
 
 # ── Install Core ──────────────────────────────────────────────
@@ -641,12 +653,25 @@ has file    && log_done "file"                         || log_warn "file not ins
 	python3 -c "import lief" 2>/dev/null     && log_done "lief"     || log_warn "lief not installed"
 }
 
-# ── Install npm dependencies ──────────────────────────────────
+# ── Install npm dependencies & link CLI ────────────────────────
 SCRIPT_DIR=""
 if [ -f "$(dirname "$0")/package.json" ]; then
 	SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 elif [ -f "./package.json" ]; then
 	SCRIPT_DIR="$(pwd)"
+fi
+
+# If no local repo found (e.g. curl | sh), clone one
+if [ -z "$SCRIPT_DIR" ] || [ ! -f "$SCRIPT_DIR/package.json" ]; then
+	PIRE_INSTALL_DIR="$HOME/.pire"
+	if [ -d "$PIRE_INSTALL_DIR/.git" ]; then
+		log_step "Updating pire repo..."
+		git -C "$PIRE_INSTALL_DIR" pull --ff-only -q 2>/dev/null
+	else
+		log_step "Cloning pire repo..."
+		git clone -q https://github.com/evangit2/pire.git "$PIRE_INSTALL_DIR" 2>/dev/null
+	fi
+	SCRIPT_DIR="$PIRE_INSTALL_DIR"
 fi
 
 if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/package.json" ]; then
@@ -657,10 +682,22 @@ if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/package.json" ]; then
 	log_done "npm dependencies installed"
 
 	# Link pire CLI
-	if [ -f "$SCRIPT_DIR/packages/re-agent/src/cli.ts" ] && ! has pire 2>/dev/null; then
+	if [ -f "$SCRIPT_DIR/packages/re-agent/src/cli.ts" ]; then
 		log_step "Linking pire CLI..."
-		sudo ln -sf "$SCRIPT_DIR/packages/re-agent/src/cli.ts" /usr/local/bin/pire 2>/dev/null || \
-			log_warn "Could not create /usr/local/bin/pire symlink"
+		# Create a wrapper script that runs cli.ts with tsx
+		PIRE_WRAPPER="/usr/local/bin/pire"
+		if [ -w /usr/local/bin ]; then
+			printf '#!/bin/sh\nexec npx tsx "%s/packages/re-agent/src/cli.ts" "$@"\n' "$SCRIPT_DIR" > "$PIRE_WRAPPER"
+			chmod +x "$PIRE_WRAPPER"
+		else
+			sudo sh -c "printf '#!/bin/sh\nexec npx tsx \"$SCRIPT_DIR/packages/re-agent/src/cli.ts\" \"\$@\"\n' > '$PIRE_WRAPPER'" 2>/dev/null
+			sudo chmod +x "$PIRE_WRAPPER" 2>/dev/null
+		fi
+		if has pire 2>/dev/null; then
+			log_done "pire command available"
+		else
+			log_warn "Could not create /usr/local/bin/pire"
+		fi
 		if ! has tsx 2>/dev/null; then
 			log_step "Installing tsx..."
 			npm install -g tsx </dev/null 2>/dev/null || log_warn "Install tsx manually: npm install -g tsx"
