@@ -301,16 +301,18 @@ pkg_install() {
 
 pip_install() {
 	# Try python3 -m pip first (most reliable), then pip3, then pip
+	# stdin redirected from /dev/null so pip doesn't eat the rest of
+	# the script when run via `curl | sh`
 	if python3 -m pip --version >/dev/null 2>&1; then
-		python3 -m pip install --user -q "$@" 2>/dev/null || log_warn "pip install failed: $*"
+		python3 -m pip install --user -q "$@" </dev/null 2>/dev/null || log_warn "pip install failed: $*"
 	elif has pip3; then
-		pip3 install --user -q "$@" 2>/dev/null || log_warn "pip install failed: $*"
+		pip3 install --user -q "$@" </dev/null 2>/dev/null || log_warn "pip install failed: $*"
 	elif has pip; then
-		pip install --user -q "$@" 2>/dev/null || log_warn "pip install failed: $*"
+		pip install --user -q "$@" </dev/null 2>/dev/null || log_warn "pip install failed: $*"
 	else
 		# Try to bootstrap pip via ensurepip, then retry
 		if python3 -m ensurepip --user >/dev/null 2>&1; then
-			python3 -m pip install --user -q "$@" 2>/dev/null || log_warn "pip install failed: $*"
+			python3 -m pip install --user -q "$@" </dev/null 2>/dev/null || log_warn "pip install failed: $*"
 		else
 			log_warn "pip not found, skipping: $*"
 		fi
@@ -534,14 +536,14 @@ if [ "$INSTALL_ILSPY" = "1" ]; then
 		debian|fedora|arch|suse)
 			pkg_install dotnet-sdk-8.0 2>/dev/null || pkg_install dotnet-sdk 2>/dev/null || log_warn "ILSpy needs .NET SDK"
 			if has dotnet 2>/dev/null; then
-				dotnet tool install -g ilspycmd 2>/dev/null || log_warn "ilspycmd install failed"
+				dotnet tool install -g ilspycmd </dev/null 2>/dev/null || log_warn "ilspycmd install failed"
 				log_done "ILSpy installed via dotnet tool"
 			fi
 			;;
 		macos)
 			brew install --cask dotnet-sdk 2>/dev/null || log_warn "Install .NET SDK manually"
 			if has dotnet 2>/dev/null; then
-				dotnet tool install -g ilspycmd 2>/dev/null
+				dotnet tool install -g ilspycmd </dev/null 2>/dev/null
 				log_done "ILSpy installed via dotnet tool"
 			fi
 			;;
@@ -634,7 +636,7 @@ if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/package.json" ]; then
 	log_section "Node.js Dependencies"
 	log_step "Installing npm dependencies..."
 	cd "$SCRIPT_DIR"
-	npm install --ignore-scripts >/dev/null 2>&1 || npm install >/dev/null 2>&1 || log_warn "npm install had issues"
+	npm install --ignore-scripts </dev/null >/dev/null 2>&1 || npm install </dev/null >/dev/null 2>&1 || log_warn "npm install had issues"
 	log_done "npm dependencies installed"
 
 	# Link pire CLI
@@ -644,7 +646,7 @@ if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/package.json" ]; then
 			log_warn "Could not create /usr/local/bin/pire symlink"
 		if ! has tsx 2>/dev/null; then
 			log_step "Installing tsx..."
-			npm install -g tsx 2>/dev/null || log_warn "Install tsx manually: npm install -g tsx"
+			npm install -g tsx </dev/null 2>/dev/null || log_warn "Install tsx manually: npm install -g tsx"
 		fi
 		log_done "pire command available"
 	fi
