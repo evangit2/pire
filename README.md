@@ -1,6 +1,6 @@
 # pire
 
-Autonomous reverse-engineering agent. Give it a binary, a URL, or a directory — it auto-detects the format (PE, ELF, Mach-O, APK, .NET, firmware) and runs the right tools to analyze it.
+Autonomous reverse-engineering agent. Give it a binary, URL, or directory — it auto-detects the format (PE, ELF, Mach-O, APK, .NET, firmware) and runs the right tools.
 
 ## Quick start
 
@@ -14,11 +14,11 @@ curl -fsSL https://raw.githubusercontent.com/evangit2/pire/main/install.sh | sh
 irm https://raw.githubusercontent.com/evangit2/pire/main/install.ps1 | iex
 ```
 
-The installer detects your platform, asks which components you want (Wine, Ghidra, Frida, JADX, ILSpy, etc.), and installs everything accordingly. Use `--all` to install everything non-interactively, or `--core` for just the essentials.
+The installer detects your platform and asks which components you want (Wine, Ghidra, Frida, JADX, ILSpy, etc.). Use `--all` for everything, `--core` for just the essentials.
 
 **Then run:**
 ```bash
-pire                              # start chat — just tell it what to analyze
+pire                              # start chat
 pire /bin/ls                      # analyze a local binary
 pire https://example.com/app.exe  # download & analyze from URL
 ```
@@ -138,7 +138,7 @@ export PIRE_MODEL="your-preferred-model"
 pire
 ```
 
-Launches a chat-first terminal interface. Load a binary with `:load <path>`.
+Chat-first terminal interface. Load a binary with `:load <path>`.
 
 ### Autonomous reimplementation
 
@@ -146,14 +146,14 @@ Launches a chat-first terminal interface. Load a binary with `:load <path>`.
 pire <binary.exe>
 ```
 
-Runs the full RE pipeline autonomously. Output files are written to the binary's directory:
+Runs the full RE pipeline. Output files are written to the binary's directory:
 
 - `analysis.md` — detailed analysis of the binary's behavior
 - `reimpl.c` — C source reimplementation
 
 ## Tools
 
-The agent has access to 36 RE tools:
+36 RE tools:
 
 | Tool | Description |
 |------|-------------|
@@ -190,7 +190,7 @@ The agent has access to 36 RE tools:
 
 ## Case Study: Reimplementing xxd
 
-To demonstrate pire's capabilities on a real-world target, we ran it against [**ckormanyos/xxd**](https://github.com/ckormanyos/xxd) v1.2 — a public hex dump utility with both a Windows binary and open source available for verification.
+Ran pire against [**ckormanyos/xxd**](https://github.com/ckormanyos/xxd) v1.2 — a public hex dump utility with both a Windows binary and open source for verification.
 
 ### The target
 
@@ -204,15 +204,11 @@ To demonstrate pire's capabilities on a real-world target, we ran it against [**
 WINEPREFIX=~/.wine64 npx tsx packages/re-agent/src/pire-reimpl.ts targets/xxd/xxd.exe
 ```
 
-That's it — a single command. No manual hints, no human-in-the-loop. The agent receives the binary path and an 80-turn budget.
+Single command, no manual hints. The agent gets the binary path and an 80-turn budget.
 
 ### The prompt
 
-The agent is given a system prompt establishing it as an expert reverse engineer with a structured workflow:
-
-> You are an expert reverse engineer. Your goal is to FULLY reverse engineer a binary and produce a working open-source reimplementation.
-
-The prompt defines a 7-phase workflow:
+System prompt establishes a 7-phase workflow:
 
 1. **Triage** (turns 1–5): Run `filetype`, `strings`, `r2` to understand the binary
 2. **Black-box testing** (turns 5–15): Run the binary with various inputs under Wine, observe outputs
@@ -222,13 +218,13 @@ The prompt defines a 7-phase workflow:
 6. **Test** (turns 30+): Compile with `gcc` and compare outputs against the original
 7. **Iterate** (remaining turns): Fix and retest
 
-The prompt enforces hard deadlines:
+Deadlines:
 - Turn 25: Must write `analysis.md`
 - Turn 30: Must write `reimpl.c`
 - Turn 40: Non-`write_file` tool calls are blocked — only writing and testing allowed
 - Turn 80: Final deadline
 
-Key guidance in the prompt:
+Prompt guidance:
 - Match CRLF line endings (`\r\n`) since Windows binaries produce them
 - Match exit codes exactly
 - If SIMD/SSE instructions are found, use black-box testing rather than tracing `xmm` registers
@@ -236,9 +232,9 @@ Key guidance in the prompt:
 
 ### What the agent did (80 turns)
 
-**Turns 1–3 — Triage**: The agent ran `filetype` to identify the PE32+ binary, extracted 173 strings (including the version string and PDB path), and ran `ls` to understand the directory layout. It immediately started running the binary under Wine with a simple `echo "Hello World" > test.txt` input.
+**Turns 1–3 — Triage**: Ran `filetype` to identify the PE32+ binary, extracted 173 strings (including the version string and PDB path), ran `ls` for directory layout. Started running the binary under Wine with `echo "Hello World" > test.txt`.
 
-**Turns 3–17 — Black-box testing**: This was the most intensive phase. The agent systematically tested every flag:
+**Turns 3–17 — Black-box testing**: Systematically tested every flag:
 - Output modes: `-i` (C include), `-ps` (plain hex), `-b` (binary digits), `-e` (little-endian), `-E` (EBCDIC)
 - Modifiers: `-l` (length), `-g` (group size: 1, 2, 4, 8), `-c` (columns: 1, 4, 8, 16, 32, 256, 257), `-s` (seek: positive, negative, `+2`), `-o` (display offset), `-u` (uppercase), `-d` (decimal), `-a` (autoskip), `-n` (variable name), `-C` (capitalize)
 - Edge cases: empty files, `-l 0`, `-c 0`, `-c 257` (error), `-g 0`, `-g 3` (non-power-of-2 with `-e`), stdin input, nonexistent files, output to file
@@ -246,13 +242,13 @@ Key guidance in the prompt:
 - Flag interactions: `-b -i` (incompatible), `-b -r` (incompatible), `-e -i` (incompatible), `-ps -r` (reverse), `-b -c 4`, `-i -c 5`, `-d -a`
 - Reverse mode: piping hexdump → reverse → original
 
-**Turns 17–58 — Disassembly & analysis**: The agent used Radare2 to disassemble key functions, understand the hex formatting logic, group/byte swapping for little-endian mode, the autoskip (`*`) compression algorithm, and the C include variable name generation from filenames. It identified the version string, PDB path, and compiler (MSVC).
+**Turns 17–58 — Disassembly & analysis**: Used Radare2 to disassemble key functions — hex formatting logic, group/byte swapping for little-endian mode, autoskip (`*`) compression, C include variable name generation from filenames. Identified version string, PDB path, and compiler (MSVC).
 
-**Turn 59 — Analysis written**: The agent wrote `analysis.md` (5,089 bytes) documenting all flags, behaviors, edge cases, and algorithms.
+**Turn 59 — Analysis written**: Wrote `analysis.md` (5,089 bytes).
 
-**Turns 60–67 — Reimplementation**: The agent wrote `reimpl.c` (21,851 bytes) — a complete C implementation covering all output modes and flags. It compiled successfully with `gcc` and began differential testing.
+**Turns 60–67 — Reimplementation**: Wrote `reimpl.c` (21,851 bytes). Compiled with `gcc`, began differential testing.
 
-**Turns 67–80 — Testing & iteration**: The agent ran differential tests comparing original vs reimplementation output:
+**Turns 67–80 — Testing & iteration**: Ran differential tests comparing original vs reimpl:
 - Plain hex dump: matched
 - `-ps` plain hex: matched
 - `-i` C include: matched
@@ -260,17 +256,15 @@ Key guidance in the prompt:
 - 256-byte binary: matched
 - Multiple flag combinations: matched
 
-The agent continued testing edge cases through the final turn, verifying byte-level output with `xxd | head` and `cat -A` comparisons.
-
 ### Post-run verification
 
-After the agent completed, we ran an additional 28 differential tests covering all output modes, flag combinations, binary files, and edge cases. Three minor issues were found and fixed:
+28 additional differential tests. Three issues found and fixed:
 
-1. **`-p` alias**: The original accepts both `-p` and `-ps` as synonyms; the reimpl only handled `-ps`
-2. **`-i` trailing comma**: The original omits the comma after the last byte; the reimpl was adding one
-3. **`-b` default columns**: Binary mode defaults to 6 columns, not 16
+1. **`-p` alias**: Original accepts both `-p` and `-ps`; reimpl only handled `-ps`
+2. **`-i` trailing comma**: Original omits the comma after the last byte
+3. **`-b` default columns**: Binary mode defaults to 6, not 16
 
-After these fixes, **all 28 tests produce byte-identical output**.
+After fixes: **28/28 tests byte-identical**.
 
 ### Results
 
@@ -284,22 +278,15 @@ After these fixes, **all 28 tests produce byte-identical output**.
 | Analysis size | 5,089 bytes |
 | Differential tests | 28 / 28 byte-identical |
 
-The reimplementation and analysis files are in `targets/xxd/`.
+Files in `targets/xxd/`.
 
 ## Testing
 
 ```bash
-# Run the full test suite
 node packages/re-agent/test/test-suite.cjs
 ```
 
-Tests cover:
-- Tool registration and lazy loading
-- System prompt structure and guidance
-- Agent loop mechanics (max turns, deadline enforcement)
-- Decompile tool integration
-- SIMD/SSE handling guidance
-- CRLF/exit code matching guidance
+Covers tool registration, lazy loading, system prompt structure, agent loop mechanics, deadline enforcement, decompile integration, SIMD/SSE guidance, CRLF/exit code matching.
 
 ## Architecture
 
@@ -328,36 +315,30 @@ pire/
 
 ## How it works
 
-The agent uses an LLM-powered loop with hard tool-call deadlines:
+LLM-powered loop with hard tool-call deadlines:
 
 1. **Turns 1-25**: Triage, black-box testing, disassembly, decompilation
 2. **Turn 25**: Soft deadline — write `analysis.md`
 3. **Turn 30**: Soft deadline — write `reimpl.c`
 4. **Turn 40**: Hard deadline — non-`write_file` tool calls are blocked
-5. **Turns 40-80**: Compile, test, iterate on the reimplementation
+5. **Turns 40-80**: Compile, test, iterate
 6. **Turn 80**: Final deadline
 
-The agent streams LLM responses and includes guidance for:
-- SIMD/SSE instruction handling (use black-box testing instead of tracing xmm registers)
-- CRLF line ending matching (Windows binaries use `\r\n`)
-- Exit code matching
-- Error message exact matching
+Streams LLM responses. Prompt guidance includes SIMD/SSE handling, CRLF matching, exit code matching, error message exact matching.
 
 ## Token Efficiency
 
-pire is designed to be cheap to run. The initial input payload for a new chat session is approximately **~5,000 tokens** — that's the system prompt, 36 tool schemas, and context state combined. A typical first user message adds only 50–200 tokens on top.
+~5,000 tokens initial input per chat session:
 
 | Component | Tokens |
 |----------|--------|
 | System prompt | ~1,100 |
 | Tool schemas (36 tools) | ~3,800 |
-| TUI context (available tools, loaded target) | ~150 |
+| TUI context | ~150 |
 | **Total initial input** | **~5,000** |
 | Output cap (`max_tokens`) | 8,192 |
 
-No hidden context window bloat — no RAG pipelines, no vector embeddings, no multi-megabyte system prompts. Just the tools and instructions, straightforward and compact.
-
-For comparison, a typical agentic framework with similar tool count easily runs 15,000–30,000+ input tokens per message. pire's lean system prompt means **3–6× lower input cost per turn**, which adds up fast over an 80-turn autonomous RE session.
+For comparison, comparable agentic frameworks run 15,000–30,000+ input tokens per message.
 
 ## License
 
