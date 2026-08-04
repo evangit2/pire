@@ -45,9 +45,10 @@ function has(cmd: string): boolean {
 	return !!run(`command -v ${cmd} ${DEVNULL}`);
 }
 
-async function confirm(rl: any, question: string): Promise<boolean> {
+async function confirm(rl: any, question: string, defaultYes = false): Promise<boolean> {
 	const answer = (await rl.question(question)).trim().toLowerCase();
-	return answer === "y" || answer === "yes" || answer === "";
+	if (answer === "") return defaultYes;
+	return answer === "y" || answer === "yes";
 }
 
 // ─── Detect OS ─────────────────────────────────────────────────
@@ -135,6 +136,7 @@ function optionalPackages(os: string): PkgEntry[] {
 				{ name: "binwalk", label: "Binwalk" },
 				{ name: "jadx", label: "JADX" },
 				{ name: "yara", label: "Yara" },
+				{ name: "ghidra", label: "Ghidra" },
 			];
 		case "debian":
 			return [
@@ -145,6 +147,7 @@ function optionalPackages(os: string): PkgEntry[] {
 				{ name: "default-jre", label: "Java (JADX/ILSpy)" },
 				{ name: "yara", label: "Yara" },
 				{ name: "python3-frida", label: "Frida" },
+				{ name: "ghidra", label: "Ghidra" },
 			];
 		case "fedora":
 			return [
@@ -153,6 +156,7 @@ function optionalPackages(os: string): PkgEntry[] {
 				{ name: "gdb", label: "GDB" },
 				{ name: "binwalk", label: "Binwalk" },
 				{ name: "yara", label: "Yara" },
+				{ name: "ghidra", label: "Ghidra" },
 			];
 		case "arch":
 			return [
@@ -162,6 +166,7 @@ function optionalPackages(os: string): PkgEntry[] {
 				{ name: "binwalk", label: "Binwalk" },
 				{ name: "yara", label: "Yara" },
 				{ name: "frida-tools", label: "Frida" },
+				{ name: "ghidra", label: "Ghidra" },
 			];
 		default:
 			return [];
@@ -220,6 +225,16 @@ function findPireRepo(): string | null {
 function pkgUninstall(pkgmgr: string, pkgs: PkgEntry[]): void {
 	for (const pkg of pkgs) {
 		process.stdout.write(`  ${chalk.dim("→")} ${pkg.label}... `);
+
+		// Ghidra is installed to /opt, not via package manager
+		if (pkg.name === "ghidra") {
+			run("sudo rm -rf /opt/ghidra_* 2>/dev/null || rm -rf /opt/ghidra_* 2>/dev/null");
+			run("sudo rm -f /usr/local/bin/ghidra 2>/dev/null || rm -f /usr/local/bin/ghidra 2>/dev/null");
+			run("rm -f $HOME/.local/bin/ghidra 2>/dev/null");
+			console.log(chalk.green("done"));
+			continue;
+		}
+
 		let cmd = "";
 		switch (pkgmgr) {
 			case "brew":
@@ -333,30 +348,13 @@ async function main() {
 	} else if (repo) {
 		console.log(chalk.yellow(`\n  ⚠ pire repo is at ${repo}`));
 		console.log(chalk.yellow("    This looks like a manual clone — not removing automatically."));
-		const removeRepo = await confirm(rl, chalk.yellow("  Remove it anyway? [Y/n] "));
+		const removeRepo = await confirm(rl, chalk.yellow("  Remove it anyway? [Y/n] "), true);
 		if (removeRepo) removeDir(repo, "pire repo");
 	}
 
 	// Remove ~/.pire config dir (if different from repo, or if repo wasn't there)
 	if (existsSync(PIRE_DIR) && repo !== PIRE_DIR) {
 		removeDir(PIRE_DIR, "pire config (~/.pire)");
-	}
-
-	// Remove Ghidra from /opt or ~/Applications
-	if (existsSync("/opt/ghidra_") || has("ghidra")) {
-		process.stdout.write(`  ${chalk.dim("→")} Ghidra... `);
-		run("sudo rm -rf /opt/ghidra_* 2>/dev/null || rm -rf /opt/ghidra_* 2>/dev/null");
-		run("sudo rm -f /usr/local/bin/ghidra 2>/dev/null || rm -f /usr/local/bin/ghidra 2>/dev/null");
-		run("rm -f $HOME/.local/bin/ghidra 2>/dev/null");
-		console.log(chalk.green("done"));
-	}
-
-	// Remove JADX from /opt
-	if (existsSync("/opt/jadx")) {
-		process.stdout.write(`  ${chalk.dim("→")} JADX (/opt/jadx)... `);
-		run("sudo rm -rf /opt/jadx 2>/dev/null || rm -rf /opt/jadx 2>/dev/null");
-		run("sudo rm -f /usr/local/bin/jadx /usr/local/bin/jadx-gui 2>/dev/null");
-		console.log(chalk.green("done"));
 	}
 
 	console.log();
