@@ -46,6 +46,16 @@ function Write-Section($Title) {
     Write-Host "===========================================================" -ForegroundColor Magenta
 }
 
+function Invoke-Pip {
+    # Run pip without ErrorActionPreference="Stop" killing us on stderr output
+    param([string[]]$Args)
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    $out = & pip @Args 2>&1
+    $ErrorActionPreference = $prevEAP
+    return $LASTEXITCODE -eq 0
+}
+
 function Write-Step($Msg)   { Write-Host "-> $Msg" -ForegroundColor Cyan }
 function Write-Ok($Msg)     { Write-Host "[OK] $Msg" -ForegroundColor Green }
 function Write-Warn2($Msg)  { Write-Host "[!] $Msg" -ForegroundColor Yellow }
@@ -316,11 +326,31 @@ if ($InstallMinGW) {
 if ($InstallGDB) {
     Write-Section "GDB"
     Write-Step "Installing GDB..."
+    $gdbOk = $false
     switch ($PkgMgr) {
-        "choco"  { choco install gdb -y --no-progress 2>$null }
-        "scoop"  { scoop install gdb 2>$null }
+        "choco"  {
+            choco install gdb -y --no-progress 2>&1 | Out-Null
+            $gdbOk = Has-Command "gdb"
+        }
+        "winget" {
+            # winget doesn't have a direct GDB package.
+            # Try MSYS2 first (best option on Windows), then pip fallback.
+            if (Has-Command "pacman") {
+                pacman -S --noconfirm --needed mingw-w64-x86_64-gdb 2>&1 | Out-Null
+                $gdbOk = Has-Command "gdb"
+            }
+            if (-not $gdbOk) {
+                Write-Warn2 "GDB not available via winget directly."
+                Write-Warn2 "Install MSYS2 (https://www.msys2.org/) then run:"
+                Write-Warn2 "  pacman -S mingw-w64-x86_64-gdb"
+            }
+        }
+        "scoop"  {
+            scoop install gdb 2>&1 | Out-Null
+            $gdbOk = Has-Command "gdb"
+        }
     }
-    if (Has-Command "gdb") { Write-Ok "GDB installed" } else { Write-Warn2 "GDB install failed" }
+    if ($gdbOk) { Write-Ok "GDB installed" } elseif (-not $gdbOk) { Write-Warn2 "GDB install failed" }
 }
 
 # ── Install Binwalk ───────────────────────────────────────────
@@ -329,8 +359,11 @@ if ($InstallBinwalk) {
     Write-Section "Binwalk"
     Write-Step "Installing Binwalk via pip..."
     if (Has-Command "pip") {
-        pip install binwalk 2>$null
-        if (Has-Command "binwalk") { Write-Ok "Binwalk installed" } else { Write-Warn2 "Binwalk install failed" }
+        if (Invoke-Pip "install" "binwalk") {
+            Write-Ok "Binwalk installed"
+        } else {
+            Write-Warn2 "Binwalk install had issues (may still work)"
+        }
     } else {
         Write-Warn2 "pip not found — install Python first"
     }
@@ -347,7 +380,7 @@ if ($InstallYara) {
         "scoop"  { scoop install yara 2>$null }
     }
     if (Has-Command "yara") { Write-Ok "Yara installed" } else {
-        if (Has-Command "pip") { pip install yara-python 2>$null }
+        if (Has-Command "pip") { Invoke-Pip "install" "yara-python" }
         Write-Warn2 "Yara CLI not found — python binding may be installed"
     }
 }
@@ -358,8 +391,11 @@ if ($InstallVolatility) {
     Write-Section "Volatility"
     Write-Step "Installing Volatility 3 via pip..."
     if (Has-Command "pip") {
-        pip install volatility3 2>$null
-        Write-Ok "Volatility 3 installed"
+        if (Invoke-Pip "install" "volatility3") {
+            Write-Ok "Volatility 3 installed"
+        } else {
+            Write-Warn2 "Volatility 3 install had issues"
+        }
     } else {
         Write-Warn2 "pip not found — install Python first"
     }
@@ -371,8 +407,12 @@ if ($InstallFrida) {
     Write-Section "Frida"
     Write-Step "Installing Frida..."
     if (Has-Command "pip") {
-        pip install frida-tools 2>$null
-        if (Has-Command "frida") { Write-Ok "Frida installed" } else { Write-Warn2 "Frida install failed" }
+        if (Invoke-Pip "install" "frida-tools") {
+            Write-Ok "Frida installed"
+        } else {
+            Write-Warn2 "Frida install failed"
+        }
+        if (Has-Command "frida") { Write-Ok "Frida CLI available" }
     } else {
         Write-Warn2 "pip not found — install Python first"
     }
@@ -484,19 +524,25 @@ if ($InstallPythonTools) {
     Write-Section "Python RE Tools"
     Write-Step "Installing capstone, keystone, unicorn, angr, lief..."
     if (Has-Command "pip") {
-        pip install capstone keystone-engine unicorn angr lief 2>$null
-        Write-Ok "Python RE tools installed"
+        if (Invoke-Pip "install" "capstone" "keystone-engine" "unicorn" "angr" "lief") {
+            Write-Ok "Python RE tools installed"
+        } else {
+            Write-Warn2 "Some Python RE tools failed to install"
+        }
     } else {
         Write-Warn2 "pip not found — installing Python..."
         switch ($PkgMgr) {
-            "choco"  { choco install python -y --no-progress 2>$null }
-            "winget" { winget install --id Python.Python.3.12 -e --accept-source-agreements --accept-package-agreements 2>$null }
-            "scoop"  { scoop install python 2>$null }
+            "choco"  { choco install python -y --no-progress 2>&1 | Out-Null }
+            "winget" { winget install --id Python.Python.3.12 -e --accept-source-agreements --accept-package-agreements 2>&1 | Out-Null }
+            "scoop"  { scoop install python 2>&1 | Out-Null }
         }
         $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("PATH", "User")
         if (Has-Command "pip") {
-            pip install capstone keystone-engine unicorn angr lief 2>$null
-            Write-Ok "Python RE tools installed"
+            if (Invoke-Pip "install" "capstone" "keystone-engine" "unicorn" "angr" "lief") {
+                Write-Ok "Python RE tools installed"
+            } else {
+                Write-Warn2 "Some Python RE tools failed to install"
+            }
         } else {
             Write-Warn2 "Python installation failed"
         }
@@ -565,13 +611,17 @@ Write-Host "  pire is ready!" -ForegroundColor Green
 Write-Host ""
 Write-Host "  Next steps:"
 Write-Host ""
-Write-Host "    1. Set your LLM API credentials:"
-Write-Host '       $env:OPENAI_API_KEY = "your-key"'
-Write-Host '       $env:OPENAI_BASE_URL = "https://api.openai.com/v1"'
-Write-Host '       $env:OPENAI_MODEL = "gpt-4o"'
+Write-Host "    1. Configure your model provider:"
+Write-Host "       pire model"
+Write-Host ""
+Write-Host "       This opens an interactive selector where you can:"
+Write-Host "         - Add providers (OpenAI, Ollama, custom endpoints, etc.)"
+Write-Host "         - Fetch and select models from the provider"
+Write-Host "         - Set context_length and max_tokens"
 Write-Host ""
 Write-Host "    2. Start pire:"
-Write-Host "       pire                              # start chat"
+Write-Host "       pire                              # start chat (Pi TUI)"
+Write-Host "       pire -cli                         # plain CLI mode"
 Write-Host "       pire C:\Windows\System32\notepad.exe  # analyze a binary"
 Write-Host ""
 Write-Host "  Docs: https://github.com/evangit2/pire" -ForegroundColor Cyan
