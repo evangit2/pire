@@ -302,6 +302,7 @@ pkg_install() {
 	esac
 }
 
+PIP_INSTALL_TIMEOUT=300
 pip_install() {
 	PIPRE_PY=""
 	if [ -x /usr/bin/python3 ] && /usr/bin/python3 -m pip --version >/dev/null 2>&1; then
@@ -326,7 +327,7 @@ pip_install() {
 	fi
 
 	if [ "$OS" = "windows" ]; then
-		PIPRE_OUT=$($PIPRE_PY -m pip install --user "$@" </dev/null 2>&1)
+		PIPRE_OUT=$(timeout "$PIP_INSTALL_TIMEOUT" $PIPRE_PY -m pip install --user "$@" </dev/null 2>&1)
 		PIPRE_RC=$?
 		if [ $PIPRE_RC -eq 0 ]; then
 			echo "$PIPRE_OUT" | grep -v "already satisfied" | tail -3
@@ -336,13 +337,13 @@ pip_install() {
 		return 1
 	fi
 
-	PIPRE_OUT=$($PIPRE_PY -m pip install --user --break-system-packages "$@" </dev/null 2>&1)
+	PIPRE_OUT=$(timeout "$PIP_INSTALL_TIMEOUT" $PIPRE_PY -m pip install --user --break-system-packages "$@" </dev/null 2>&1)
 	PIPRE_RC=$?
 	if [ $PIPRE_RC -eq 0 ]; then
 		echo "$PIPRE_OUT" | grep -v "already satisfied" | tail -3
 		return 0
 	fi
-	PIPRE_OUT=$($PIPRE_PY -m pip install --user "$@" </dev/null 2>&1)
+	PIPRE_OUT=$(timeout "$PIP_INSTALL_TIMEOUT" $PIPRE_PY -m pip install --user "$@" </dev/null 2>&1)
 	PIPRE_RC=$?
 	if [ $PIPRE_RC -eq 0 ]; then
 		echo "$PIPRE_OUT" | grep -v "already satisfied" | tail -3
@@ -767,8 +768,8 @@ if [ -n "$COMPONENTS" ]; then
 			# Pad label to 20 chars for alignment
 			padded=$(printf '%-20s' "$label")
 
-			# Clear line and write
-			printf '\033[2K  %b %s' "$icon" "$padded"
+			# Clear line and write (\r returns to col 0, \033[2K clears line)
+			printf '\r\033[2K  %b %s' "$icon" "$padded"
 
 			# Print status text
 			case "$status" in
@@ -778,10 +779,8 @@ if [ -n "$COMPONENTS" ]; then
 				$ST_FAILED)   printf '\033[0;31mfailed\033[0m' ;;
 			esac
 
-			# Move to next line (down, then we'll redraw)
-			if [ $idx -lt $N_COMPS ]; then
-				printf '\n'
-			fi
+			# Move to next line (every line gets \n so cursor math is simple)
+			printf '\n'
 		done
 
 		# Move cursor back up to first line for next redraw

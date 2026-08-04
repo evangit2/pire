@@ -252,6 +252,18 @@ function Refresh-Path {
 
 function Has-Cmd($n) { [bool](Get-Command $n -ErrorAction SilentlyContinue) }
 
+function Run-Pip {
+    param([string[]]$Pkgs)
+    $pipExe = (Get-Command pip -ErrorAction SilentlyContinue).Source
+    if (-not $pipExe) { return $false }
+    $proc = Start-Process -FilePath $pipExe -ArgumentList (@("install","--user") + $Pkgs) -NoNewWindow -PassThru
+    if (-not $proc.WaitForExit(300000)) {
+        $proc.Kill()
+        return $false
+    }
+    return $true
+}
+
 $ok = $false
 
 switch ($Component) {
@@ -290,11 +302,11 @@ switch ($Component) {
         $ok = Has-Cmd "gdb"
     }
     "binwalk" {
-        if (Has-Cmd "pip") { & pip install binwalk 2>&1 | Out-Null }
+        Run-Pip "binwalk"
         $ok = Has-Cmd "binwalk"
     }
     "frida" {
-        if (Has-Cmd "pip") { & pip install frida-tools 2>&1 | Out-Null }
+        Run-Pip "frida-tools"
         $ok = (Has-Cmd "frida") -or (Has-Cmd "frida-ps")
     }
     "jadx" {
@@ -357,16 +369,16 @@ switch ($Component) {
         }
         Refresh-Path
         if (-not (Has-Cmd "yara")) {
-            if (Has-Cmd "pip") { & pip install yara-python 2>&1 | Out-Null }
+            Run-Pip "yara-python"
         }
         $ok = Has-Cmd "yara"
     }
     "volatility" {
-        if (Has-Cmd "pip") { & pip install volatility3 2>&1 | Out-Null }
+        Run-Pip "volatility3"
         $ok = (Has-Cmd "vol") -or (Has-Cmd "vol3")
     }
     "python" {
-        if (Has-Cmd "pip") { & pip install capstone keystone-engine unicorn angr lief 2>&1 | Out-Null }
+        Run-Pip "capstone","keystone-engine","unicorn","angr","lief"
         try { python -c "import capstone" 2>&1 | Out-Null; $ok = $true } catch {}
     }
 }
@@ -398,9 +410,9 @@ if ($ok) {
                      [char]0x2807, [char]0x280F)
     $spinIdx = 0
 
-    # Print initial lines
+    # Print initial lines (one per component)
     for ($i = 0; $i -lt $processes.Count; $i++) {
-        Write-Host "  $($processes[$i].Name)"
+        Write-Host ""
     }
 
     # Move cursor up to first line
@@ -417,24 +429,19 @@ if ($ok) {
             $p = $processes[$i]
             $status = Read-Status $p.Key
 
-            if ($status -in @("done", "failed")) {
-                # Already finished — skip
-                continue
-            }
-
             # Check if the process is still running
-            if ($p.Proc.HasExited) {
-                # Process exited — read final status (it should have
-                # been written by the script, but double-check)
-                $status = Read-Status $p.Key
-                if ($status -eq "running") {
-                    # Process exited without writing status — treat as failed
-                    $status = "failed"
-                    Set-Content -Path (Join-Path $TmpDir "$($p.Key).status") -Value "failed" -NoNewline
+            if ($status -notin @("done", "failed")) {
+                if ($p.Proc.HasExited) {
+                    # Process exited — read final status
+                    $status = Read-Status $p.Key
+                    if ($status -eq "running" -or $status -eq "pending") {
+                        $status = "failed"
+                        Set-Content -Path (Join-Path $TmpDir "$($p.Key).status") -Value "failed" -NoNewline
+                    }
+                } else {
+                    $status = "running"
+                    $allDone = $false
                 }
-            } else {
-                $status = "running"
-                $allDone = $false
             }
 
             $icon = switch ($status) {
@@ -460,18 +467,17 @@ if ($ok) {
 
             # Clear line and write
             [Console]::SetCursorPosition(0, [Console]::CursorTop)
-            Write-Host -NoNewline ("  " + $icon + " " + $p.Name.PadRight(20) + " ")
+            $line = "  " + $icon + " " + $p.Name.PadRight(20) + " "
+            Write-Host -NoNewline $line
             Write-Host -NoNewline -ForegroundColor $color $statusText
             Write-Host -NoNewline "          "  # clear rest of line
 
-            # Move down to next line
-            if ($i -lt ($processes.Count - 1)) {
-                [Console]::SetCursorPosition(0, [Console]::CursorTop + 1)
-            }
+            # Move down to next line (always, for every component)
+            [Console]::SetCursorPosition(0, [Console]::CursorTop + 1)
         }
 
         # Move cursor back to first line
-        [Console]::SetCursorPosition(0, [Console]::CursorTop - ($processes.Count - 1))
+        [Console]::SetCursorPosition(0, [Console]::CursorTop - $processes.Count)
 
         if (-not $allDone) {
             Start-Sleep -Milliseconds 300
