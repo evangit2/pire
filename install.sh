@@ -457,7 +457,7 @@ if [ "$NODE_VER" -lt 22 ] 2>/dev/null; then
 			pkg_install nodejs 2>/dev/null
 			;;
 		macos)
-			brew install node@22 2>/dev/null || brew link --overwrite node@22 2>/dev/null
+			brew install node@22 </dev/null 2>/dev/null || brew link --overwrite node@22 </dev/null 2>/dev/null
 			;;
 	esac
 	log_done "Node.js upgraded to $(node -v)"
@@ -474,7 +474,7 @@ if [ "$INSTALL_WINE" = "1" ]; then
 		fedora)  pkg_install wine ;;
 		arch)    pkg_install wine ;;
 		suse)    pkg_install wine ;;
-		macos)   brew install --cask wine-stable 2>/dev/null || log_warn "Wine on macOS Apple Silicon may not work" ;;
+		macos)   brew install --cask wine-stable </dev/null 2>/dev/null || log_warn "Wine on macOS Apple Silicon may not work" ;;
 		windows) log_done "Wine not needed on Windows" ;;
 	esac
 
@@ -499,7 +499,7 @@ if [ "$INSTALL_MINGW" = "1" ]; then
 		fedora)  pkg_install mingw64-gcc ;;
 		arch)    pkg_install mingw-w64-gcc ;;
 		suse)    pkg_install mingw64-gcc ;;
-		macos)   brew install mingw-w64 ;;
+		macos) brew install mingw-w64 </dev/null ;;
 		windows) pkg_install mingw-w64-x86_64-gcc ;;
 	esac
 fi
@@ -520,7 +520,7 @@ if [ "$INSTALL_BINWALK" = "1" ]; then
 	log_step "Installing Binwalk..."
 	case "$OS" in
 		debian|fedora|arch|suse) pkg_install binwalk ;;
-		macos) brew install binwalk ;;
+		macos) brew install binwalk </dev/null ;;
 		windows)
 			# Binwalk has limited Windows support — install via pip without
 			# the Linux-only --break-system-packages flag
@@ -546,7 +546,7 @@ if [ "$INSTALL_YARA" = "1" ]; then
 	log_step "Installing Yara..."
 	case "$OS" in
 		debian|fedora|arch|suse) pkg_install yara ;;
-		macos) brew install yara ;;
+		macos) brew install yara </dev/null ;;
 		*) pip_install yara-python ;;
 	esac
 fi
@@ -590,7 +590,7 @@ if [ "$INSTALL_JADX" = "1" ]; then
 			fi
 			;;
 		macos)
-			brew install jadx
+			brew install jadx </dev/null
 			;;
 		*) log_warn "JADX install not automated on $OS — see https://github.com/skylot/jadx" ;;
 	esac
@@ -609,7 +609,7 @@ if [ "$INSTALL_ILSPY" = "1" ]; then
 			fi
 			;;
 		macos)
-			brew install --cask dotnet-sdk 2>/dev/null || log_warn "Install .NET SDK manually"
+			brew install --cask dotnet-sdk </dev/null 2>/dev/null || log_warn "Install .NET SDK manually"
 			if has dotnet 2>/dev/null; then
 				dotnet tool install -g ilspycmd </dev/null 2>/dev/null
 				log_done "ILSpy installed via dotnet tool"
@@ -645,7 +645,7 @@ if [ "$INSTALL_GHIDRA" = "1" ]; then
 			fi
 			;;
 		macos)
-			brew install --cask ghidra 2>/dev/null || log_warn "Install Ghidra manually from https://ghidra-sre.org/"
+			brew install --cask ghidra </dev/null 2>/dev/null || log_warn "Install Ghidra manually from https://ghidra-sre.org/"
 			;;
 		*) log_warn "Ghidra install not automated on $OS — see https://ghidra-sre.org/" ;;
 	esac
