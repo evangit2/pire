@@ -672,13 +672,17 @@ const disasmFuncTool: AgentTool<{ path: string; startAddress: string; maxBytes?:
 		);
 		const lines = raw.split("\n");
 		const funcLines: string[] = [];
+		let instrCount = 0; // Track actual instructions (not header lines)
 		for (const line of lines) {
 			// Skip objdump header/section lines
 			if (line.startsWith("/") || line.includes("file format") || line.trim() === "") continue;
 			if (line.includes("Disassembly of section")) continue;
 			if (line.includes("<.text") || line.includes("<.init") || line.includes("<.fini")) continue;
+			// Track whether this is an actual instruction line (not a symbol header)
+			const isInstruction = /^\s+[0-9a-f]+:/.test(line);
 			// Stop at next function's endbr64 (but not the function's own first endbr64)
-			if (line.includes("endbr64") && funcLines.length > 0) break;
+			if (line.includes("endbr64") && instrCount > 0) break;
+			if (isInstruction) instrCount++;
 			funcLines.push(line);
 		}
 		// Trim trailing nops/padding after the last real instruction
@@ -691,7 +695,6 @@ const disasmFuncTool: AgentTool<{ path: string; startAddress: string; maxBytes?:
 			}
 		}
 		if (funcLines.length === 0) return textResult(`No disassembly found at 0x${addr}. Check the address is correct.`);
-		const instrCount = funcLines.filter(l => /^\s+[0-9a-f]+:/.test(l)).length;
 		const retCount = funcLines.filter(l => /	ret/.test(l)).length;
 		return textResult(funcLines.join("\n"), {
 			startAddress: `0x${addr}`,
