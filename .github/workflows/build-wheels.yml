@@ -1,0 +1,37 @@
+name: Build macOS wheels
+
+on:
+  workflow_dispatch:
+    inputs:
+      package:
+        description: 'Package to build'
+        required: true
+        default: 'keystone-engine'
+        type: choice
+        options:
+          - keystone-engine
+
+jobs:
+  build-arm64:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build deps
+        run: |
+          brew install cmake
+          python3 -m pip install --upgrade pip wheel setuptools
+
+      - name: Build wheel
+        run: |
+          mkdir -p wheels
+          python3 -m pip wheel --no-deps --wheel-dir wheels/ ${{ inputs.package }}
+
+      - name: Show built wheel
+        run: ls -la wheels/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: keystone-wheel-arm64
+          path: wheels/*.whl
