@@ -326,7 +326,10 @@ pkg_install() {
 			;;
 		zypper) sudo zypper install -y -q "$@" </dev/null >/dev/null 2>&1 ;;
 		apk)    sudo apk add -q "$@" </dev/null >/dev/null 2>&1 ;;
-		brew)   brew install "$@" </dev/null >/dev/null 2>&1 ;;
+		brew)
+			# Try brew install — if it fails, try as cask
+			brew install "$@" </dev/null >/dev/null 2>&1 || brew install --cask "$@" </dev/null >/dev/null 2>&1
+			;;
 		*)      log_warn "Unknown package manager for: $*" ;;
 	esac
 	PKG_RC=$?
@@ -340,6 +343,18 @@ pkg_install() {
 }
 
 PIP_INSTALL_TIMEOUT=600
+
+# Run a command with a timeout. Falls back to Perl on macOS (no timeout/gtimeout).
+run_with_timeout() {
+	if command -v timeout >/dev/null 2>&1; then
+		timeout "$PIP_INSTALL_TIMEOUT" "$@"
+	elif command -v gtimeout >/dev/null 2>&1; then
+		gtimeout "$PIP_INSTALL_TIMEOUT" "$@"
+	else
+		perl -e 'alarm shift; exec @ARGV' "$PIP_INSTALL_TIMEOUT" "$@"
+	fi
+}
+
 pip_install() {
 	PIPRE_PY=""
 	if [ -x /usr/bin/python3 ] && /usr/bin/python3 -m pip --version >/dev/null 2>&1; then
@@ -363,19 +378,8 @@ pip_install() {
 		return 1
 	fi
 
-	# Use timeout if available — macOS needs coreutils for gtimeout
-	PIP_TIMEOUT_CMD=""
-	if command -v timeout >/dev/null 2>&1; then
-		PIP_TIMEOUT_CMD="timeout $PIP_INSTALL_TIMEOUT"
-	elif command -v gtimeout >/dev/null 2>&1; then
-		PIP_TIMEOUT_CMD="gtimeout $PIP_INSTALL_TIMEOUT"
-	else
-		# Fallback: Perl-based timeout (Perl is always on macOS)
-		PIP_TIMEOUT_CMD="perl -e 'alarm shift; exec @ARGV' $PIP_INSTALL_TIMEOUT"
-	fi
-
 	if [ "$OS" = "windows" ]; then
-		PIPRE_OUT=$($PIP_TIMEOUT_CMD $PIPRE_PY -m pip install --user "$@" </dev/null 2>&1)
+		PIPRE_OUT=$(run_with_timeout "$PIPRE_PY" -m pip install --user "$@" </dev/null 2>&1)
 		PIPRE_RC=$?
 		if [ $PIPRE_RC -eq 0 ]; then
 			echo "$PIPRE_OUT" | grep -v "already satisfied" | tail -3
@@ -385,13 +389,13 @@ pip_install() {
 		return 1
 	fi
 
-	PIPRE_OUT=$($PIP_TIMEOUT_CMD $PIPRE_PY -m pip install --user --break-system-packages "$@" </dev/null 2>&1)
+	PIPRE_OUT=$(run_with_timeout "$PIPRE_PY" -m pip install --user --break-system-packages "$@" </dev/null 2>&1)
 	PIPRE_RC=$?
 	if [ $PIPRE_RC -eq 0 ]; then
 		echo "$PIPRE_OUT" | grep -v "already satisfied" | tail -3
 		return 0
 	fi
-	PIPRE_OUT=$($PIP_TIMEOUT_CMD $PIPRE_PY -m pip install --user "$@" </dev/null 2>&1)
+	PIPRE_OUT=$(run_with_timeout "$PIPRE_PY" -m pip install --user "$@" </dev/null 2>&1)
 	PIPRE_RC=$?
 	if [ $PIPRE_RC -eq 0 ]; then
 		echo "$PIPRE_OUT" | grep -v "already satisfied" | tail -3
@@ -436,7 +440,7 @@ case "$OS" in
 		log_step "Installing core packages..."
 		pkg_install node radare2 binutils git
 		# Install coreutils for gtimeout (needed for pip timeout)
-		brew install coreutils </dev/null >/dev/null 2>&1 || true
+		pkg_install coreutils 2>/dev/null || true
 		;;
 	wsl)
 		. /etc/os-release 2>/dev/null
@@ -487,7 +491,7 @@ if [ "$NODE_VER" -lt 22 ] 2>/dev/null; then
 			pkg_install nodejs 2>/dev/null
 			;;
 		macos)
-			brew install node@22 </dev/null 2>/dev/null || brew link --overwrite node@22 </dev/null 2>/dev/null
+			pkg_install node@22 2>/dev/null || brew link --overwrite node@22 </dev/null 2>/dev/null
 			;;
 	esac
 	log_done "Node.js upgraded to $(node -v)"
@@ -557,7 +561,7 @@ install_wine() {
 		fedora)  pkg_install wine ;;
 		arch)    pkg_install wine ;;
 		suse)    pkg_install wine ;;
-		macos)   brew install --cask wine-stable </dev/null 2>/dev/null || true ;;
+		macos)   pkg_install wine-stable 2>/dev/null || true ;;
 		windows) true ;;  # not needed
 	esac
 	# Init wine prefix
@@ -581,7 +585,7 @@ install_mingw() {
 		fedora)  pkg_install mingw64-gcc ;;
 		arch)    pkg_install mingw-w64-gcc ;;
 		suse)    pkg_install mingw64-gcc ;;
-		macos)   brew install mingw-w64 </dev/null 2>/dev/null ;;
+		macos)   pkg_install mingw-w64 2>/dev/null ;;
 		windows) pkg_install mingw-w64-x86_64-gcc ;;
 	esac
 	if has x86_64-w64-mingw32-gcc || has gcc; then
@@ -608,7 +612,7 @@ install_binwalk() {
 	echo "$ST_RUNNING" > "$TMPDIR_PIRE/binwalk.status"
 	case "$OS" in
 		debian|fedora|arch|suse) pkg_install binwalk ;;
-		macos) brew install binwalk </dev/null 2>/dev/null ;;
+		macos) pkg_install binwalk 2>/dev/null ;;
 		windows)
 			if command -v python3 >/dev/null 2>&1; then
 				python3 -m pip install --user binwalk </dev/null 2>&1 | tail -3
@@ -654,7 +658,7 @@ install_jadx() {
 			fi
 			;;
 		macos)
-			brew install jadx </dev/null 2>/dev/null
+			pkg_install jadx 2>/dev/null
 			;;
 	esac
 	if has jadx; then
@@ -670,7 +674,7 @@ install_ilspy() {
 		debian|fedora|arch|suse)
 			pkg_install dotnet-sdk-8.0 2>/dev/null || pkg_install dotnet-sdk 2>/dev/null || true
 			if has dotnet 2>/dev/null; then
-				dotnet tool install -g ilspycmd </dev/null 2>/dev/null
+				run_with_timeout dotnet tool install -g ilspycmd </dev/null 2>/dev/null
 			fi
 			# Fallback: mono-utils provides monodis
 			if ! has ilspycmd 2>/dev/null && ! has monodis 2>/dev/null; then
@@ -678,9 +682,9 @@ install_ilspy() {
 			fi
 			;;
 		macos)
-			brew install --cask dotnet-sdk </dev/null 2>/dev/null || true
+			pkg_install dotnet-sdk 2>/dev/null || true
 			if has dotnet 2>/dev/null; then
-				dotnet tool install -g ilspycmd </dev/null 2>/dev/null
+				run_with_timeout dotnet tool install -g ilspycmd </dev/null 2>/dev/null
 			fi
 			;;
 	esac
@@ -699,8 +703,8 @@ install_ghidra() {
 			if has java 2>/dev/null; then
 				GHIDRA_VER="11.1.2"
 				GHIDRA_DATE="20240709"
-				curl -fsSL "https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_${GHIDRA_VER}_build/ghidra_${GHIDRA_VER}_PUBLIC_${GHIDRA_DATE}.zip" -o /tmp/ghidra.zip 2>/dev/null
-				if [ -f /tmp/ghidra.zip ]; then
+				run_with_timeout curl -fsSL "https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_${GHIDRA_VER}_build/ghidra_${GHIDRA_VER}_PUBLIC_${GHIDRA_DATE}.zip" -o /tmp/ghidra.zip 2>/dev/null
+				if [ -f /tmp/ghidra.zip ] && [ -s /tmp/ghidra.zip ]; then
 					sudo unzip -q -o /tmp/ghidra.zip -d /opt/ </dev/null 2>/dev/null
 					sudo ln -sf /opt/ghidra_${GHIDRA_VER}_PUBLIC/ghidraRun /usr/local/bin/ghidra 2>/dev/null
 					rm -f /tmp/ghidra.zip
@@ -709,13 +713,13 @@ install_ghidra() {
 			;;
 		macos)
 			# Install JDK first (Ghidra requires Java 17+)
-			brew install --cask temurin </dev/null 2>/dev/null || brew install openjdk </dev/null 2>/dev/null || true
+			pkg_install temurin 2>/dev/null || pkg_install openjdk 2>/dev/null || true
 			GHIDRA_VER="11.1.2"
 			GHIDRA_DATE="20240709"
 			GHIDRA_URL="https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_${GHIDRA_VER}_build/ghidra_${GHIDRA_VER}_PUBLIC_${GHIDRA_DATE}.zip"
 			GHIDRA_DIR="$HOME/.local/share/ghidra"
-			curl -fsSL "$GHIDRA_URL" -o /tmp/ghidra.zip 2>/dev/null
-			if [ -f /tmp/ghidra.zip ]; then
+			run_with_timeout curl -fsSL "$GHIDRA_URL" -o /tmp/ghidra.zip 2>/dev/null
+			if [ -f /tmp/ghidra.zip ] && [ -s /tmp/ghidra.zip ]; then
 				mkdir -p "$GHIDRA_DIR" 2>/dev/null
 				unzip -q -o /tmp/ghidra.zip -d "$GHIDRA_DIR" 2>/dev/null
 				GHIDRA_BIN=$(find "$GHIDRA_DIR" -name ghidraRun -type f 2>/dev/null | head -1)
@@ -738,7 +742,7 @@ install_yara() {
 	echo "$ST_RUNNING" > "$TMPDIR_PIRE/yara.status"
 	case "$OS" in
 		debian|fedora|arch|suse) pkg_install yara ;;
-		macos) brew install yara </dev/null 2>/dev/null ;;
+		macos) pkg_install yara 2>/dev/null ;;
 		*) pip_install yara-python ;;
 	esac
 	# Always install yara-python — pire uses the Python module, not the CLI
