@@ -1,6 +1,6 @@
 # pire
 
-Reverse-engineering agent. Give it a binary, URL, or directory and it figures out what to do. It can triage, decompile, document, reimplement, or whatever the task calls for — not locked to one workflow.
+Reverse-engineering agent. Give it a binary, URL, or directory and it figures out what to do. It can triage, decompile, document, reimplement, or whatever the task calls for.
 
 ## Quick start
 
