@@ -667,6 +667,10 @@ install_ilspy() {
 			if has dotnet 2>/dev/null; then
 				dotnet tool install -g ilspycmd </dev/null 2>/dev/null
 			fi
+			# Fallback: mono-utils provides monodis
+			if ! has ilspycmd 2>/dev/null && ! has monodis 2>/dev/null; then
+				pkg_install mono-devel 2>/dev/null || true
+			fi
 			;;
 		macos)
 			brew install --cask dotnet-sdk </dev/null 2>/dev/null || true
@@ -675,7 +679,7 @@ install_ilspy() {
 			fi
 			;;
 	esac
-	if has dotnet 2>/dev/null; then
+	if has ilspycmd 2>/dev/null || has monodis 2>/dev/null || has dotnet 2>/dev/null; then
 		echo "$ST_DONE" > "$TMPDIR_PIRE/ilspy.status"
 	else
 		echo "$ST_FAILED" > "$TMPDIR_PIRE/ilspy.status"
@@ -716,7 +720,9 @@ install_yara() {
 		macos) brew install yara </dev/null 2>/dev/null ;;
 		*) pip_install yara-python ;;
 	esac
-	if has yara; then
+	# Always install yara-python — pire uses the Python module, not the CLI
+	pip_install yara-python 2>/dev/null
+	if has yara || python3 -c "import yara" 2>/dev/null; then
 		echo "$ST_DONE" > "$TMPDIR_PIRE/yara.status"
 	else
 		echo "$ST_FAILED" > "$TMPDIR_PIRE/yara.status"
@@ -923,7 +929,7 @@ if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/package.json" ]; then
 
 	# Build pi-tui (dist/ is gitignored, must be built locally)
 	log_step "Building TUI framework..."
-	( cd "$SCRIPT_DIR/packages/tui" && npx tsc -p tsconfig.build.json 2>/dev/null || npx tsgo -p tsconfig.build.json 2>/dev/null || log_warn "TUI build had issues" )
+	( cd "$SCRIPT_DIR/packages/tui" && npx tsc -p tsconfig.build.json >/dev/null 2>&1 || npx tsgo -p tsconfig.build.json >/dev/null 2>&1 || log_warn "TUI build had issues" )
 	if [ -f "$SCRIPT_DIR/packages/tui/dist/index.js" ]; then
 		log_done "TUI framework built"
 	else

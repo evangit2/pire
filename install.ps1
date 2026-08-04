@@ -377,10 +377,9 @@ switch ($Component) {
             "scoop"  { Lock-Pkg; scoop install yara 2>&1 | Out-Null; Unlock-Pkg }
         }
         Refresh-Path
-        if (-not (Has-Cmd "yara")) {
-            Run-Pip "yara-python"
-        }
-        $ok = Has-Cmd "yara"
+        # Always install yara-python — pire uses the Python module, not the CLI
+        Run-Pip "yara-python"
+        $ok = (Has-Cmd "yara") -or ($LASTEXITCODE -eq 0)
     }
     "volatility" {
         Run-Pip "volatility3"
