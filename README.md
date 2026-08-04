@@ -4,7 +4,7 @@ Reverse-engineering agent. Give it a binary, URL, or directory and it figures ou
 
 ## Quick start
 
-**Linux/macOS:**
+**Linux/macOS/WSL:**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/evangit2/pire/main/install.sh | sh
 ```
