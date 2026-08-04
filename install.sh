@@ -289,12 +289,12 @@ fi
 # ── Package Manager Abstraction ───────────────────────────────
 pkg_install() {
 	case "$PKG_MGR" in
-		apt)    sudo apt-get install -y -qq "$@" >/dev/null 2>&1 ;;
-		dnf)    sudo dnf install -y -q "$@" >/dev/null 2>&1 ;;
-		pacman) sudo pacman -S --noconfirm --needed "$@" >/dev/null 2>&1 ;;
-		zypper) sudo zypper install -y -q "$@" >/dev/null 2>&1 ;;
-		apk)    sudo apk add -q "$@" >/dev/null 2>&1 ;;
-		brew)   brew install "$@" >/dev/null 2>&1 ;;
+		apt)    sudo apt-get install -y -qq "$@" </dev/null >/dev/null 2>&1 ;;
+		dnf)    sudo dnf install -y -q "$@" </dev/null >/dev/null 2>&1 ;;
+		pacman) sudo pacman -S --noconfirm --needed "$@" </dev/null >/dev/null 2>&1 ;;
+		zypper) sudo zypper install -y -q "$@" </dev/null >/dev/null 2>&1 ;;
+		apk)    sudo apk add -q "$@" </dev/null >/dev/null 2>&1 ;;
+		brew)   brew install "$@" </dev/null >/dev/null 2>&1 ;;
 		*)      log_warn "Unknown package manager for: $*" ;;
 	esac
 }
@@ -311,7 +311,7 @@ pip_install() {
 		pip install --user -q "$@" </dev/null 2>/dev/null || log_warn "pip install failed: $*"
 	else
 		# Try to bootstrap pip via ensurepip, then retry
-		if python3 -m ensurepip --user >/dev/null 2>&1; then
+		if python3 -m ensurepip --user </dev/null >/dev/null 2>&1; then
 			python3 -m pip install --user -q "$@" </dev/null 2>/dev/null || log_warn "pip install failed: $*"
 		else
 			log_warn "pip not found, skipping: $*"
@@ -325,11 +325,11 @@ log_section "Core Components"
 case "$OS" in
 	debian)
 		log_step "Updating package index..."
-		sudo apt-get update -qq >/dev/null 2>&1
+		sudo apt-get update -qq </dev/null >/dev/null 2>&1
 		log_step "Installing core packages..."
 		pkg_install nodejs npm git build-essential radare2 binutils file python3-pip python3-venv
 		# Bootstrap pip if apt didn't provide it
-		python3 -m pip --version >/dev/null 2>&1 || python3 -m ensurepip --user >/dev/null 2>&1
+		python3 -m pip --version >/dev/null 2>&1 || python3 -m ensurepip --user </dev/null >/dev/null 2>&1
 		;;
 	fedora)
 		log_step "Installing core packages..."
@@ -362,19 +362,19 @@ case "$OS" in
 			ubuntu|debian|linuxmint|pop)
 				OS="debian"; PKG_MGR="apt"
 				log_step "Updating package index..."
-				sudo apt-get update -qq >/dev/null 2>&1
+				sudo apt-get update -qq </dev/null >/dev/null 2>&1
 				log_step "Installing core packages..."
 				pkg_install nodejs npm git build-essential radare2 binutils file
 				;;
-			fedora|rhel|centos|rocky|alma)
+				fedora|rhel|centos|rocky|alma)
 				OS="fedora"; PKG_MGR="dnf"
 				log_step "Installing core packages..."
 				pkg_install nodejs npm git gcc make radare2 binutils file
 				;;
-			*)
+				*)
 				OS="debian"; PKG_MGR="apt"
 				log_step "Updating package index..."
-				sudo apt-get update -qq >/dev/null 2>&1
+				sudo apt-get update -qq </dev/null >/dev/null 2>&1
 				log_step "Installing core packages..."
 				pkg_install nodejs npm git build-essential radare2 binutils file
 				;;
@@ -396,12 +396,12 @@ if [ "$NODE_VER" -lt 22 ] 2>/dev/null; then
 		debian)
 			# NodeSource setup for Node.js 22
 			curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - >/dev/null 2>&1
-			sudo apt-get install -y -qq nodejs >/dev/null 2>&1
+			sudo apt-get install -y -qq nodejs </dev/null >/dev/null 2>sudo apt-get install -y -qq nodejs >/dev/null 2>&11
 			;;
 		fedora)
 			# NodeSource RPM for Node.js 22
 			curl -fsSL https://rpm.nodesource.com/setup_22.x | sudo bash - >/dev/null 2>&1
-			sudo dnf install -y -q nodejs >/dev/null 2>&1
+			sudo dnf install -y -q nodejs </dev/null >/dev/null 2>sudo dnf install -y -q nodejs >/dev/null 2>&11
 			;;
 		arch|windows)
 			pkg_install nodejs 2>/dev/null
@@ -514,7 +514,7 @@ if [ "$INSTALL_JADX" = "1" ]; then
 				log_step "Downloading JADX v1.5.0..."
 				JADX_VER="1.5.0"
 				curl -fsSL "https://github.com/skylot/jadx/releases/download/v${JADX_VER}/jadx-${JADX_VER}.zip" -o /tmp/jadx.zip 2>/dev/null
-				sudo mkdir -p /opt/jadx && sudo unzip -q -o /tmp/jadx.zip -d /opt/jadx 2>/dev/null
+				sudo mkdir -p /opt/jadx && sudo unzip -q -o /tmp/jadx.zip -d /opt/jadx </dev/null 2>/dev/null
 				sudo ln -sf /opt/jadx/bin/jadx /usr/local/bin/jadx 2>/dev/null
 				sudo ln -sf /opt/jadx/bin/jadx-gui /usr/local/bin/jadx-gui 2>/dev/null
 				rm -f /tmp/jadx.zip
@@ -565,7 +565,7 @@ if [ "$INSTALL_GHIDRA" = "1" ]; then
 				curl -fsSL "https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_${GHIDRA_VER}_build/ghidra_${GHIDRA_VER}_PUBLIC_${GHIDRA_DATE}.zip" -o /tmp/ghidra.zip 2>/dev/null
 				if [ -f /tmp/ghidra.zip ]; then
 					log_step "Extracting..."
-					sudo unzip -q -o /tmp/ghidra.zip -d /opt/ 2>/dev/null
+					sudo unzip -q -o /tmp/ghidra.zip -d /opt/ </dev/null 2>/dev/null
 					sudo ln -sf /opt/ghidra_${GHIDRA_VER}_PUBLIC/ghidraRun /usr/local/bin/ghidra 2>/dev/null
 					rm -f /tmp/ghidra.zip
 					log_done "Ghidra installed to /opt/ghidra_${GHIDRA_VER}_PUBLIC"
