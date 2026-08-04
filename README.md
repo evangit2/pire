@@ -139,24 +139,20 @@ export PIRE_MODEL="your-preferred-model"
 
 ## Usage
 
-### Interactive TUI
-
 ```bash
 pire
 ```
 
-Terminal chat interface. Load a binary with `:load <path>`.
+Terminal chat interface. Load a binary with `:load <path>` or just mention a path in chat.
 
-### Autonomous reimplementation
+For autonomous reimplementation with deadlines:
 
 ```bash
-pire <binary.exe>
+pire-reimpl <binary.exe>
+pire-reimpl <binary.exe> --task "extract all strings and find C2 URLs"
 ```
 
-Runs the full RE pipeline. Output files go in the binary's directory:
-
-- `analysis.md` — analysis of the binary's behavior
-- `reimpl.c` — C source reimplementation
+Output files go in the binary's directory (`analysis.md`, `reimpl.c`).
 
 ## Tools
 
@@ -203,39 +199,18 @@ Ran pire against [**ckormanyos/xxd**](https://github.com/ckormanyos/xxd) v1.2 �
 
 - **Binary**: `xxd.exe` — 21KB PE32+ executable, MSVC-compiled, 68 functions, 173 strings
 - **Source**: 1,188 lines of C (available at the upstream repo for ground-truth verification)
-- **Complexity**: Multiple output modes (hex dump, plain hex, C include, binary digits), 15+ command-line flags with interacting behavior (`-l`, `-g`, `-c`, `-s`, `-p`, `-i`, `-b`, `-r`, `-e`, `-E`, `-a`, `-u`, `-d`, `-o`, `-n`)
+- **Complexity**: Multiple output modes (hex dump, plain hex, C include, binary digits), 15+ command-line flags with interacting behavior
 
 ### How pire was invoked
 
-```bash
-WINEPREFIX=~/.wine64 npx tsx packages/re-agent/src/pire-reimpl.ts targets/xxd/xxd.exe
+```
+pire
 ```
 
-The agent gets the binary path and an 80-turn budget.
+Then in the chat:
+> disassemble targets/xxd/xxd.exe and reimplement it in C
 
-### The prompt
-
-System prompt defines a 7-phase workflow:
-
-1. **Triage** (turns 1–5): Run `filetype`, `strings`, `r2` to understand the binary
-2. **Black-box testing** (turns 5–15): Run the binary with various inputs under Wine, observe outputs
-3. **Deep analysis** (turns 10–25): Disassemble key functions, understand the algorithm
-4. **Write analysis.md** (by turn 25): Document findings
-5. **Write reimpl.c** (by turn 30): Write a C source file replicating the binary's behavior
-6. **Test** (turns 30+): Compile with `gcc` and compare outputs against the original
-7. **Iterate** (remaining turns): Fix and retest
-
-Deadlines:
-- Turn 25: Must write `analysis.md`
-- Turn 30: Must write `reimpl.c`
-- Turn 40: Non-`write_file` tool calls are blocked
-- Turn 80: Final deadline
-
-Prompt guidance:
-- Match CRLF line endings (`\r\n`) since Windows binaries produce them
-- Match exit codes exactly
-- If SIMD/SSE instructions are found, use black-box testing rather than tracing `xmm` registers
-- Focus on behavior, not instruction-for-instruction matching
+The agent gets the binary path and runs autonomously.
 
 ### What the agent did (80 turns)
 
@@ -322,30 +297,18 @@ pire/
 
 ## How it works
 
-LLM loop with tool-call deadlines:
-
-1. **Turns 1-25**: Triage, black-box testing, disassembly, decompilation
-2. **Turn 25**: Soft deadline — write `analysis.md`
-3. **Turn 30**: Soft deadline — write `reimpl.c`
-4. **Turn 40**: Hard deadline — non-`write_file` tool calls are blocked
-5. **Turns 40-80**: Compile, test, iterate
-6. **Turn 80**: Final deadline
-
-Prompt guidance covers SIMD/SSE handling, CRLF matching, exit codes, and error message matching.
+LLM loop with tool calls. The agent picks tools based on the task, runs them, and iterates. In autonomous mode (reimplementation), it has an 80-turn budget with deadlines to ensure output files get written.
 
 ## Token efficiency
 
-~5,000 tokens initial input per chat session:
+~4,000 tokens initial input per chat session:
 
 | Component | Tokens |
 |----------|--------|
-| System prompt | ~1,100 |
+| System prompt | ~250 |
 | Tool schemas (36 tools) | ~3,800 |
-| TUI context | ~150 |
-| **Total initial input** | **~5,000** |
+| **Total initial input** | **~4,000** |
 | Output cap (`max_tokens`) | 8,192 |
-
-Comparable agentic frameworks typically run 15,000–30,000+ input tokens per message.
 
 ## License
 
