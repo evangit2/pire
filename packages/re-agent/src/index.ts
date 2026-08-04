@@ -456,7 +456,7 @@ const liefTool: AgentTool<{ path: string; action: string }> = {
 		};
 		const action = actions[params.action] ?? 'print("Unknown action")';
 		const script = `import lief, json, sys; b=lief.parse("${params.path}"); ${action}`;
-		return textResult(run(`python3 -c '${script.replace(/'/g, "'\\''")}'`, { timeout: 15000 }));
+		return textResult(run(`python3 -c '${script.replace(/'/g, "'\\''")}' 2>/dev/null`, { timeout: 15000 }));
 	},
 };
 
@@ -478,7 +478,7 @@ const angrTool: AgentTool<{ path: string; action: string; target?: string }> = {
 		} else {
 			script = `import angr; p=angr.Project("${params.path}", auto_load_libs=False); print(f"Arch: {p.arch} Entry: {p.entry:#x} PIE: {p.loader.main_object.pic}")`;
 		}
-		return textResult(run(`python3 -c '${script.replace(/'/g, "'\\''")}'`, { timeout: 120000, maxBuffer: 20 * 1024 * 1024 }));
+		return textResult(run(`python3 -c '${script.replace(/'/g, "'\\''")}' 2>/dev/null`, { timeout: 120000, maxBuffer: 20 * 1024 * 1024 }));
 	},
 };
 
@@ -499,7 +499,7 @@ const capstoneTool: AgentTool<{ path: string; offset?: number; count?: number; a
 		const arch = params.arch ?? "x86";
 		const mode = params.mode ?? "64";
 		const script = `from capstone import *; import struct; data=open("${params.path}","rb").read()[${offset}:${offset}+${count*15}]; md=Cs(CS_ARCH_${arch.toUpperCase()},CS_MODE_${mode=="64"?"64":mode=="32"?"32":"ARM"}); [print(f"0x{i.address:x}: {i.mnemonic} {i.op_str}") for i in md.disasm(data,${offset})][:${count}]`;
-		return textResult(run(`python3 -c '${script.replace(/'/g, "'\\''")}'`, { timeout: 15000 }));
+		return textResult(run(`python3 -c '${script.replace(/'/g, "'\\''")}' 2>/dev/null`, { timeout: 15000 }));
 	},
 };
 
@@ -516,7 +516,7 @@ const keystoneTool: AgentTool<{ assembly: string; arch?: string; mode?: string }
 		const arch = params.arch ?? "x86";
 		const mode = params.mode ?? "64";
 		const script = `from keystone import *; ks=Ks(KS_ARCH_${arch.toUpperCase()},KS_MODE_${mode=="64"?"64":mode=="32"?"32":"ARM"}); encoding,count=ks.asm("${params.assembly.replace(/"/g, '\\"')}"); print(" ".join(f"{b:02x}" for b in encoding))`;
-		return textResult(run(`python3 -c '${script.replace(/'/g, "'\\''")}'`, { timeout: 10000 }));
+		return textResult(run(`python3 -c '${script.replace(/'/g, "'\\''")}' 2>/dev/null`, { timeout: 10000 }));
 	},
 };
 
@@ -537,7 +537,13 @@ const unicornTool: AgentTool<{ path: string; entry?: string; arch?: string; mode
 		const steps = params.steps ?? 1000;
 		const entry = params.entry ?? "0";
 		const script = `from unicorn import *; from unicorn.x86_const import *; import struct; data=open("${params.path}","rb").read(); uc=Uc(UC_ARCH_${arch.toUpperCase()},UC_MODE_${mode=="64"?"64":mode=="32"?"32":"ARM"}); uc.mem_map(0x10000, 2*1024*1024); uc.mem_write(0x10000, data); uc.emu_start(0x10000+int("${entry}",16) if "${entry}" else 0x10000, 0x10000+len(data), count=${steps}); rax=uc.reg_read(UC_X86_REG_RAX); print(f"Emulated ${steps} steps. RAX={rax:#x}")`;
-		return textResult(run(`python3 -c '${script.replace(/'/g, "'\\''")}'`, { timeout: 30000 }));
+		try {
+			return textResult(run(`python3 -c '${script.replace(/'/g, "'\\''")}' 2>/dev/null`, { timeout: 30000 }));
+		} catch (e: any) {
+			const stderr = e.stderr ? e.stderr.toString() : "";
+			const errLine = stderr.split("\n").find((l: string) => l.includes("Error:") || l.includes("error:")) || e.message;
+			return textResult(`Unicorn emulation failed: ${errLine.trim()}`);
+		}
 	},
 };
 
@@ -553,7 +559,7 @@ const yaraTool: AgentTool<{ path: string; rule: string }> = {
 		const tmpRule = `/tmp/pire_yara_${Date.now()}.yar`;
 		writeFileSync(tmpRule, params.rule);
 		try {
-			const result = run(`python3 -c "import yara; r=yara.compile('${tmpRule}'); m=r.match('${params.path}'); print('\\n'.join(f'{s}: {t}' for m2 in m for s,t in [(m2.rule, 'matched')]) if m else print('No matches'))"`, { timeout: 15000 });
+			const result = run(`python3 -c "import yara; r=yara.compile('${tmpRule}'); m=r.match('${params.path}'); print('\\\\n'.join(f'{s}: {t}' for m2 in m for s,t in [(m2.rule, 'matched')]) if m else print('No matches'))" 2>/dev/null`, { timeout: 15000 });
 			return textResult(result);
 		} finally {
 			try { run(`rm -f ${tmpRule}`); } catch {}
@@ -612,7 +618,13 @@ const volatilityTool: AgentTool<{ memdump: string; plugin: string; extraArgs?: s
 		const vol = which("vol") ?? which("volatility3");
 		if (!vol && !pythonModule("volatility3")) return textResult("volatility3 not installed. Install: pip install volatility3");
 		const cmd = vol ?? "python3 -m volatility3";
-		return textResult(run(`${cmd} -f ${shellEscape(params.memdump)} ${params.plugin} ${params.extraArgs ?? ""}`, { timeout: 60000 }));
+		try {
+			return textResult(run(`${cmd} -f ${shellEscape(params.memdump)} ${params.plugin} ${params.extraArgs ?? ""} 2>/dev/null`, { timeout: 60000 }));
+		} catch (e: any) {
+			const stderr = e.stderr ? e.stderr.toString() : "";
+			const errLine = stderr.split("\n").find((l: string) => l.includes("Error") || l.includes("error")) || e.message;
+			return textResult(`Volatility failed: ${errLine.trim()}`);
+		}
 	},
 };
 
@@ -861,7 +873,7 @@ else:
     elif e < 3.0: print("NOTE: low entropy — mostly text/structured data")
 `;
 		try {
-			const out = run(`python3 -c '${script.replace(/'/g, "'\\''")}'`, { timeout: 30000 });
+			const out = run(`python3 -c '${script.replace(/'/g, "'\\''")}' 2>/dev/null`, { timeout: 30000 });
 			return textResult(out);
 		} catch (e: any) {
 			return textResult(`Entropy calculation failed: ${e.message}`);
@@ -1080,7 +1092,7 @@ const patchTool: AgentTool<{ path: string; offset: string; bytes: string; backup
 		const backupPath = params.path + ".bak";
 
 		if (backup && !existsSync(backupPath)) {
-			try { run(`cp ${shellEscape(params.path)} ${shellEscape(backupPath)}`); } catch {}
+			try { run(`cp ${shellEscape(params.path)} ${shellEscape(backupPath)} 2>/dev/null`); } catch {}
 		}
 
 		const py = which("python3");
@@ -1101,10 +1113,13 @@ with open(path, "r+b") as f:
     print(f"New:      {data.hex()}")
 `;
 		try {
-			const out = run(`python3 -c '${script.replace(/'/g, "'\\''")}'`, { timeout: 10000 });
+			const out = run(`python3 -c '${script.replace(/'/g, "'\\''")}' 2>/dev/null`, { timeout: 10000 });
 			return textResult(out, { backupPath: backup ? backupPath : undefined });
 		} catch (e: any) {
-			return textResult(`Patch failed: ${e.message}`);
+			// Extract just the error line, not the full traceback
+			const stderr = e.stderr ? e.stderr.toString() : "";
+			const errLine = stderr.split("\n").find((l: string) => l.includes("Error:") || l.includes("error:")) || e.message;
+			return textResult(`Patch failed: ${errLine.trim()}`);
 		}
 	},
 };
@@ -1144,7 +1159,7 @@ else:
     print("No matches found")
 `;
 		try {
-			const out = run(`python3 -c '${script.replace(/'/g, "'\\''")}'`, { timeout: 30000 });
+			const out = run(`python3 -c '${script.replace(/'/g, "'\\''")}' 2>/dev/null`, { timeout: 30000 });
 			return textResult(out);
 		} catch (e: any) {
 			return textResult(`Search failed: ${e.message}`);

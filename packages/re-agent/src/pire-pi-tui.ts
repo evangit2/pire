@@ -641,8 +641,6 @@ export class PirePiTUI {
 					this.messages.push({ role: "tool", tool_call_id: tc.id, content: resultText });
 				}
 			}
-
-			this.statusBar.setTarget(this.loadedTarget ? basename(this.loadedTarget) : "none");
 		} catch (e: any) {
 			this.transcript.add("error", e.message);
 		} finally {
