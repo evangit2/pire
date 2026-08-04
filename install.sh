@@ -476,6 +476,10 @@ case "$OS" in
 		pkg_install node radare2 binutils git
 		# Install coreutils for gtimeout (needed for pip timeout)
 		pkg_install coreutils 2>/dev/null || true
+		# Install cmake for keystone-engine (no arm64 wheel on macOS)
+		pkg_install cmake 2>/dev/null || true
+		# Ensure Python is available (node formula may pull it in, but not always)
+		pkg_install python@3 2>/dev/null || true
 		;;
 	wsl)
 		. /etc/os-release 2>/dev/null
