@@ -105,6 +105,7 @@ Usage:
   pire update               Update to latest version from GitHub
   pire update reverse       Roll back to previous version
   pire model                Interactive model/provider configurator
+  pire uninstall            Completely uninstall pire and optionally all RE packages
   pire --tools              List available RE tools
   pire --skills             List available RE skills
   pire --probe              Probe system for installed tools
@@ -161,6 +162,10 @@ switch (args[0]) {
 	case "model":
 		// Hand off to pire-model.ts
 		await import("./pire-model.js");
+		break;
+	case "uninstall":
+		// Hand off to pire-uninstall.ts
+		await import("./pire-uninstall.js");
 		break;
 	default:
 		if (args[0]?.startsWith("-") && !["-cli", "--cli", "-ansi", "--ansi"].includes(args[0])) {
