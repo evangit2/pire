@@ -216,19 +216,14 @@ if ($Components.Count -gt 0) {
     Write-Host "  Installing $($Components.Count) components in parallel..."
     Write-Host ""
 
-    # ── Build self-contained install scripts for each component ──
-    # Each script is a standalone .ps1 file that writes "running" /
-    # "done" / "failed" to a status file.  This avoids the runspace
-    # isolation problem with Start-Job (parent functions / variables
-    # are not available inside background jobs).
+    # ── Parallel install via worker script ────────────────────
+    # Write a single worker .ps1 that takes component name + pkgmgr +
+    # tmpdir as args. Each component runs as a separate powershell.exe
+    # process, writing status to a temp file. This avoids the runspace
+    # isolation problem with Start-Job.
 
     $TmpDir = Join-Path $env:TEMP "pire-install-$(Get-Random)"
     New-Item -ItemType Directory -Force -Path $TmpDir | Out-Null
-
-    # Helper: write status to file
-    function Write-Status($Key, $Status) {
-        Set-Content -Path (Join-Path $TmpDir "$Key.status") -Value $Status -NoNewline
-    }
 
     # Helper: read status from file
     function Read-Status($Key) {
@@ -237,235 +232,162 @@ if ($Components.Count -gt 0) {
         return "pending"
     }
 
-    # Helper: check if command exists (for use inside scripts)
-    function Test-Cmd($Name) {
-        return [bool](Get-Command $Name -ErrorAction SilentlyContinue)
-    }
+    # Write the worker script to temp
+    $workerPath = Join-Path $TmpDir "worker.ps1"
+    @'
+param(
+    [string]$Component,
+    [string]$PkgMgr,
+    [string]$TmpDir
+)
+$ErrorActionPreference = "Continue"
+$ProgressPreference = "SilentlyContinue"
 
-    # ── Per-component install scripts ──────────────────────────
+$statusFile = Join-Path $TmpDir "$Component.status"
+Set-Content -Path $statusFile -Value "running" -NoNewline
 
-    $ScriptWine = @"
-`$ErrorActionPreference = 'Continue'
-`$ProgressPreference = 'SilentlyContinue'
-Set-Content -Path '$TmpDir\wine.status' -Value 'running' -NoNewline
-switch ('$PkgMgr') {
-    'choco'  { choco install wine -y --no-progress 2>&1 | Out-Null }
-    'winget' { Write-Host 'Wine install on Windows via winget not automated.' }
-    'scoop'  { scoop install wine 2>&1 | Out-Null }
+function Refresh-Path {
+    $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("PATH","User")
 }
-`$ok = [bool](Get-Command wine -ErrorAction SilentlyContinue)
-if (`$ok) { Set-Content -Path '$TmpDir\wine.status' -Value 'done' -NoNewline }
-else      { Set-Content -Path '$TmpDir\wine.status' -Value 'failed' -NoNewline }
-"@
 
-    $ScriptMinGW = @"
-`$ErrorActionPreference = 'Continue'
-`$ProgressPreference = 'SilentlyContinue'
-Set-Content -Path '$TmpDir\mingw.status' -Value 'running' -NoNewline
-switch ('$PkgMgr') {
-    'choco'  { choco install mingw -y --no-progress 2>&1 | Out-Null }
-    'winget' { winget install --id MartinStorsjo.LLVM-MinGW.UCRT -e --accept-source-agreements --accept-package-agreements 2>&1 | Out-Null }
-    'scoop'  { scoop install mingw 2>&1 | Out-Null }
-}
-`$env:PATH = [System.Environment]::GetEnvironmentVariable('PATH','Machine') + ';' + [System.Environment]::GetEnvironmentVariable('PATH','User')
-`$ok = [bool](Get-Command gcc -ErrorAction SilentlyContinue)
-if (`$ok) { Set-Content -Path '$TmpDir\mingw.status' -Value 'done' -NoNewline }
-else      { Set-Content -Path '$TmpDir\mingw.status' -Value 'failed' -NoNewline }
-"@
+function Has-Cmd($n) { [bool](Get-Command $n -ErrorAction SilentlyContinue) }
 
-    $ScriptGDB = @"
-`$ErrorActionPreference = 'Continue'
-`$ProgressPreference = 'SilentlyContinue'
-Set-Content -Path '$TmpDir\gdb.status' -Value 'running' -NoNewline
-`$gdbOk = `$false
-switch ('$PkgMgr') {
-    'choco'  { choco install gdb -y --no-progress 2>&1 | Out-Null; `$gdbOk = [bool](Get-Command gdb -ErrorAction SilentlyContinue) }
-    'winget' {
-        if (Get-Command pacman -ErrorAction SilentlyContinue) {
-            pacman -S --noconfirm --needed mingw-w64-x86_64-gdb 2>&1 | Out-Null
-            `$gdbOk = [bool](Get-Command gdb -ErrorAction SilentlyContinue)
+$ok = $false
+
+switch ($Component) {
+    "wine" {
+        switch ($PkgMgr) {
+            "choco"  { choco install wine -y --no-progress 2>&1 | Out-Null }
+            "winget" { Write-Host "Wine install on Windows via winget not automated." }
+            "scoop"  { scoop install wine 2>&1 | Out-Null }
         }
-        if (-not `$gdbOk) {
-            Write-Host 'GDB not available via winget directly.'
-            Write-Host 'Install MSYS2 (https://www.msys2.org/) then run:'
-            Write-Host '  pacman -S mingw-w64-x86_64-gdb'
-        }
+        $ok = Has-Cmd "wine"
     }
-    'scoop'  { scoop install gdb 2>&1 | Out-Null; `$gdbOk = [bool](Get-Command gdb -ErrorAction SilentlyContinue) }
-}
-if (`$gdbOk) { Set-Content -Path '$TmpDir\gdb.status' -Value 'done' -NoNewline }
-else        { Set-Content -Path '$TmpDir\gdb.status' -Value 'failed' -NoNewline }
-"@
-
-    $ScriptBinwalk = @"
-`$ErrorActionPreference = 'Continue'
-Set-Content -Path '$TmpDir\binwalk.status' -Value 'running' -NoNewline
-if (Get-Command pip -ErrorAction SilentlyContinue) {
-    `$out = & pip install binwalk 2>&1
-    `$rc = `$LASTEXITCODE
-} else { `$rc = 1 }
-`$ok = [bool](Get-Command binwalk -ErrorAction SilentlyContinue)
-if (`$ok) { Set-Content -Path '$TmpDir\binwalk.status' -Value 'done' -NoNewline }
-else      { Set-Content -Path '$TmpDir\binwalk.status' -Value 'failed' -NoNewline }
-"@
-
-    $ScriptFrida = @"
-`$ErrorActionPreference = 'Continue'
-Set-Content -Path '$TmpDir\frida.status' -Value 'running' -NoNewline
-if (Get-Command pip -ErrorAction SilentlyContinue) {
-    `$out = & pip install frida-tools 2>&1
-    `$rc = `$LASTEXITCODE
-} else { `$rc = 1 }
-`$ok = [bool](Get-Command frida -ErrorAction SilentlyContinue) -or [bool](Get-Command frida-ps -ErrorAction SilentlyContinue)
-if (`$ok) { Set-Content -Path '$TmpDir\frida.status' -Value 'done' -NoNewline }
-else      { Set-Content -Path '$TmpDir\frida.status' -Value 'failed' -NoNewline }
-"@
-
-    $ScriptJADX = @"
-`$ErrorActionPreference = 'Continue'
-`$ProgressPreference = 'SilentlyContinue'
-Set-Content -Path '$TmpDir\jadx.status' -Value 'running' -NoNewline
-switch ('$PkgMgr') {
-    'choco'  { choco install jadx -y --no-progress 2>&1 | Out-Null }
-    'winget' { winget install --id JesseGallagher.jadx -e --accept-source-agreements --accept-package-agreements 2>&1 | Out-Null }
-    'scoop'  { scoop install jadx 2>&1 | Out-Null }
-}
-`$env:PATH = [System.Environment]::GetEnvironmentVariable('PATH','Machine') + ';' + [System.Environment]::GetEnvironmentVariable('PATH','User')
-`$ok = [bool](Get-Command jadx -ErrorAction SilentlyContinue)
-if (`$ok) { Set-Content -Path '$TmpDir\jadx.status' -Value 'done' -NoNewline }
-else      { Set-Content -Path '$TmpDir\jadx.status' -Value 'failed' -NoNewline }
-"@
-
-    $ScriptILSpy = @"
-`$ErrorActionPreference = 'Continue'
-`$ProgressPreference = 'SilentlyContinue'
-Set-Content -Path '$TmpDir\ilspy.status' -Value 'running' -NoNewline
-switch ('$PkgMgr') {
-    'choco'  { choco install dotnet-sdk -y --no-progress 2>&1 | Out-Null }
-    'winget' { winget install --id Microsoft.DotNet.SDK.8 -e --accept-source-agreements --accept-package-agreements 2>&1 | Out-Null }
-    'scoop'  { scoop install dotnet-sdk 2>&1 | Out-Null }
-}
-`$env:PATH = [System.Environment]::GetEnvironmentVariable('PATH','Machine') + ';' + [System.Environment]::GetEnvironmentVariable('PATH','User')
-`$ok = `$false
-if (Get-Command dotnet -ErrorAction SilentlyContinue) {
-    dotnet tool install -g ilspycmd 2>&1 | Out-Null
-    `$ok = `$true
-}
-if (`$ok) { Set-Content -Path '$TmpDir\ilspy.status' -Value 'done' -NoNewline }
-else      { Set-Content -Path '$TmpDir\ilspy.status' -Value 'failed' -NoNewline }
-"@
-
-    $ScriptGhidra = @"
-`$ErrorActionPreference = 'Continue'
-`$ProgressPreference = 'SilentlyContinue'
-Set-Content -Path '$TmpDir\ghidra.status' -Value 'running' -NoNewline
-switch ('$PkgMgr') {
-    'choco'  { choco install ghidra -y --no-progress 2>&1 | Out-Null }
-    'winget' {
-        `$ghidraDir = '`$env:LOCALAPPDATA\ghidra'
-        `$GHIDRA_VER = '11.1.2'
-        `$GHIDRA_DATE = '20240709'
-        `$url = "https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_`$(`$GHIDRA_VER)_build/ghidra_`$(`$GHIDRA_VER)_PUBLIC_`$(`$GHIDRA_DATE).zip"
-        `$zip = '`$env:TEMP\ghidra.zip'
-        try {
-            Invoke-WebRequest -Uri `$url -OutFile `$zip -UseBasicParsing
-            Expand-Archive -Path `$zip -DestinationPath `$ghidraDir -Force
-            Remove-Item `$zip
-            `$ghidraExe = Get-ChildItem "`$ghidraDir\*\ghidraRun.bat" -Recurse | Select-Object -First 1
-            if (`$ghidraExe) {
-                `$wrapperDir = '`$env:LOCALAPPDATA\bin'
-                New-Item -ItemType Directory -Force -Path `$wrapperDir | Out-Null
-                `$wrapperPath = "`$wrapperDir\ghidra.bat"
-                "@echo off`r`n`"`$(`$ghidraExe.FullName)`" %*" | Set-Content `$wrapperPath
-                if (`$env:PATH -notlike "*`$wrapperDir*") {
-                    [System.Environment]::SetEnvironmentVariable("PATH", "`$env:PATH;`$wrapperDir", "User")
-                    `$env:PATH += ";`$wrapperDir"
+    "mingw" {
+        switch ($PkgMgr) {
+            "choco"  { choco install mingw -y --no-progress 2>&1 | Out-Null }
+            "winget" { winget install --id MartinStorsjo.LLVM-MinGW.UCRT -e --accept-source-agreements --accept-package-agreements 2>&1 | Out-Null }
+            "scoop"  { scoop install mingw 2>&1 | Out-Null }
+        }
+        Refresh-Path
+        $ok = Has-Cmd "gcc"
+    }
+    "gdb" {
+        switch ($PkgMgr) {
+            "choco"  { choco install gdb -y --no-progress 2>&1 | Out-Null }
+            "winget" {
+                if (Has-Cmd "pacman") {
+                    pacman -S --noconfirm --needed mingw-w64-x86_64-gdb 2>&1 | Out-Null
+                }
+                if (-not (Has-Cmd "gdb")) {
+                    Write-Host "GDB not available via winget directly."
+                    Write-Host "Install MSYS2 (https://www.msys2.org/) then run:"
+                    Write-Host "  pacman -S mingw-w64-x86_64-gdb"
                 }
             }
-        } catch {
-            Write-Host "Ghidra download failed: `$_"
+            "scoop"  { scoop install gdb 2>&1 | Out-Null }
+        }
+        $ok = Has-Cmd "gdb"
+    }
+    "binwalk" {
+        if (Has-Cmd "pip") { & pip install binwalk 2>&1 | Out-Null }
+        $ok = Has-Cmd "binwalk"
+    }
+    "frida" {
+        if (Has-Cmd "pip") { & pip install frida-tools 2>&1 | Out-Null }
+        $ok = (Has-Cmd "frida") -or (Has-Cmd "frida-ps")
+    }
+    "jadx" {
+        switch ($PkgMgr) {
+            "choco"  { choco install jadx -y --no-progress 2>&1 | Out-Null }
+            "winget" { winget install --id JesseGallagher.jadx -e --accept-source-agreements --accept-package-agreements 2>&1 | Out-Null }
+            "scoop"  { scoop install jadx 2>&1 | Out-Null }
+        }
+        Refresh-Path
+        $ok = Has-Cmd "jadx"
+    }
+    "ilspy" {
+        switch ($PkgMgr) {
+            "choco"  { choco install dotnet-sdk -y --no-progress 2>&1 | Out-Null }
+            "winget" { winget install --id Microsoft.DotNet.SDK.8 -e --accept-source-agreements --accept-package-agreements 2>&1 | Out-Null }
+            "scoop"  { scoop install dotnet-sdk 2>&1 | Out-Null }
+        }
+        Refresh-Path
+        if (Has-Cmd "dotnet") {
+            dotnet tool install -g ilspycmd 2>&1 | Out-Null
+            $ok = $true
         }
     }
-    'scoop'  { scoop install ghidra 2>&1 | Out-Null }
-}
-`$env:PATH = [System.Environment]::GetEnvironmentVariable('PATH','Machine') + ';' + [System.Environment]::GetEnvironmentVariable('PATH','User')
-`$ok = [bool](Get-Command ghidra -ErrorAction SilentlyContinue)
-if (`$ok) { Set-Content -Path '$TmpDir\ghidra.status' -Value 'done' -NoNewline }
-else      { Set-Content -Path '$TmpDir\ghidra.status' -Value 'failed' -NoNewline }
-"@
-
-    $ScriptYara = @"
-`$ErrorActionPreference = 'Continue'
-`$ProgressPreference = 'SilentlyContinue'
-Set-Content -Path '$TmpDir\yara.status' -Value 'running' -NoNewline
-switch ('$PkgMgr') {
-    'choco'  { choco install yara -y --no-progress 2>&1 | Out-Null }
-    'winget' { Write-Host 'Yara not in winget -- trying pip...' }
-    'scoop'  { scoop install yara 2>&1 | Out-Null }
-}
-`$env:PATH = [System.Environment]::GetEnvironmentVariable('PATH','Machine') + ';' + [System.Environment]::GetEnvironmentVariable('PATH','User')
-if (-not [bool](Get-Command yara -ErrorAction SilentlyContinue)) {
-    if (Get-Command pip -ErrorAction SilentlyContinue) {
-        & pip install yara-python 2>&1 | Out-Null
+    "ghidra" {
+        switch ($PkgMgr) {
+            "choco"  { choco install ghidra -y --no-progress 2>&1 | Out-Null }
+            "winget" {
+                $ghidraDir = "$env:LOCALAPPDATA\ghidra"
+                $url = "https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_11.1.2_build/ghidra_11.1.2_PUBLIC_20240709.zip"
+                $zip = "$env:TEMP\ghidra.zip"
+                try {
+                    Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
+                    Expand-Archive -Path $zip -DestinationPath $ghidraDir -Force
+                    Remove-Item $zip
+                    $ghidraExe = Get-ChildItem "$ghidraDir\*\ghidraRun.bat" -Recurse | Select-Object -First 1
+                    if ($ghidraExe) {
+                        $wrapperDir = "$env:LOCALAPPDATA\bin"
+                        New-Item -ItemType Directory -Force -Path $wrapperDir | Out-Null
+                        $wrapperPath = "$wrapperDir\ghidra.bat"
+                        "@echo off`r`n`"$($ghidraExe.FullName)`" %*" | Set-Content $wrapperPath
+                        if ($env:PATH -notlike "*$wrapperDir*") {
+                            [System.Environment]::SetEnvironmentVariable("PATH", "$env:PATH;$wrapperDir", "User")
+                            $env:PATH += ";$wrapperDir"
+                        }
+                    }
+                } catch {
+                    Write-Host "Ghidra download failed: $_"
+                }
+            }
+            "scoop"  { scoop install ghidra 2>&1 | Out-Null }
+        }
+        Refresh-Path
+        $ok = Has-Cmd "ghidra"
+    }
+    "yara" {
+        switch ($PkgMgr) {
+            "choco"  { choco install yara -y --no-progress 2>&1 | Out-Null }
+            "winget" { Write-Host "Yara not in winget -- trying pip..." }
+            "scoop"  { scoop install yara 2>&1 | Out-Null }
+        }
+        Refresh-Path
+        if (-not (Has-Cmd "yara")) {
+            if (Has-Cmd "pip") { & pip install yara-python 2>&1 | Out-Null }
+        }
+        $ok = Has-Cmd "yara"
+    }
+    "volatility" {
+        if (Has-Cmd "pip") { & pip install volatility3 2>&1 | Out-Null }
+        $ok = (Has-Cmd "vol") -or (Has-Cmd "vol3")
+    }
+    "python" {
+        if (Has-Cmd "pip") { & pip install capstone keystone-engine unicorn angr lief 2>&1 | Out-Null }
+        try { python -c "import capstone" 2>&1 | Out-Null; $ok = $true } catch {}
     }
 }
-`$ok = [bool](Get-Command yara -ErrorAction SilentlyContinue)
-if (`$ok) { Set-Content -Path '$TmpDir\yara.status' -Value 'done' -NoNewline }
-else      { Set-Content -Path '$TmpDir\yara.status' -Value 'failed' -NoNewline }
-"@
 
-    $ScriptVolatility = @"
-`$ErrorActionPreference = 'Continue'
-Set-Content -Path '$TmpDir\volatility.status' -Value 'running' -NoNewline
-if (Get-Command pip -ErrorAction SilentlyContinue) {
-    `$out = & pip install volatility3 2>&1
-    `$rc = `$LASTEXITCODE
-} else { `$rc = 1 }
-`$ok = [bool](Get-Command vol -ErrorAction SilentlyContinue) -or [bool](Get-Command vol3 -ErrorAction SilentlyContinue)
-if (`$ok) { Set-Content -Path '$TmpDir\volatility.status' -Value 'done' -NoNewline }
-else      { Set-Content -Path '$TmpDir\volatility.status' -Value 'failed' -NoNewline }
-"@
-
-    $ScriptPython = @"
-`$ErrorActionPreference = 'Continue'
-Set-Content -Path '$TmpDir\python.status' -Value 'running' -NoNewline
-if (Get-Command pip -ErrorAction SilentlyContinue) {
-    `$out = & pip install capstone keystone-engine unicorn angr lief 2>&1
-    `$rc = `$LASTEXITCODE
-} else { `$rc = 1 }
-`$ok = `$false
-try { python -c "import capstone" 2>&1 | Out-Null; `$ok = `$true } catch {}
-if (`$ok) { Set-Content -Path '$TmpDir\python.status' -Value 'done' -NoNewline }
-else      { Set-Content -Path '$TmpDir\python.status' -Value 'failed' -NoNewline }
-"@
-
-    # Map component keys to their scripts
-    $ScriptMap = @{
-        "wine"       = $ScriptWine
-        "mingw"      = $ScriptMinGW
-        "gdb"        = $ScriptGDB
-        "binwalk"    = $ScriptBinwalk
-        "frida"      = $ScriptFrida
-        "jadx"       = $ScriptJADX
-        "ilspy"      = $ScriptILSpy
-        "ghidra"     = $ScriptGhidra
-        "yara"       = $ScriptYara
-        "volatility" = $ScriptVolatility
-        "python"     = $ScriptPython
-    }
+if ($ok) {
+    Set-Content -Path $statusFile -Value "done" -NoNewline
+} else {
+    Set-Content -Path $statusFile -Value "failed" -NoNewline
+}
+'@ | Set-Content -Path $workerPath -Encoding UTF8
 
     # Initialize all status files to "pending"
     foreach ($comp in $Components) {
         Set-Content -Path (Join-Path $TmpDir "$($comp.Key).status") -Value "pending" -NoNewline
     }
 
-    # Write each component script to a temp .ps1 file and launch it
+    # Launch each component as a separate powershell.exe process
     $processes = @()
     foreach ($comp in $Components) {
-        $scriptPath = Join-Path $TmpDir "$($comp.Key).ps1"
-        Set-Content -Path $scriptPath -Value $ScriptMap[$comp.Key] -Encoding UTF8
         $proc = Start-Process -FilePath "powershell.exe" `
-            -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $scriptPath `
+            -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $workerPath, "-Component", $comp.Key, "-PkgMgr", $PkgMgr, "-TmpDir", $TmpDir `
             -WindowStyle Hidden -PassThru
         $processes += @{ Proc=$proc; Name=$comp.Name; Key=$comp.Key }
     }
