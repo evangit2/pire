@@ -50,11 +50,11 @@ import chalk from "chalk";
 
 const BANNER = `
        ,--.               
- ,---. \`--',--.--. ,---.  
+ ,---. '--',--.--. ,---.  
 | .-. |,--.|  .--'| .-. : 
 | '-' '|  ||  |   \\   --. 
-|  |-' \`--'\`--'    \`----'  v${VERSION}
-\`--'                      
+|  |-' '--'--'    '----'  v${VERSION}
+'--'                      
 `;
 
 // ─── Double Ctrl+C to quit ─────────────────────────────────────
@@ -336,6 +336,12 @@ export class PirePiTUI {
 		this.input.setValue("");
 		this.ui.requestRender();
 
+		// Bare keywords that should quit without colon prefix
+		if (trimmed === "exit" || trimmed === "quit" || trimmed === "q") {
+			this.stop();
+			process.exit(0);
+		}
+
 		if (trimmed.startsWith(":")) {
 			await this.handleCommand(trimmed);
 			return;
@@ -526,7 +532,19 @@ export class PirePiTUI {
 						args.target = this.loadedTarget;
 					}
 
-					this.transcript.add("tool_call", `${tc.function.name}(${tc.function.arguments})`);
+					// Format tool call args for display
+					let displayArgs: string;
+					try {
+						const parsed = JSON.parse(tc.function.arguments);
+						displayArgs = JSON.stringify(parsed);
+					} catch {
+						displayArgs = tc.function.arguments;
+					}
+					// Truncate long args in the display
+					if (displayArgs.length > 200) {
+						displayArgs = displayArgs.slice(0, 197) + "...";
+					}
+					this.transcript.add("tool_call", `${tc.function.name}(${displayArgs})`);
 					this.ui.requestRender();
 
 					let resultText: string;

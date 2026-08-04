@@ -110,11 +110,11 @@ export class PireTUI {
 	async start() {
 		this.isActive = true;
 		this.push("info", `       ,--.               `);
-		this.push("info", ` ,---. \`--',--.--. ,---.  `);
+		this.push("info", ` ,---. '--',--.--. ,---.  `);
 		this.push("info", `| .-. |,--.|  .--'| .-. : `);
 		this.push("info", `| '-' '|  ||  |   \\   --. `);
-		this.push("info", `|  |-' \`--'\`--'    \`----'  v${VERSION}`);
-		this.push("info", `\`--'                      `);
+		this.push("info", `|  |-' '--'--'    '----'  v${VERSION}`);
+		this.push("info", `'--'                      `);
 		this.push("info", ``);
 		this.push("info", `Tell me what you need. I'll run the tools myself.`);
 
@@ -298,7 +298,7 @@ Pick the right tools for whatever the user is asking for. Don't follow a fixed w
 		const cmd = line.trim();
 		if (!cmd) { this.render(); return; }
 
-		if (cmd === ":quit" || cmd === ":q" || cmd === "exit") { this.stop(); return; }
+		if (cmd === ":quit" || cmd === ":q" || cmd === "exit" || cmd === "quit" || cmd === "q") { this.stop(); return; }
 
 		if (cmd === ":help" || cmd === ":h") {
 			this.push("info", "Just type naturally — I'll run tools as needed.");
@@ -549,11 +549,11 @@ export class PireCLI {
 
 	async start() {
 		console.log("       ,--.               ");
-		console.log(" ,---. `--',--.--. ,---.  ");
+		console.log(" ,---. '--',--.--. ,---.  ");
 		console.log("| .-. |,--.|  .--'| .-. : ");
 		console.log("| '-' '|  ||  |   \\   --. ");
-		console.log(`|  |-' \`--'\`--'    \`----'  v${VERSION}`);
-		console.log("`--'                      ");
+		console.log("|  |-' '--'--'    '----'  v" + VERSION);
+		console.log("'--'                      ");
 		console.log("");
 		console.log("Tell me what you need. I'll run the tools myself.");
 
@@ -700,7 +700,7 @@ Pick the right tools for whatever the user is asking for. Don't follow a fixed w
 		const cmd = line.trim();
 		if (!cmd) { this.rl.prompt(); return; }
 
-		if (cmd === ":quit" || cmd === ":q" || cmd === "exit") { this.stop(); return; }
+		if (cmd === ":quit" || cmd === ":q" || cmd === "exit" || cmd === "quit" || cmd === "q") { this.stop(); return; }
 
 		if (cmd === ":help" || cmd === ":h") {
 			console.log("Just type naturally — I'll run tools as needed.");
