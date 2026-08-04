@@ -57,6 +57,33 @@ const BANNER = `
 \`--'                      
 `;
 
+// ─── Double Ctrl+C to quit ─────────────────────────────────────
+// First Ctrl+C shows a warning, second within 15s exits.
+// SIGTERM always exits immediately.
+function setupGracefulQuit(onQuit: () => void, onFirstPress?: () => void): void {
+	let pressed = false;
+	let timer: NodeJS.Timeout | undefined;
+
+	process.on("SIGINT", () => {
+		if (pressed) {
+			// Second press within window — exit now
+			if (timer) clearTimeout(timer);
+			onQuit();
+			process.exit(0);
+		}
+		pressed = true;
+		onFirstPress?.();
+		// Reset after 15s
+		timer = setTimeout(() => { pressed = false; }, 15000);
+	});
+
+	process.on("SIGTERM", () => {
+		if (timer) clearTimeout(timer);
+		onQuit();
+		process.exit(0);
+	});
+}
+
 const MAX_TURNS = 40;
 const MAX_OUTPUT = 16000;
 
@@ -533,9 +560,13 @@ export class PirePiTUI {
 
 	start(): void {
 		this.ui.start();
-		const cleanup = () => { this.stop(); process.exit(0); };
-		process.on("SIGINT", cleanup);
-		process.on("SIGTERM", cleanup);
+		setupGracefulQuit(
+			() => { this.stop(); },
+			() => {
+				this.transcript.add("system", chalk.bold.yellow("Press Ctrl+C again to quit."));
+				this.ui.requestRender();
+			},
+		);
 	}
 
 	stop(): void {

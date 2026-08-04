@@ -50,6 +50,29 @@ const C = {
 	showCursor: "\x1b[?25h",
 };
 
+// ─── Double Ctrl+C to quit ─────────────────────────────────────
+function setupGracefulQuit(onQuit: () => void, onFirstPress?: () => void): void {
+	let pressed = false;
+	let timer: NodeJS.Timeout | undefined;
+
+	process.on("SIGINT", () => {
+		if (pressed) {
+			if (timer) clearTimeout(timer);
+			onQuit();
+			process.exit(0);
+		}
+		pressed = true;
+		onFirstPress?.();
+		timer = setTimeout(() => { pressed = false; }, 15000);
+	});
+
+	process.on("SIGTERM", () => {
+		if (timer) clearTimeout(timer);
+		onQuit();
+		process.exit(0);
+	});
+}
+
 interface OutputLine { text: string; kind: "cmd" | "out" | "err" | "info" | "tool" | "chat" | "stream" }
 
 // ─── TUI ───────────────────────────────────────────────────────
@@ -151,6 +174,12 @@ export class PireTUI {
 				}
 			});
 		}
+
+		// Double Ctrl+C to quit
+		setupGracefulQuit(
+			() => { this.isActive = false; this.rl.close(); process.stdout.write(C.showCursor + C.reset + "\n"); },
+			() => { this.push("info", `${C.yellow}${C.bold}Press Ctrl+C again to quit.${C.reset}`); this.render(); },
+		);
 	}
 
 	private async processQueue() {
@@ -565,6 +594,12 @@ export class PireCLI {
 		this.rl.prompt();
 		this.rl.on("line", (line) => { this.inputQueue.push(line); this.processQueue(); });
 		this.rl.on("close", () => { /* don't exit while processing */ });
+
+		// Double Ctrl+C to quit
+		setupGracefulQuit(
+			() => { this.rl.close(); process.stdout.write("\n"); },
+			() => { process.stdout.write(`\n${C.yellow}${C.bold}Press Ctrl+C again to quit.${C.reset}\n`); this.rl.prompt(); },
+		);
 	}
 
 	private async processQueue() {
