@@ -1,15 +1,15 @@
 # pire
 
-Autonomous reverse-engineering agent. Give it a binary, URL, or directory — it auto-detects the format (PE, ELF, Mach-O, APK, .NET, firmware) and runs the right tools.
+Autonomous reverse-engineering agent. Give it a binary, URL, or directory. It auto-detects the format (PE, ELF, Mach-O, APK, .NET, firmware) and runs the right tools.
 
 ## Quick start
 
-**One-line install (Linux/macOS):**
+**Linux/macOS:**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/evangit2/pire/main/install.sh | sh
 ```
 
-**One-line install (Windows PowerShell):**
+**Windows (PowerShell):**
 ```powershell
 irm https://raw.githubusercontent.com/evangit2/pire/main/install.ps1 | iex
 ```
@@ -25,8 +25,6 @@ pire https://example.com/app.exe  # download & analyze from URL
 
 ## What it does
 
-Give pire a binary (or a URL to one) and it will:
-
 1. **Fetch** — download from URL if needed
 2. **Auto-detect** — identify file type (PE, ELF, Mach-O, APK, .NET, firmware, archive)
 3. **Triage** — extract strings, map sections, parse imports/exports
@@ -38,7 +36,7 @@ Give pire a binary (or a URL to one) and it will:
 ## Requirements
 
 - **Node.js** 22+
-- **Radare2** (core — always installed)
+- **Radare2** (always installed)
 - An LLM API endpoint (OpenAI-compatible)
 
 Optional (installer prompts for these):
@@ -138,7 +136,7 @@ export PIRE_MODEL="your-preferred-model"
 pire
 ```
 
-Chat-first terminal interface. Load a binary with `:load <path>`.
+Terminal chat interface. Load a binary with `:load <path>`.
 
 ### Autonomous reimplementation
 
@@ -146,9 +144,9 @@ Chat-first terminal interface. Load a binary with `:load <path>`.
 pire <binary.exe>
 ```
 
-Runs the full RE pipeline. Output files are written to the binary's directory:
+Runs the full RE pipeline. Output files go in the binary's directory:
 
-- `analysis.md` — detailed analysis of the binary's behavior
+- `analysis.md` — analysis of the binary's behavior
 - `reimpl.c` — C source reimplementation
 
 ## Tools
@@ -204,11 +202,11 @@ Ran pire against [**ckormanyos/xxd**](https://github.com/ckormanyos/xxd) v1.2 �
 WINEPREFIX=~/.wine64 npx tsx packages/re-agent/src/pire-reimpl.ts targets/xxd/xxd.exe
 ```
 
-Single command, no manual hints. The agent gets the binary path and an 80-turn budget.
+The agent gets the binary path and an 80-turn budget.
 
 ### The prompt
 
-System prompt establishes a 7-phase workflow:
+System prompt defines a 7-phase workflow:
 
 1. **Triage** (turns 1–5): Run `filetype`, `strings`, `r2` to understand the binary
 2. **Black-box testing** (turns 5–15): Run the binary with various inputs under Wine, observe outputs
@@ -221,7 +219,7 @@ System prompt establishes a 7-phase workflow:
 Deadlines:
 - Turn 25: Must write `analysis.md`
 - Turn 30: Must write `reimpl.c`
-- Turn 40: Non-`write_file` tool calls are blocked — only writing and testing allowed
+- Turn 40: Non-`write_file` tool calls are blocked
 - Turn 80: Final deadline
 
 Prompt guidance:
@@ -244,11 +242,11 @@ Prompt guidance:
 
 **Turns 17–58 — Disassembly & analysis**: Used Radare2 to disassemble key functions — hex formatting logic, group/byte swapping for little-endian mode, autoskip (`*`) compression, C include variable name generation from filenames. Identified version string, PDB path, and compiler (MSVC).
 
-**Turn 59 — Analysis written**: Wrote `analysis.md` (5,089 bytes).
+**Turn 59**: Wrote `analysis.md` (5,089 bytes).
 
-**Turns 60–67 — Reimplementation**: Wrote `reimpl.c` (21,851 bytes). Compiled with `gcc`, began differential testing.
+**Turns 60–67**: Wrote `reimpl.c` (21,851 bytes). Compiled with `gcc`, began differential testing.
 
-**Turns 67–80 — Testing & iteration**: Ran differential tests comparing original vs reimpl:
+**Turns 67–80**: Ran differential tests comparing original vs reimpl:
 - Plain hex dump: matched
 - `-ps` plain hex: matched
 - `-i` C include: matched
@@ -315,7 +313,7 @@ pire/
 
 ## How it works
 
-LLM-powered loop with hard tool-call deadlines:
+LLM loop with tool-call deadlines:
 
 1. **Turns 1-25**: Triage, black-box testing, disassembly, decompilation
 2. **Turn 25**: Soft deadline — write `analysis.md`
@@ -324,9 +322,9 @@ LLM-powered loop with hard tool-call deadlines:
 5. **Turns 40-80**: Compile, test, iterate
 6. **Turn 80**: Final deadline
 
-Streams LLM responses. Prompt guidance includes SIMD/SSE handling, CRLF matching, exit code matching, error message exact matching.
+Prompt guidance covers SIMD/SSE handling, CRLF matching, exit codes, and error message matching.
 
-## Token Efficiency
+## Token efficiency
 
 ~5,000 tokens initial input per chat session:
 
@@ -338,7 +336,7 @@ Streams LLM responses. Prompt guidance includes SIMD/SSE handling, CRLF matching
 | **Total initial input** | **~5,000** |
 | Output cap (`max_tokens`) | 8,192 |
 
-For comparison, comparable agentic frameworks run 15,000–30,000+ input tokens per message.
+Comparable agentic frameworks typically run 15,000–30,000+ input tokens per message.
 
 ## License
 
