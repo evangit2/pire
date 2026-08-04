@@ -67,7 +67,7 @@ cd "$repo_root"
 
 commit="$(git rev-parse --verify --end-of-options "${source_ref}^{commit}")"
 
-package_version="$(git show "${commit}:packages/coding-agent/package.json" | node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).version')"
+package_version="$(git show "${commit}:packages/re-agent/package.json" | node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).version')"
 if [[ "$package_version" != "$version" ]]; then
     echo "Version ${version} does not match package version ${package_version} at ${source_ref}" >&2
     exit 1
