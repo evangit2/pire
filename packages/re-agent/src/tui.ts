@@ -23,7 +23,7 @@ import { RE_TOOLS, RE_SYSTEM_PROMPT, probeTools, fetchTool, type AgentTool } fro
 import { loadLLMConfig, toolToFunction, callLLM, type ChatMessage } from "./llm.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const VERSION = "0.83.0";
+const VERSION = "0.84.0";
 
 // ANSI
 const C = {

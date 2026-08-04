@@ -1,6 +1,6 @@
 {
 	"name": "@earendil-works/pi-re-agent",
-	"version": "0.83.0",
+	"version": "0.84.0",
 	"description": "Reverse engineering agent for pire — native tools, crash recovery, auto-detect, lean TUI",
 	"type": "module",
 	"main": "src/index.ts",
