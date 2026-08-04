@@ -339,7 +339,7 @@ pkg_install() {
 	return $PKG_RC
 }
 
-PIP_INSTALL_TIMEOUT=300
+PIP_INSTALL_TIMEOUT=600
 pip_install() {
 	PIPRE_PY=""
 	if [ -x /usr/bin/python3 ] && /usr/bin/python3 -m pip --version >/dev/null 2>&1; then
@@ -363,12 +363,15 @@ pip_install() {
 		return 1
 	fi
 
-	# Use timeout if available, otherwise run without (macOS doesn't have timeout)
+	# Use timeout if available — macOS needs coreutils for gtimeout
 	PIP_TIMEOUT_CMD=""
 	if command -v timeout >/dev/null 2>&1; then
 		PIP_TIMEOUT_CMD="timeout $PIP_INSTALL_TIMEOUT"
 	elif command -v gtimeout >/dev/null 2>&1; then
 		PIP_TIMEOUT_CMD="gtimeout $PIP_INSTALL_TIMEOUT"
+	else
+		# Fallback: Perl-based timeout (Perl is always on macOS)
+		PIP_TIMEOUT_CMD="perl -e 'alarm shift; exec @ARGV' $PIP_INSTALL_TIMEOUT"
 	fi
 
 	if [ "$OS" = "windows" ]; then
@@ -432,6 +435,8 @@ case "$OS" in
 		log_done "Homebrew ready"
 		log_step "Installing core packages..."
 		pkg_install node radare2 binutils git
+		# Install coreutils for gtimeout (needed for pip timeout)
+		brew install coreutils </dev/null >/dev/null 2>&1 || true
 		;;
 	wsl)
 		. /etc/os-release 2>/dev/null
@@ -627,7 +632,7 @@ install_frida() {
 		debian) pkg_install python3-frida 2>/dev/null ;;
 		arch)   pkg_install frida-tools 2>/dev/null ;;
 	esac
-	if has frida || has frida-ps; then
+	if has frida || has frida-ps || python3 -c "import frida" 2>/dev/null; then
 		echo "$ST_DONE" > "$TMPDIR_PIRE/frida.status"
 	else
 		echo "$ST_FAILED" > "$TMPDIR_PIRE/frida.status"
@@ -703,7 +708,23 @@ install_ghidra() {
 			fi
 			;;
 		macos)
-			brew install --cask ghidra </dev/null 2>/dev/null
+			# Install JDK first (Ghidra requires Java 17+)
+			brew install --cask temurin </dev/null 2>/dev/null || brew install openjdk </dev/null 2>/dev/null || true
+			GHIDRA_VER="11.1.2"
+			GHIDRA_DATE="20240709"
+			GHIDRA_URL="https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_${GHIDRA_VER}_build/ghidra_${GHIDRA_VER}_PUBLIC_${GHIDRA_DATE}.zip"
+			GHIDRA_DIR="$HOME/.local/share/ghidra"
+			curl -fsSL "$GHIDRA_URL" -o /tmp/ghidra.zip 2>/dev/null
+			if [ -f /tmp/ghidra.zip ]; then
+				mkdir -p "$GHIDRA_DIR" 2>/dev/null
+				unzip -q -o /tmp/ghidra.zip -d "$GHIDRA_DIR" 2>/dev/null
+				GHIDRA_BIN=$(find "$GHIDRA_DIR" -name ghidraRun -type f 2>/dev/null | head -1)
+				if [ -n "$GHIDRA_BIN" ]; then
+					mkdir -p "$HOME/.local/bin" 2>/dev/null
+					ln -sf "$GHIDRA_BIN" "$HOME/.local/bin/ghidra" 2>/dev/null
+				fi
+				rm -f /tmp/ghidra.zip
+			fi
 			;;
 	esac
 	if has ghidra 2>/dev/null || has ghidraRun 2>/dev/null; then
@@ -732,7 +753,7 @@ install_yara() {
 install_volatility() {
 	echo "$ST_RUNNING" > "$TMPDIR_PIRE/volatility.status"
 	pip_install volatility3
-	if command -v vol 2>/dev/null || command -v vol3 2>/dev/null || python3 -c "import volatility3" 2>/dev/null; then
+	if command -v vol 2>/dev/null || command -v vol3 2>/dev/null || python3 -c "import volatility3" 2>/dev/null || python -c "import volatility3" 2>/dev/null; then
 		echo "$ST_DONE" > "$TMPDIR_PIRE/volatility.status"
 	else
 		echo "$ST_FAILED" > "$TMPDIR_PIRE/volatility.status"
@@ -749,8 +770,12 @@ install_python_tools() {
 		fedora) pkg_install python3-pip python3-capstone python3-lief 2>/dev/null ;;
 		arch)   pkg_install python-pip python-capstone python-lief 2>/dev/null ;;
 	esac
-	pip_install capstone keystone-engine unicorn angr lief
-	if python3 -c "import capstone" 2>/dev/null; then
+	# Install packages individually — angr is slow to compile and
+	# shouldn't block capstone/keystone/unicorn/lief
+	for pkg in capstone keystone-engine unicorn lief angr; do
+		pip_install "$pkg" 2>/dev/null || true
+	done
+	if python3 -c "import capstone" 2>/dev/null || python -c "import capstone" 2>/dev/null; then
 		echo "$ST_DONE" > "$TMPDIR_PIRE/python_tools.status"
 	else
 		echo "$ST_FAILED" > "$TMPDIR_PIRE/python_tools.status"

@@ -3,7 +3,7 @@
  *
  * Layout:
  *  ┌──────────────────────────────────────────────────┐
- *  │ pire v0.86.16  │  target: /bin/ls  │  22 tools  │
+ *  │ pire v0.86.17  │  target: /bin/ls  │  22 tools  │
  *  ├──────────────┬───────────────────────────────────┤
  *  │ Tools        │  Chat / Output                    │
  *  │ ✓ strings    │                                   │
@@ -36,7 +36,7 @@ import { RE_TOOLS, RE_SYSTEM_PROMPT, probeTools, fetchTool, type AgentTool } fro
 import { loadLLMConfig, toolToFunction, callLLM, type ChatMessage } from "./llm.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const VERSION = "0.86.16";
+const VERSION = "0.86.17";
 
 // ANSI
 const C = {
