@@ -38,7 +38,7 @@ import { join, dirname, basename } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const VERSION = "0.86.0";
+const VERSION = "0.86.1";
 
 // Use chalk for proper Pi-style colors
 import chalk from "chalk";
@@ -350,7 +350,11 @@ export class PirePiTUI {
 			}
 			this.statusBar.setTarget(target);
 		}
-		if (this.llm?.model) this.statusBar.setModel(this.llm.model);
+		if (this.llm?.model) {
+			this.statusBar.setModel(this.llm.model);
+		} else {
+			this.statusBar.setModel("none — run: pire model");
+		}
 
 		// Initial transcript content
 		this.transcript.add("system", BANNER);
@@ -529,7 +533,7 @@ export class PirePiTUI {
 
 	private async agentLoop(): Promise<void> {
 		if (!this.llm) {
-			this.transcript.add("error", "No LLM config found. Set OPENAI_API_KEY + OPENAI_BASE_URL or create ~/.pire/config.yaml");
+			this.transcript.add("error", "No LLM config found. Run: pire model");
 			this.flushRender();
 			return;
 		}

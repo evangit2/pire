@@ -3,7 +3,7 @@
  *
  * Layout:
  *  ┌──────────────────────────────────────────────────┐
- *  │ pire v0.86.0  │  target: /bin/ls  │  22 tools  │
+ *  │ pire v0.86.1  │  target: /bin/ls  │  22 tools  │
  *  ├──────────────┬───────────────────────────────────┤
  *  │ Tools        │  Chat / Output                    │
  *  │ ✓ strings    │                                   │
@@ -36,7 +36,7 @@ import { RE_TOOLS, RE_SYSTEM_PROMPT, probeTools, fetchTool, type AgentTool } fro
 import { loadLLMConfig, toolToFunction, callLLM, type ChatMessage } from "./llm.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const VERSION = "0.86.0";
+const VERSION = "0.86.1";
 
 // ANSI
 const C = {
@@ -121,7 +121,7 @@ export class PireTUI {
 		if (this.llm) {
 			this.push("info", `LLM: ${this.llm.model}`);
 		} else {
-			this.push("err", "No LLM config. Set PIRE_CONFIG or OPENAI_API_KEY/OPENAI_BASE_URL.");
+			this.push("err", "No LLM config. Run: pire model");
 		}
 
 		this.push("info", "Probing system...");
@@ -560,7 +560,7 @@ export class PireCLI {
 		if (this.llm) {
 			console.log(`LLM: ${this.llm.model}`);
 		} else {
-			console.error(`No LLM config. Set PIRE_CONFIG or OPENAI_API_KEY/OPENAI_BASE_URL.`);
+			console.error(`No LLM config. Run: pire model`);
 		}
 
 		console.log(`Probing system...`);
