@@ -11,7 +11,7 @@
 
 import { Type } from "typebox";
 import { execSync, spawn } from "node:child_process";
-import { writeFileSync, existsSync } from "node:fs";
+import { writeFileSync, existsSync, openSync, readSync, closeSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -72,6 +72,19 @@ function textResult(text: string, details?: Record<string, unknown>): ToolResult
 		content: [{ type: "text" as const, text: text.slice(0, 50000) }],
 		details: { ...details, truncated: text.length > 50000 },
 	};
+}
+
+/** Detect PE binary by checking for the MZ header (first 2 bytes). */
+function isPEBinary(path: string): boolean {
+	try {
+		const fd = openSync(path, "r");
+		const buf = Buffer.alloc(2);
+		readSync(fd, buf, 0, 2, 0);
+		closeSync(fd);
+		return buf[0] === 0x4d && buf[1] === 0x5a; // "MZ"
+	} catch {
+		return false;
+	}
 }
 
 // ─── Ghidra Bridge (native, with crash recovery + auto-start) ──
@@ -245,20 +258,76 @@ const hexdumpTool: AgentTool<{ path: string; offset?: number; length?: number }>
 	},
 };
 
-// ─── Radare2 (native, persistent session) ──────────────────────
+// ─── Radare2 (native, persistent session via long-lived process) ───
 
 class R2Session {
 	private currentFile: string | null = null;
+	private r2path: string | null = null;
+	private proc: { child: ReturnType<typeof spawn>; stdin: NodeJS.WritableStream; stdout: string } | null = null;
+
+	constructor() {
+		this.r2path = which("r2") ?? which("radare2");
+	}
+
+	private ensureProcess(path: string): void {
+		if (!this.r2path) throw new Error("radare2 not installed");
+		// Reuse existing process if same file
+		if (this.proc && this.currentFile === path) return;
+		// Kill old process if switching files
+		if (this.proc) {
+			try { this.proc.child.kill(); } catch {}
+			this.proc = null;
+		}
+		const child = spawn(this.r2path, ["-q0", path], { stdio: ["pipe", "pipe", "pipe"] });
+		const stdout: string[] = [];
+		child.stdout.on("data", (chunk) => stdout.push(chunk.toString()));
+		this.proc = { child, stdin: child.stdin, stdout: "" };
+		this.currentFile = path;
+		// Read initial null byte that r2 emits with -0 flag
+		this.proc.stdout = stdout.join("");
+	}
 
 	async run(path: string, command: string): Promise<string> {
-		const r2path = which("r2") ?? which("radare2");
-		if (!r2path) throw new Error("radare2 not installed");
-		const result = run(`${r2path} -qc ${shellEscape(command)} ${shellEscape(path)}`, { timeout: 60000 });
-		this.currentFile = path;
-		return result;
+		this.ensureProcess(path);
+		if (!this.proc) throw new Error("r2 process not started");
+
+		// Use a marker to detect command completion
+		const marker = `__PIRE_END_${Date.now()}__`;
+		const stdoutChunks: string[] = [];
+		const child = this.proc.child;
+
+		return new Promise<string>((resolve, reject) => {
+			const timeout = setTimeout(() => {
+				child.stdout?.removeAllListeners("data");
+				reject(new Error("r2 command timeout"));
+			}, 60000);
+
+			const onData = (chunk: Buffer) => {
+				stdoutChunks.push(chunk.toString());
+				const text = stdoutChunks.join("");
+				if (text.includes(marker)) {
+					clearTimeout(timeout);
+					child.stdout?.removeListener("data", onData);
+					// Extract output before the marker
+					const output = text.split(marker)[0];
+					resolve(output.trim());
+				}
+			};
+			child.stdout?.on("data", onData);
+
+			// Send command + marker
+			this.proc!.stdin.write(`${command}\necho ${marker}\n`);
+		});
 	}
 
 	getCurrentFile() { return this.currentFile; }
+
+	dispose() {
+		if (this.proc) {
+			try { this.proc.child.kill(); } catch {}
+			this.proc = null;
+		}
+	}
 }
 
 const r2Session = new R2Session();
@@ -551,13 +620,15 @@ const volatilityTool: AgentTool<{ memdump: string; plugin: string; extraArgs?: s
 
 /**
  * Extract a single function's disassembly from a stripped binary.
- * Collects all instructions from the start address until the next function
- * boundary (endbr64 or alignment padding after the last ret), avoiding the
- * common pitfall of stopping at the first early-exit ret.
+ * Detects PE vs ELF — uses r2 for PE (objdump is unreliable on PE without
+ * special flags) and objdump for ELF.
+ * For ELF: collects all instructions from the start address until the next
+ * function boundary (endbr64 or alignment padding after the last ret),
+ * avoiding the common pitfall of stopping at the first early-exit ret.
  */
 const disasmFuncTool: AgentTool<{ path: string; startAddress: string; maxBytes?: number }> = {
 	name: "disasm_func",
-	description: "Extract a single function's disassembly from a stripped binary. More reliable than raw objdump — collects the full function body past early-exit rets until the next function boundary. Provide a hex start address.",
+	description: "Extract a single function's disassembly from a stripped binary. More reliable than raw objdump — collects the full function body past early-exit rets until the next function boundary. Provide a hex start address. Works on both ELF and PE binaries.",
 	parameters: Type.Object({
 		path: Type.String({ description: "Path to the binary" }),
 		startAddress: Type.String({ description: "Hex start address of the function (e.g. '0x1140')" }),
@@ -566,6 +637,34 @@ const disasmFuncTool: AgentTool<{ path: string; startAddress: string; maxBytes?:
 	async execute(_id, params) {
 		const addr = params.startAddress.replace(/^0x/, "");
 		const maxBytes = params.maxBytes ?? 8192;
+
+		// Detect PE binary by reading the first 2 bytes (MZ header)
+		const isPE = isPEBinary(params.path);
+
+		if (isPE) {
+			// Use r2 for PE binaries — objdump is unreliable on PE
+			const r2path = which("r2") ?? which("radare2");
+			if (r2path) {
+				const result = run(
+					`${r2path} -qc "aaa; s 0x${addr}; pdf" ${shellEscape(params.path)} 2>/dev/null`,
+					{ timeout: 60000 },
+				);
+				if (result.trim()) {
+					return textResult(result, { startAddress: `0x${addr}`, format: "r2-pdf" });
+				}
+			}
+			// Fall back to objdump with PE target if r2 not available
+			const stopAddr = parseInt(addr, 16) + maxBytes;
+			const raw = run(
+				`objdump -d --target=pei-x86-64 --start-address=0x${addr} --stop-address=0x${stopAddr.toString(16)} ${shellEscape(params.path)} 2>/dev/null`,
+				{ timeout: 15000 },
+			);
+			return textResult(raw || `No disassembly found at 0x${addr} (PE binary, r2 not available).`, {
+				startAddress: `0x${addr}`, format: "objdump-pe",
+			});
+		}
+
+		// ELF path — use objdump with function boundary detection
 		const stopAddr = parseInt(addr, 16) + maxBytes;
 		const raw = run(
 			`objdump -d --start-address=0x${addr} --stop-address=0x${stopAddr.toString(16)} ${shellEscape(params.path)} 2>/dev/null`,
@@ -602,17 +701,45 @@ const disasmFuncTool: AgentTool<{ path: string; startAddress: string; maxBytes?:
 	},
 };
 
-// ─── Shell tool (lets agent run arbitrary commands: ls, find, dpkg, etc.) ───
+// ─── Shell tool (sandboxed: restricted cwd, network blocked) ───
 
-const shellTool: AgentTool<{ command: string }> = {
+/** Commands that could exfiltrate data or make network connections. */
+const BLOCKED_PATTERNS = [
+	/\bcurl\s/, /\bwget\s/, /\bnc\s/, /\bnetcat\s/, /\bssh\s/, /\bscp\s/, /\brsync\s/,
+	/\bapt-get\s/, /\bapt\s/, /\bdpkg\s/, /\byum\s/, /\bdnf\s/, /\bpip\s/, /\bpip3\s/,
+	/\bnpm\s/, /\bnpx\s/, /\byarn\s/, /\bpnpm\s/, /\bbrew\s/,
+	/\bsudo\s/, /\bsu\s/, /\bdoas\s/,
+	/\bshutdown\b/, /\breboot\b/, /\bpoweroff\b/,
+	/\bmkfs\b/, /\bdd\s+.*of=/, /\b:()\{\s*:\|:&\s*\};:/, // fork bomb
+];
+
+/** Check if a command matches any blocked pattern. */
+function isCommandBlocked(command: string): string | null {
+	for (const pattern of BLOCKED_PATTERNS) {
+		if (pattern.test(command)) {
+			return `Command blocked by sandbox: matches pattern "${pattern.source}". The shell tool restricts network access, package management, and privileged commands. Use specific RE tools instead.`;
+		}
+	}
+	return null;
+}
+
+const shellTool: AgentTool<{ command: string; cwd?: string }> = {
 	name: "shell",
-	description: "Run a shell command (ls, find, file, dpkg, apt, etc.). Use for directory listing, file discovery, installing tools, or any system command.",
+	description: "Run a shell command in the workspace sandbox (ls, find, file, gcc, diff, etc.). Network access, package management, and privileged commands are blocked. Optional cwd to set working directory.",
 	parameters: Type.Object({
 		command: Type.String({ description: "Shell command to execute" }),
+		cwd: Type.Optional(Type.String({ description: "Working directory (default: workspace root)" })),
 	}),
 	async execute(_id, params) {
+		const blocked = isCommandBlocked(params.command);
+		if (blocked) return textResult(blocked);
+
+		// Restrict cwd to prevent escaping workspace
+		const workspaceRoot = process.env.PIRE_WORKSPACE || process.cwd();
+		const cwd = params.cwd && existsSync(params.cwd) ? params.cwd : workspaceRoot;
+
 		try {
-			const result = run(params.command, { timeout: 60000 });
+			const result = run(params.command, { timeout: 60000, cwd });
 			return textResult(result.trim() || "(no output)");
 		} catch (e: any) {
 			// execSync throws on non-zero exit code, but stdout/stderr are still useful
@@ -732,6 +859,13 @@ Tools auto-detect at runtime. If something isn't installed you'll get a message 
 ## Analysis Workflow
 
 Work in stages. Each stage builds on the previous. Don't skip ahead.
+
+### PE Binary Notes
+- Windows PE binaries start with "MZ" header — the disasm_func tool auto-detects PE and uses r2 instead of objdump
+- For PE: use **r2** with \`aaa; afl\` to list functions, \`pdf @ addr\` to disassemble
+- Use **lief** to parse PE imports/exports (look for kernel32.dll, user32.dll imports)
+- Run PE binaries with: WINEPREFIX=$HOME/.wine wine <binary> <args>
+- PE binaries often use CRLF (\\r\\n) line endings — check with xxd | head
 
 ### Stage 1: Triage
 - **filetype** — what is this binary?

@@ -6,24 +6,24 @@
  * Point it at a directory, a binary, a URL — it figures out what to do.
  *
  * Commands:
- *  :tools         — List all tools
- *  :probe         — Probe system
- *  :skills        — List skills
- *  :help          — Show commands
- *  :quit          — Exit
+ *  :load <path>    — Load a binary for analysis
+ *  :tools          — List all tools
+ *  :probe          — Probe system
+ *  :skills         — List skills
+ *  :save [path]    — Save conversation history
+ *  :help           — Show commands
+ *  :quit           — Exit
  */
 
 import * as readline from "node:readline";
-import { execSync } from "node:child_process";
-import { readdirSync, readFileSync, existsSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, existsSync, writeFileSync, mkdirSync } from "node:fs";
 import { join, dirname, basename } from "node:path";
 import { fileURLToPath } from "node:url";
-import * as https from "node:https";
-import * as http from "node:http";
 import { RE_TOOLS, RE_SYSTEM_PROMPT, probeTools, type AgentTool } from "./index.js";
+import { loadLLMConfig, toolToFunction, callLLM, type ChatMessage } from "./llm.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const VERSION = "0.7.1";
+const VERSION = "0.8.0";
 
 // ANSI
 const C = {
@@ -32,134 +32,22 @@ const C = {
 	blue: "\x1b[34m", cyan: "\x1b[36m", gray: "\x1b[90m",
 };
 
-// ─── LLM Config ────────────────────────────────────────────────
-
-interface LLMConfig { baseUrl: string; apiKey: string; model: string }
-
-function loadLLMConfig(): LLMConfig | null {
-	const candidates = [
-		process.env.PIRE_CONFIG,
-		join(process.env.HOME || "/tmp", ".pire/config.yaml"),
-	];
-	for (const path of candidates) {
-		if (!path || !existsSync(path)) continue;
-		try {
-			const content = readFileSync(path, "utf-8");
-			const baseUrl = content.match(/base_url:\s*(.+)/)?.[1]?.trim();
-			const apiKey = content.match(/api_key:\s*(.+)/)?.[1]?.trim();
-			const model = content.match(/^model:\s*(.+)/m)?.[1]?.trim();
-			if (baseUrl && apiKey && model) return { baseUrl: baseUrl.replace(/\/$/, ""), apiKey, model };
-		} catch {}
-	}
-	if (process.env.OPENAI_API_KEY && process.env.OPENAI_BASE_URL) {
-		return { baseUrl: process.env.OPENAI_BASE_URL, apiKey: process.env.OPENAI_API_KEY, model: process.env.OPENAI_MODEL || process.env.PIRE_MODEL || "gpt-4o" };
-	}
-	return null;
-}
-
-// ─── LLM types ─────────────────────────────────────────────────
-
-interface ChatMessage {
-	role: "system" | "user" | "assistant" | "tool";
-	content: string | null;
-	tool_calls?: ToolCall[];
-	tool_call_id?: string;
-}
-
-interface ToolCall {
-	id: string;
-	type: "function";
-	function: { name: string; arguments: string };
-}
-
-// ─── Tool schema conversion ────────────────────────────────────
-
-function toolToFunction(tool: AgentTool<any>) {
-	const schema = tool.parameters as any;
-	const props = schema?.properties ?? {};
-	const required = schema?.required ?? Object.keys(props);
-	return {
-		type: "function" as const,
-		function: {
-			name: tool.name,
-			description: tool.description,
-			parameters: { type: "object", properties: props, required },
-		},
-	};
-}
-
-// ─── LLM call with tool support ────────────────────────────────
-
-interface LLMResponse {
-	content: string | null;
-	tool_calls?: ToolCall[];
-}
-
-async function callLLM(config: LLMConfig, messages: ChatMessage[], tools?: object[]): Promise<LLMResponse> {
-	const url = new URL(config.baseUrl.replace(/\/$/, "") + "/chat/completions");
-	const body = JSON.stringify({
-		model: config.model,
-		messages,
-		tools: tools?.length ? tools : undefined,
-		max_tokens: 8000,
-		stream: false,
-	});
-
-	const options: http.RequestOptions = {
-		method: "POST",
-		headers: { "Content-Type": "application/json", "Authorization": `Bearer ${config.apiKey}` },
-	};
-
-	const doRequest = (): Promise<LLMResponse> => new Promise((resolve, reject) => {
-		const client = url.protocol === "https:" ? https : http;
-		const req = client.request(url, options, (res) => {
-			let data = "";
-			res.on("data", (chunk) => (data += chunk));
-			res.on("end", () => {
-				if (res.statusCode && res.statusCode >= 500) {
-					reject(new Error(`HTTP ${res.statusCode}`));
-					return;
-				}
-				try {
-					const json = JSON.parse(data);
-					const msg = json.choices?.[0]?.message;
-					resolve({
-						content: msg?.content ?? msg?.reasoning ?? null,
-						tool_calls: msg?.tool_calls,
-					});
-				} catch {
-					reject(new Error(`Parse error: ${data.slice(0, 200)}`));
-				}
-			});
-		});
-		req.on("error", reject);
-		req.setTimeout(90000, () => req.destroy(new Error("Timeout")));
-		req.write(body);
-		req.end();
-	});
-
-	let lastErr: Error | null = null;
-	for (let i = 0; i < 3; i++) {
-		try { return await doRequest(); }
-		catch (e) { lastErr = e instanceof Error ? e : new Error(String(e)); if (i < 2) await new Promise(r => setTimeout(r, 2000 * (i + 1))); }
-	}
-	throw lastErr;
-}
-
 // ─── TUI ───────────────────────────────────────────────────────
 
 export class PireTUI {
 	private rl: readline.Interface;
-	private llm: LLMConfig | null = null;
+	private llm = loadLLMConfig();
 	private tools: Record<string, boolean> = {};
 	private messages: ChatMessage[] = [];
 	private toolMap: Map<string, AgentTool<any>> = new Map();
-	private running = false;
+	private loadedTarget: string | null = null;
+	private inputQueue: string[] = [];
+	private processing = false;
 
 	constructor(target?: string) {
 		this.rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: true });
 		if (target) {
-			// If target was passed as CLI arg, inject it into the first user message
+			this.loadedTarget = target;
 			this.messages.push({ role: "user", content: `I want to analyze: ${target}` });
 		}
 	}
@@ -168,7 +56,6 @@ export class PireTUI {
 		this.print("info", `pire v${VERSION} — Reverse Engineering Agent`);
 		this.print("info", `Just tell me what to analyze. I'll run the tools myself.`);
 
-		this.llm = loadLLMConfig();
 		if (this.llm) {
 			this.print("info", `LLM: ${this.llm.model}`);
 		} else {
@@ -180,24 +67,19 @@ export class PireTUI {
 		const avail = Object.values(this.tools).filter(Boolean).length;
 		this.print("info", `${avail}/${Object.keys(this.tools).length} tools available`);
 
-		// Build tool map
 		for (const tool of RE_TOOLS) this.toolMap.set(tool.name, tool);
 
-		// If target was passed, kick off analysis automatically
 		if (this.messages.length > 0) {
 			this.render();
 			await this.agentLoop(this.messages[0].content!);
-			this.messages = []; // consumed
+			this.messages = [];
 		}
 
 		this.render();
 		this.rl.setPrompt("");
 		this.rl.on("line", (line) => { this.inputQueue.push(line); this.processQueue(); });
 		this.rl.on("close", () => { /* don't exit while processing */ });
-		}
-
-	private inputQueue: string[] = [];
-	private processing = false;
+	}
 
 	private async processQueue() {
 		if (this.processing) return;
@@ -217,11 +99,11 @@ export class PireTUI {
 			return;
 		}
 
-		// Build system prompt with tool availability
 		const availTools = Object.entries(this.tools).filter(([,v]) => v).map(([k]) => k).join(", ");
+		const targetInfo = this.loadedTarget ? `\n\nCurrently loaded target: ${this.loadedTarget}` : "";
 		const systemPrompt = `${RE_SYSTEM_PROMPT}
 
-You have ${RE_TOOLS.length} tools available. Available on this system: ${availTools}.
+You have ${RE_TOOLS.length} tools available. Available on this system: ${availTools}.${targetInfo}
 
 When the user mentions a path, binary, or directory — run tools on it yourself. Don't ask them to type commands.
 If given a directory, list its contents first (use shell), identify interesting files, then analyze them.
@@ -234,39 +116,38 @@ Be proactive — run multiple tools in sequence to build a complete picture.`;
 			{ role: "user", content: userMessage },
 		];
 
-		// Add to conversation history
 		this.messages.push({ role: "user", content: userMessage });
 
 		const toolSchemas = RE_TOOLS.map(toolToFunction);
-		const MAX_TURNS = 15;
+		const MAX_TURNS = 40;
 
 		for (let turn = 0; turn < MAX_TURNS; turn++) {
-			let resp: LLMResponse;
+			let resp;
 			try {
-				resp = await callLLM(this.llm, messages, toolSchemas);
+				resp = await callLLM(this.llm, messages, toolSchemas, {
+					onContent: (chunk) => { process.stdout.write(chunk); },
+				});
 			} catch (e) {
 				this.print("err", `LLM error: ${e instanceof Error ? e.message : e}`);
 				return;
 			}
 
-			// If there are tool calls, execute them
+			// Newline after streaming content
+			if (resp.content) process.stdout.write("\n");
+
 			if (resp.tool_calls && resp.tool_calls.length > 0) {
-				// Show what the agent is doing
 				for (const tc of resp.tool_calls) {
-					const args = JSON.parse(tc.function.arguments);
-					const argStr = Object.entries(args).map(([k,v]) => `${k}=${v}`).join(" ");
-					this.print("tool", `⚙ ${tc.function.name}(${argStr})`);
+					let args: Record<string, unknown> = {};
+					try { args = JSON.parse(tc.function.arguments); } catch {}
+					const argStr = Object.entries(args).map(([k,v]) => {
+						const val = String(v);
+						return val.length > 100 ? `${k}=${val.slice(0,100)}...` : `${k}=${val}`;
+					}).join(" ");
+					this.print("tool", `${tc.function.name}(${argStr})`);
 				}
 
-				// Add assistant message with tool_calls to conversation
-				const assistantMsg: ChatMessage = {
-					role: "assistant",
-					content: resp.content,
-					tool_calls: resp.tool_calls,
-				};
-				messages.push(assistantMsg);
+				messages.push({ role: "assistant", content: resp.content, tool_calls: resp.tool_calls });
 
-				// Execute each tool call
 				for (const tc of resp.tool_calls) {
 					const tool = this.toolMap.get(tc.function.name);
 					if (!tool) {
@@ -280,20 +161,17 @@ Be proactive — run multiple tools in sequence to build a complete picture.`;
 					try {
 						const result = await tool.execute("pire", params);
 						const text = result.content.map((c: { text: string }) => c.text).join("\n");
-						// Truncate very long output to keep context manageable
-						const truncated = text.length > 8000 ? text.slice(0, 8000) + "\n... (truncated)" : text;
+						const truncated = text.length > 16000 ? text.slice(0, 16000) + "\n... (truncated)" : text;
 						messages.push({ role: "tool", tool_call_id: tc.id, content: truncated });
 					} catch (e) {
 						messages.push({ role: "tool", tool_call_id: tc.id, content: `Error: ${e instanceof Error ? e.message : e}` });
 					}
 				}
 				this.render();
-				continue; // Let the LLM see tool results and continue
+				continue;
 			}
 
-			// No tool calls — this is the final response
 			if (resp.content) {
-				this.print("chat", resp.content);
 				this.messages.push({ role: "assistant", content: resp.content });
 			}
 			break;
@@ -317,7 +195,7 @@ Be proactive — run multiple tools in sequence to build a complete picture.`;
 			this.print("info", "  what's in /opt/game/?");
 			this.print("info", "  disassemble the main function in ./crackme");
 			this.print("info", "");
-			this.print("info", "Commands: :tools :probe :skills :help :quit");
+			this.print("info", "Commands: :load <path> :tools :probe :skills :save [path] :help :quit");
 			this.render();
 			return;
 		}
@@ -354,6 +232,39 @@ Be proactive — run multiple tools in sequence to build a complete picture.`;
 			return;
 		}
 
+		if (cmd.startsWith(":load")) {
+			const path = cmd.slice(5).trim();
+			if (!path) {
+				this.print("err", "Usage: :load <path>");
+				this.render();
+				return;
+			}
+			if (!existsSync(path)) {
+				this.print("err", `Not found: ${path}`);
+				this.render();
+				return;
+			}
+			this.loadedTarget = path;
+			this.print("info", `Loaded: ${path}`);
+			this.render();
+			await this.agentLoop(`Analyze this binary: ${path}`);
+			return;
+		}
+
+		if (cmd.startsWith(":save")) {
+			const savePath = cmd.slice(4).trim() || join(process.cwd(), `pire-session-${Date.now()}.json`);
+			try {
+				const data = JSON.stringify({ version: VERSION, target: this.loadedTarget, messages: this.messages }, null, 2);
+				mkdirSync(dirname(savePath), { recursive: true });
+				writeFileSync(savePath, data);
+				this.print("info", `Saved ${this.messages.length} messages to ${savePath}`);
+			} catch (e) {
+				this.print("err", `Save failed: ${e instanceof Error ? e.message : e}`);
+			}
+			this.render();
+			return;
+		}
+
 		// Everything else → agent loop
 		this.print("chat", cmd);
 		this.render();
@@ -384,7 +295,6 @@ Be proactive — run multiple tools in sequence to build a complete picture.`;
 	}
 
 	stop() {
-		this.running = false;
 		this.rl.close();
 		process.stdout.write(C.reset + "\n");
 		process.exit(0);

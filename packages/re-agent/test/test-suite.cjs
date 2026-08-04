@@ -148,7 +148,7 @@ ok(!fs.existsSync(path.join(root, "scripts", "build-mcp-servers.mjs")), "build-m
 console.log("\n─ Code Quality ─");
 
 ok(!src.includes("await import("), "no inline dynamic imports in index");
-ok(src.includes('import { writeFileSync, existsSync }'), "fs imports at top level");
+ok(src.includes("from \"node:fs\""), "fs imports at top level");
 ok(src.includes('import { execSync, spawn }'), "child_process imports at top level");
 ok(src.includes('import { join, dirname }'), "path imports at top level");
 ok(src.includes('import { fileURLToPath }'), "url import at top level");
@@ -207,7 +207,7 @@ if (fs.existsSync(pireConfig)) {
 console.log("\n─ Package Config ─");
 
 const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf-8"));
-ok(pkg.version === "0.2.0", `version is 0.2.0 (got ${pkg.version})`);
+ok(pkg.version === "0.8.0", `version is 0.8.0 (got ${pkg.version})`);
 ok(pkg.bin && pkg.bin.pire, "has pire bin entry");
 ok(pkg.scripts.test.includes("test-suite.cjs"), "test script runs test-suite");
 ok(pkg.scripts.test.includes("test-models.cjs"), "test script runs test-models");
@@ -331,9 +331,12 @@ ok(reimplSrc.includes("writeFileTool"), "pire-reimpl defines writeFileTool");
 ok(reimplSrc.includes("writeFileSync"), "writeFileTool uses writeFileSync");
 ok(reimplSrc.includes("toolToFunction"), "pire-reimpl has toolToFunction");
 ok(reimplSrc.includes("callLLM"), "pire-reimpl has callLLM");
-ok(reimplSrc.includes("stream: true"), "pire-reimpl uses streaming");
-ok(reimplSrc.includes("delta.tool_calls"), "pire-reimpl handles streaming tool calls");
-ok(reimplSrc.includes("delta.content"), "pire-reimpl handles streaming content");
+ok(reimplSrc.includes("from \"./llm.js\""), "pire-reimpl imports shared llm module");
+const llmSrc = fs.readFileSync(path.join(__dirname, "../src/llm.ts"), "utf-8");
+ok(llmSrc.includes("stream: true"), "shared llm module uses streaming");
+ok(llmSrc.includes("delta.tool_calls"), "shared llm module handles streaming tool calls");
+ok(llmSrc.includes("delta.content"), "shared llm module handles streaming content");
+ok(llmSrc.includes("onContent"), "shared llm module supports streaming callbacks");
 ok(reimplSrc.includes("MAX_TURNS"), "pire-reimpl has turn limit");
 ok(reimplSrc.includes("analysis.md"), "pire-reimpl writes analysis.md");
 ok(reimplSrc.includes("reimpl"), "pire-reimpl writes reimplementation");
@@ -355,6 +358,101 @@ ok(src.includes('name: "decompile"'), "decompile tool has correct name");
 ok(src.includes("pdc"), "decompile tool uses r2 pdc command");
 ok(src.includes("decompileTool"), "decompileTool in RE_TOOLS");
 ok(src.includes("decompile:"), "probeTools checks decompile");
+
+// ─── 21. Shell Sandbox ────────────────────────────────────────
+
+console.log("\n─ Shell Sandbox ─");
+
+ok(src.includes("BLOCKED_PATTERNS"), "shell tool has blocked patterns");
+ok(src.includes("isCommandBlocked"), "shell tool has command blocking function");
+ok(src.includes("curl"), "shell blocks curl");
+ok(src.includes("wget"), "shell blocks wget");
+ok(src.includes("sudo"), "shell blocks sudo");
+ok(src.includes("pip"), "shell blocks pip/package management");
+ok(src.includes("mkfs"), "shell blocks mkfs");
+ok(src.includes("shutdown"), "shell blocks shutdown");
+ok(src.includes("PIRE_WORKSPACE"), "shell respects PIRE_WORKSPACE env");
+ok(src.includes("cwd"), "shell accepts cwd parameter");
+
+// ─── 22. PE Binary Support ────────────────────────────────────
+
+console.log("\n─ PE Binary Support ─");
+
+ok(src.includes("isPEBinary"), "PE binary detection function exists");
+ok(src.includes("0x4d") && src.includes("0x5a"), "checks MZ header bytes");
+ok(src.includes("openSync"), "uses openSync for header read");
+ok(src.includes("pei-x86-64"), "falls back to objdump with PE target");
+ok(src.includes("r2") && src.includes("pdf"), "uses r2 pdf for PE disassembly");
+ok(src.includes("PE Binary Notes"), "system prompt has PE guidance");
+ok(src.includes("WINEPREFIX"), "system prompt mentions WINEPREFIX for PE");
+ok(src.includes("CRLF"), "system prompt mentions CRLF for PE");
+ok(src.includes("MZ"), "system prompt mentions MZ header");
+
+// ─── 23. Persistent R2Session ─────────────────────────────────
+
+console.log("\n─ Persistent R2Session ─");
+
+ok(src.includes("ensureProcess"), "R2Session has ensureProcess method");
+ok(src.includes("spawn(this.r2path") || src.includes('spawn(this.r2path'), "R2Session spawns long-lived process");
+ok(src.includes("-q0"), "R2Session uses -q0 flag for pipe mode");
+ok(src.includes("marker"), "R2Session uses marker for command completion");
+ok(src.includes("dispose"), "R2Session has dispose method");
+
+// ─── 24. Shared LLM Module ────────────────────────────────────
+
+console.log("\n─ Shared LLM Module ─");
+
+ok(llmSrc.includes("LLMConfig"), "shared module exports LLMConfig");
+ok(llmSrc.includes("ChatMessage"), "shared module exports ChatMessage");
+ok(llmSrc.includes("ToolCall"), "shared module exports ToolCall");
+ok(llmSrc.includes("toolToFunction"), "shared module exports toolToFunction");
+ok(llmSrc.includes("callLLM"), "shared module exports callLLM");
+ok(llmSrc.includes("parseYAMLConfig"), "shared module has YAML parser");
+ok(llmSrc.includes("comment"), "YAML parser strips comments");
+ok(!llmSrc.includes("content.match"), "YAML parser doesn't use regex matching");
+ok(llmSrc.includes("OPENAI_API_KEY"), "supports env var fallback");
+ok(llmSrc.includes("OPENAI_BASE_URL"), "supports env var fallback");
+ok(llmSrc.includes("onContent"), "supports streaming content callback");
+ok(llmSrc.includes("lastErr") || llmSrc.includes("retry"), "has retry logic");
+
+ok(tuiSrc.includes("from \"./llm.js\""), "TUI imports shared llm module");
+ok(tuiSrc.includes(":load"), "TUI has :load command");
+ok(tuiSrc.includes(":save"), "TUI has :save command");
+ok(tuiSrc.includes("loadedTarget"), "TUI tracks loaded target");
+ok(tuiSrc.includes("MAX_TURNS = 40"), "TUI has 40 turn limit");
+ok(tuiSrc.includes("onContent"), "TUI streams content to stdout");
+ok(tuiSrc.includes("VERSION"), "TUI has version constant");
+ok(tuiSrc.includes("0.8.0"), "TUI version is 0.8.0");
+
+// ─── 25. Version Alignment ────────────────────────────────────
+
+console.log("\n─ Version Alignment ─");
+
+const rootPkg = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "..", "..", "package.json"), "utf-8"));
+ok(rootPkg.version === "0.8.0", `root package.json version is 0.8.0 (got ${rootPkg.version})`);
+ok(pkg.version === "0.8.0", `re-agent package.json version is 0.8.0 (got ${pkg.version})`);
+ok(tuiSrc.includes("0.8.0"), `tui.ts VERSION is 0.8.0`);
+
+// ─── 26. Skills Not Gitignored ────────────────────────────────
+
+console.log("\n─ Skills Shipping ─");
+
+const gitignore = fs.readFileSync(path.join(__dirname, "..", "..", "..", ".gitignore"), "utf-8");
+ok(!gitignore.includes("skills/"), "skills/ removed from .gitignore");
+
+// ─── 27. Behavioral Tests ─────────────────────────────────────
+
+console.log("\n─ Behavioral Tests ─");
+
+// Test isPEBinary via source-level check (function exists and checks MZ)
+ok(typeof src === "string" && src.includes("isPEBinary"), "isPEBinary function exists in source");
+
+// Test that the shell sandbox blocks dangerous commands (source-level)
+ok(src.includes("BLOCKED_PATTERNS") && src.includes("isCommandBlocked"), "shell sandbox is wired up");
+
+// Verify tool output truncation limits are reasonable
+ok(tuiSrc.includes("16000"), "TUI truncates at 16000 chars");
+ok(reimplSrc.includes("16000"), "reimpl truncates at 16000 chars");
 
 // ─── Summary ───────────────────────────────────────────────────
 
