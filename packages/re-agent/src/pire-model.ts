@@ -222,23 +222,8 @@ async function editProvider(rl: ReturnType<typeof createInterface>, p: Provider)
 
 async function main(): Promise<void> {
 	const db = loadProviders();
-	const config = loadConfig();
 
 	printHeader("pire model");
-
-	// Show current config
-	if (config) {
-		console.log(chalk.bold("Current configuration:"));
-		console.log(`  ${chalk.dim("Provider URL:")} ${config.base_url}`);
-		console.log(`  ${chalk.dim("Model:")}        ${config.model}`);
-		if (config.context_length) console.log(`  ${chalk.dim("Context:")}      ${config.context_length} tokens`);
-		if (config.max_tokens) console.log(`  ${chalk.dim("Max tokens:")}   ${config.max_tokens}`);
-		const activeProv = db.providers.find(p => p.base_url === config.base_url);
-		if (activeProv) console.log(`  ${chalk.dim("Provider:")}     ${activeProv.name}`);
-	} else {
-		console.log(chalk.yellow("No model configured yet."));
-	}
-	console.log();
 
 	// If no providers, prompt to add one
 	if (db.providers.length === 0) {
@@ -260,14 +245,28 @@ async function main(): Promise<void> {
 	// Main menu
 	const rlInst = rl();
 	while (true) {
+		const config = loadConfig(); // refresh each iteration so display stays in sync
+
+		// Show current config
+		if (config) {
+			console.log(chalk.bold("Current configuration:"));
+			console.log(`  ${chalk.dim("Provider URL:")} ${config.base_url}`);
+			console.log(`  ${chalk.dim("Model:")}        ${config.model || chalk.yellow("(none)")}`);
+			if (config.context_length) console.log(`  ${chalk.dim("Context:")}      ${config.context_length} tokens`);
+			if (config.max_tokens) console.log(`  ${chalk.dim("Max tokens:")}   ${config.max_tokens}`);
+			const activeProv = db.providers.find(p => p.base_url === config.base_url);
+			if (activeProv) console.log(`  ${chalk.dim("Provider:")}     ${activeProv.name}`);
+		} else {
+			console.log(chalk.yellow("No model configured yet."));
+		}
 		console.log();
 		console.log(chalk.bold("Providers:"));
 		console.log(chalk.dim("─".repeat(40)));
 		for (let i = 0; i < db.providers.length; i++) {
 			const p = db.providers[i];
-			const active = db.active === p.name ? chalk.green(" ← active") : "";
-			const isCurrent = config?.base_url === p.base_url ? chalk.bold.blue(" (current)") : "";
-			console.log(`  ${chalk.cyan(i + 1)}. ${p.name} ${chalk.dim(p.base_url)}${active}${isCurrent}`);
+			const isCurrent = config?.base_url === p.base_url;
+			const marker = isCurrent ? chalk.green(" ← current") : "";
+			console.log(`  ${chalk.cyan(i + 1)}. ${p.name} ${chalk.dim(p.base_url)}${marker}`);
 		}
 		console.log();
 		console.log(`  ${chalk.cyan("a.")} Add provider`);
