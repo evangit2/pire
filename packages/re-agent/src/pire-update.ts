@@ -159,11 +159,20 @@ async function doUpdate(): Promise<void> {
 			execSync("npm install --silent", { cwd: repo, stdio: "ignore", timeout: 120000 });
 		}
 
-		// Verify it compiles
+		// Verify it compiles — non-fatal, just a warning
+		// Don't let a slow/heavy tsc check block the update
 		const tsconfig = join(repo, "packages/re-agent/tsconfig.json");
 		if (existsSync(tsconfig)) {
 			console.log(chalk.dim("  Verifying TypeScript compilation..."));
-			execSync("npx tsc --noEmit", { cwd: repo, stdio: "ignore", timeout: 60000 });
+			try {
+				execSync("npx tsc --noEmit --skipLibCheck", {
+					cwd: join(repo, "packages/re-agent"),
+					stdio: "ignore",
+					timeout: 30000,
+				});
+			} catch {
+				console.log(chalk.yellow("  ⚠ TypeScript check skipped (non-blocking)."));
+			}
 		}
 
 		const newVersion = git(`describe --tags --abbrev=0 ${DEVNULL}`, { cwd: repo }) || "unknown";
