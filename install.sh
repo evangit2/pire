@@ -344,14 +344,32 @@ pkg_install() {
 
 PIP_INSTALL_TIMEOUT=600
 
-# Run a command with a timeout. Falls back to Perl on macOS (no timeout/gtimeout).
+# Run a command with a timeout. On Linux, uses GNU `timeout`.
+# On macOS (no timeout/gtimeout), uses a Perl wrapper that kills the
+# entire process group so child processes (gcc, cc, ld) don't survive.
 run_with_timeout() {
 	if command -v timeout >/dev/null 2>&1; then
 		timeout "$PIP_INSTALL_TIMEOUT" "$@"
 	elif command -v gtimeout >/dev/null 2>&1; then
 		gtimeout "$PIP_INSTALL_TIMEOUT" "$@"
 	else
-		perl -e 'alarm shift; exec @ARGV' "$PIP_INSTALL_TIMEOUT" "$@"
+		perl -e '
+			use POSIX qw(setpgid);
+			my $secs = shift;
+			setpgid(0, 0);  # parent becomes process group leader
+			my $pid = fork();
+			if ($pid == 0) {
+				# child inherits parent pgid — do NOT call setpgid here
+				exec @ARGV or die "exec: $!";
+			}
+			local $SIG{ALRM} = sub {
+				kill -9, $$;  # signal entire process group
+				exit 124;
+			};
+			alarm $secs;
+			waitpid($pid, 0);
+			exit $? >> 8;
+		' "$PIP_INSTALL_TIMEOUT" "$@"
 	fi
 }
 
@@ -378,6 +396,13 @@ pip_install() {
 		return 1
 	fi
 
+	# Determine pip flags — --break-system-packages is only valid on
+	# Debian/Ubuntu (PEP 668). macOS and other platforms reject it.
+	PIPRE_FLAGS="--user"
+	if [ "$OS" = "debian" ] || [ "$OS" = "fedora" ] || [ "$OS" = "arch" ] || [ "$OS" = "suse" ]; then
+		PIPRE_FLAGS="--user --break-system-packages"
+	fi
+
 	if [ "$OS" = "windows" ]; then
 		PIPRE_OUT=$(run_with_timeout "$PIPRE_PY" -m pip install --user "$@" </dev/null 2>&1)
 		PIPRE_RC=$?
@@ -389,17 +414,20 @@ pip_install() {
 		return 1
 	fi
 
-	PIPRE_OUT=$(run_with_timeout "$PIPRE_PY" -m pip install --user --break-system-packages "$@" </dev/null 2>&1)
+	PIPRE_OUT=$(run_with_timeout "$PIPRE_PY" -m pip install $PIPRE_FLAGS "$@" </dev/null 2>&1)
 	PIPRE_RC=$?
 	if [ $PIPRE_RC -eq 0 ]; then
 		echo "$PIPRE_OUT" | grep -v "already satisfied" | tail -3
 		return 0
 	fi
-	PIPRE_OUT=$(run_with_timeout "$PIPRE_PY" -m pip install --user "$@" </dev/null 2>&1)
-	PIPRE_RC=$?
-	if [ $PIPRE_RC -eq 0 ]; then
-		echo "$PIPRE_OUT" | grep -v "already satisfied" | tail -3
-		return 0
+	# Fallback: try without --break-system-packages
+	if [ "$PIPRE_FLAGS" != "--user" ]; then
+		PIPRE_OUT=$(run_with_timeout "$PIPRE_PY" -m pip install --user "$@" </dev/null 2>&1)
+		PIPRE_RC=$?
+		if [ $PIPRE_RC -eq 0 ]; then
+			echo "$PIPRE_OUT" | grep -v "already satisfied" | tail -3
+			return 0
+		fi
 	fi
 	return 1
 }
