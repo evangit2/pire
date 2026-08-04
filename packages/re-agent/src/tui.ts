@@ -3,7 +3,7 @@
  *
  * Layout:
  *  ┌──────────────────────────────────────────────────┐
- *  │ pire v0.87.4  │  target: /bin/ls  │  22 tools  │
+ *  │ pire v0.88.0  │  target: /bin/ls  │  22 tools  │
  *  ├──────────────┬───────────────────────────────────┤
  *  │ Tools        │  Chat / Output                    │
  *  │ ✓ strings    │                                   │
@@ -32,11 +32,11 @@ import * as readline from "node:readline";
 import { readdirSync, readFileSync, existsSync, writeFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { RE_TOOLS, RE_SYSTEM_PROMPT, probeTools, fetchTool, type AgentTool } from "./index.js";
+import { RE_TOOLS, RE_SYSTEM_PROMPT, probeTools, fetchTool, validateToolParams, type AgentTool } from "./index.js";
 import { loadLLMConfig, toolToFunction, callLLM, type ChatMessage } from "./llm.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const VERSION = "0.87.4";
+const VERSION = "0.88.0";
 
 // ANSI
 const C = {
@@ -210,7 +210,10 @@ You have ${RE_TOOLS.length} tools available. Available on this system: ${availTo
 
 When the user mentions a path, binary, or directory — run tools on it yourself. Don't ask them to type commands.
 When the user provides a URL — use the fetch tool to download it first.
-Pick the right tools for whatever the user is asking for. Don't follow a fixed workflow — adapt to the task.`;
+Pick the right tools for whatever the user is asking for. Don't follow a fixed workflow — adapt to the task.
+
+IMPORTANT: When you need to write a file, use the shell tool with a command parameter. For example: shell(command="echo 'content' > /path/to/file"). Never call shell() without a command argument.
+When you have gathered enough information, write your analysis to a file using the shell tool. Do not just say you will write it — actually execute the shell tool with the full command.`;
 
 		const messages: ChatMessage[] = [
 			{ role: "system", content: systemPrompt },
@@ -222,8 +225,11 @@ Pick the right tools for whatever the user is asking for. Don't follow a fixed w
 
 		const toolSchemas = RE_TOOLS.map(toolToFunction);
 		const MAX_TURNS = 40;
+		const seenCalls = new Set<string>();
 
 		for (let turn = 0; turn < MAX_TURNS; turn++) {
+			this.push("info", `${C.dim}[turn ${turn + 1}/${MAX_TURNS}]${C.reset}`);
+
 			let resp;
 			try {
 				resp = await callLLM(this.llm, messages, toolSchemas, {
@@ -246,8 +252,12 @@ Pick the right tools for whatever the user is asking for. Don't follow a fixed w
 				for (const tc of resp.tool_calls) {
 					let args: Record<string, unknown> = {};
 					try { args = JSON.parse(tc.function.arguments); } catch {}
+					// Show full args for shell tool, truncate others
 					const argStr = Object.entries(args).map(([k,v]) => {
 						const val = String(v);
+						if (tc.function.name === "shell" && k === "command") {
+							return `${k}=${val}`;
+						}
 						return val.length > 100 ? `${k}=${val.slice(0,100)}...` : `${k}=${val}`;
 					}).join(" ");
 					this.push("tool", `${tc.function.name}(${argStr})`);
@@ -264,6 +274,23 @@ Pick the right tools for whatever the user is asking for. Don't follow a fixed w
 					let params: Record<string, unknown>;
 					try { params = JSON.parse(tc.function.arguments); }
 					catch { params = {}; }
+
+					// Validate required params before execution
+					const validationError = validateToolParams(tool, params);
+					if (validationError) {
+						messages.push({ role: "tool", tool_call_id: tc.id, content: `Error: ${validationError}` });
+						this.push("err", validationError);
+						continue;
+					}
+
+					// Deduplicate identical tool calls within the same turn
+					const callSig = `${tc.function.name}:${JSON.stringify(params)}`;
+					if (seenCalls.has(callSig)) {
+						messages.push({ role: "tool", tool_call_id: tc.id, content: "Skipped: identical call already executed this turn. Use the previous result." });
+						this.push("info", "(skipped: duplicate call)");
+						continue;
+					}
+					seenCalls.add(callSig);
 
 					this.render();
 					try {
@@ -626,7 +653,10 @@ You have ${RE_TOOLS.length} tools available. Available on this system: ${availTo
 
 When the user mentions a path, binary, or directory — run tools on it yourself. Don't ask them to type commands.
 When the user provides a URL — use the fetch tool to download it first.
-Pick the right tools for whatever the user is asking for. Don't follow a fixed workflow — adapt to the task.`;
+Pick the right tools for whatever the user is asking for. Don't follow a fixed workflow — adapt to the task.
+
+IMPORTANT: When you need to write a file, use the shell tool with a command parameter. For example: shell(command="echo 'content' > /path/to/file"). Never call shell() without a command argument.
+When you have gathered enough information, write your analysis to a file using the shell tool. Do not just say you will write it — actually execute the shell tool with the full command.`;
 
 		const messages: ChatMessage[] = [
 			{ role: "system", content: systemPrompt },
@@ -638,8 +668,11 @@ Pick the right tools for whatever the user is asking for. Don't follow a fixed w
 
 		const toolSchemas = RE_TOOLS.map(toolToFunction);
 		const MAX_TURNS = 40;
+		const seenCalls = new Set<string>();
 
 		for (let turn = 0; turn < MAX_TURNS; turn++) {
+			process.stdout.write(`\r${C.dim}[turn ${turn + 1}/${MAX_TURNS}]${C.reset} `);
+
 			let resp;
 			try {
 				resp = await callLLM(this.llm, messages, toolSchemas, {
@@ -656,11 +689,16 @@ Pick the right tools for whatever the user is asking for. Don't follow a fixed w
 				for (const tc of resp.tool_calls) {
 					let args: Record<string, unknown> = {};
 					try { args = JSON.parse(tc.function.arguments); } catch {}
+
+					// Show full args for shell tool, truncate others
 					const argStr = Object.entries(args).map(([k,v]) => {
 						const val = String(v);
+						if (tc.function.name === "shell" && k === "command") {
+							return `${k}=${val}`;
+						}
 						return val.length > 100 ? `${k}=${val.slice(0,100)}...` : `${k}=${val}`;
 					}).join(" ");
-					console.log(`⚙ ${tc.function.name}(${argStr})`);
+					console.log(`\r${C.green}⚙${C.reset} ${tc.function.name}(${argStr})`);
 				}
 
 				messages.push({ role: "assistant", content: resp.content, tool_calls: resp.tool_calls });
@@ -675,13 +713,34 @@ Pick the right tools for whatever the user is asking for. Don't follow a fixed w
 					try { params = JSON.parse(tc.function.arguments); }
 					catch { params = {}; }
 
+					// Validate required params before execution
+					const validationError = validateToolParams(tool, params);
+					if (validationError) {
+						messages.push({ role: "tool", tool_call_id: tc.id, content: `Error: ${validationError}` });
+						console.log(`  ${C.red}! ${validationError}${C.reset}`);
+						continue;
+					}
+
+					// Deduplicate identical tool calls within the same turn
+					const callSig = `${tc.function.name}:${JSON.stringify(params)}`;
+					if (seenCalls.has(callSig)) {
+						messages.push({ role: "tool", tool_call_id: tc.id, content: "Skipped: identical call already executed this turn. Use the previous result." });
+						console.log(`  ${C.dim}(skipped: duplicate call)${C.reset}`);
+						continue;
+					}
+					seenCalls.add(callSig);
+
 					try {
 						const result = await tool.execute("pire", params);
 						const text = result.content.map((c: { text: string }) => c.text).join("\n");
 						const truncated = text.length > 16000 ? text.slice(0, 16000) + "\n... (truncated)" : text;
 						messages.push({ role: "tool", tool_call_id: tc.id, content: truncated });
+						// Show tool result summary
+						const displayText = text.length > 500 ? text.slice(0, 500) + `\n... (${text.length} bytes total)` : text;
+						console.log(`  ${C.dim}${displayText}${C.reset}`);
 					} catch (e) {
 						messages.push({ role: "tool", tool_call_id: tc.id, content: `Error: ${e instanceof Error ? e.message : e}` });
+						console.log(`  ${C.red}! ${e instanceof Error ? e.message : e}${C.reset}`);
 					}
 				}
 				continue;

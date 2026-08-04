@@ -14,6 +14,7 @@
  *   pire --tools              — List available RE tools
  *   pire --skills             — List available RE skills
  *   pire --probe              — Probe system for installed tools
+ *   pire -mcp [--port N]      — Start MCP server (stdio or TCP)
  *   pire --version            — Print version
  */
 
@@ -109,6 +110,7 @@ Usage:
   pire --tools              List available RE tools
   pire --skills             List available RE skills
   pire --probe              Probe system for installed tools
+  pire -mcp [--port N]      Start MCP server (stdio by default, TCP with --port)
   pire --version            Print version
 
 Chat Commands:
@@ -168,10 +170,18 @@ switch (args[0]) {
 		await import("./pire-uninstall.js");
 		break;
 	default:
-		if (args[0]?.startsWith("-") && !["-cli", "--cli", "-ansi", "--ansi"].includes(args[0])) {
+		if (args[0]?.startsWith("-") && !["-cli", "--cli", "-ansi", "--ansi", "-mcp", "--mcp"].includes(args[0])) {
 			console.error(`Unknown option: ${args[0]}`);
 			process.exit(1);
 		}
+		// Start MCP server if -mcp flag is present
+		if (args.includes("-mcp") || args.includes("--mcp")) {
+			const mcpArgs = args.slice(args.indexOf(args.find(a => a === "-mcp" || a === "--mcp")!) + 1);
+			const { startMCPServer } = await import("./mcp-server.js");
+			await startMCPServer(mcpArgs);
+			break;
+		}
+
 		// Start interactive session
 		const target = positionalArgs[0];
 		if (mode === "cli") {

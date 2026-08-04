@@ -85,7 +85,7 @@ console.log("\n─ CLI ─");
 
 ok(cliSrc.includes("--probe"), "CLI has --probe flag");
 ok(cliSrc.includes("probeTools"), "CLI calls probeTools");
-ok(!cliSrc.includes("--mcp"), "CLI no longer has --mcp flag");
+ok(cliSrc.includes("-mcp"), "CLI has -mcp flag for MCP server");
 ok(cliSrc.includes("--tools"), "CLI has --tools flag");
 ok(cliSrc.includes("--skills"), "CLI has --skills flag");
 ok(cliSrc.includes("PireTUI"), "CLI imports PireTUI (ANSI TUI)");
@@ -159,7 +159,7 @@ ok(piTuiSrc.includes("agentLoop"), "Pi TUI has agentLoop method");
 ok(piTuiSrc.includes("onContent"), "Pi TUI streams content via onContent callback");
 ok(piTuiSrc.includes("tool_call"), "Pi TUI displays tool calls");
 ok(piTuiSrc.includes("tool_result"), "Pi TUI displays tool results");
-ok(piTuiSrc.includes("0.87.4"), "Pi TUI version is 0.87.4");
+ok(piTuiSrc.includes("0.88.0"), "Pi TUI version is 0.88.0");
 ok(piTuiSrc.includes("MAX_TURNS"), "Pi TUI has turn limit");
 ok(piTuiSrc.includes("MAX_OUTPUT"), "Pi TUI has output truncation");
 ok(tuiSrc.includes("agentLoop"), "TUI has agentLoop for autonomous tool calling");
@@ -172,6 +172,22 @@ ok(tuiSrc.includes("scrollOffset"), "TUI supports scrollback navigation");
 ok(tuiSrc.includes("PgUp") || tuiSrc.includes("Page Up") || tuiSrc.includes("0x35"), "TUI handles Page Up key");
 ok(tuiSrc.includes("PgDn") || tuiSrc.includes("Page Down") || tuiSrc.includes("0x36"), "TUI handles Page Down key");
 ok(tuiSrc.includes("split-pane") || tuiSrc.includes("sidebar") || tuiSrc.includes("Tools"), "TUI has tools sidebar");
+
+// ─── 5c. Agent Loop Improvements ─────────────────────────────
+
+console.log("\n─ Agent Loop Improvements ─");
+
+ok(src.includes("validateToolParams"), "validateToolParams function exported");
+ok(src.includes("Missing required parameter"), "validation returns helpful error message");
+ok(tuiSrc.includes("validateToolParams"), "TUI imports validateToolParams");
+ok(tuiSrc.includes("validateToolParams"), "TUI imports validateToolParams");
+ok(tuiSrc.includes("seenCalls"), "TUI deduplicates identical tool calls");
+ok(tuiSrc.includes("duplicate call"), "TUI reports duplicate calls");
+ok(src.includes("analyzedFiles"), "R2Session tracks analyzed files");
+ok(src.includes("isAnalyzed"), "R2Session has isAnalyzed method");
+ok(tuiSrc.includes("turn ${turn + 1}/${MAX_TURNS}") || tuiSrc.includes("turn ${turn"), "TUI shows turn counter");
+ok(tuiSrc.includes("shell") && tuiSrc.includes("command"), "TUI handles shell tool with command param");
+ok(tuiSrc.includes("IMPORTANT: When you need to write a file"), "system prompt has shell usage guidance");
 
 // ─── 6. System Prompt ─────────────────────────────────────────
 
@@ -267,7 +283,7 @@ if (fs.existsSync(pireConfig)) {
 console.log("\n─ Package Config ─");
 
 const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf-8"));
-ok(pkg.version === "0.87.4", `version is 0.87.4 (got ${pkg.version})`);
+ok(pkg.version === "0.88.0", `version is 0.88.0 (got ${pkg.version})`);
 ok(pkg.bin && pkg.bin.pire, "has pire bin entry");
 ok(pkg.scripts.test.includes("test-suite.cjs"), "test script runs test-suite");
 ok(pkg.scripts.test.includes("test-models.cjs"), "test script runs test-models");
@@ -500,16 +516,16 @@ ok(tuiSrc.includes("loadedTarget"), "TUI tracks loaded target");
 ok(tuiSrc.includes("MAX_TURNS = 40"), "TUI has 40 turn limit");
 ok(tuiSrc.includes("onContent"), "TUI streams content to stdout");
 ok(tuiSrc.includes("VERSION"), "TUI has version constant");
-ok(tuiSrc.includes("0.87.4"), "TUI version is 0.87.4");
+ok(tuiSrc.includes("0.88.0"), "TUI version is 0.88.0");
 
 // ─── 25. Version Alignment ────────────────────────────────────
 
 console.log("\n─ Version Alignment ─");
 
 const rootPkg = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "..", "..", "package.json"), "utf-8"));
-ok(rootPkg.version === "0.87.4", `root package.json version is 0.87.4 (got ${rootPkg.version})`);
-ok(pkg.version === "0.87.4", `re-agent package.json version is 0.87.4 (got ${pkg.version})`);
-ok(tuiSrc.includes("0.87.4"), `tui.ts VERSION is 0.87.4`);
+ok(rootPkg.version === "0.88.0", `root package.json version is 0.88.0 (got ${rootPkg.version})`);
+ok(pkg.version === "0.88.0", `re-agent package.json version is 0.88.0 (got ${pkg.version})`);
+ok(tuiSrc.includes("0.88.0"), `tui.ts VERSION is 0.88.0`);
 
 // ─── 26. Skills Not Gitignored ────────────────────────────────
 

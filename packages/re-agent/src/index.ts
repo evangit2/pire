@@ -285,9 +285,14 @@ class R2Session {
 	private currentFile: string | null = null;
 	private r2path: string | null = null;
 	private proc: { child: ReturnType<typeof spawn>; stdin: NodeJS.WritableStream; stdout: string } | null = null;
+	private analyzedFiles: Set<string> = new Set();
 
 	constructor() {
 		this.r2path = which("r2") ?? which("radare2");
+	}
+
+	isAnalyzed(path: string): boolean {
+		return this.analyzedFiles.has(path);
 	}
 
 	private ensureProcess(path: string): void {
@@ -311,6 +316,11 @@ class R2Session {
 	async run(path: string, command: string): Promise<string> {
 		this.ensureProcess(path);
 		if (!this.proc) throw new Error("r2 process not started");
+
+		// Track analysis state
+		if (command.startsWith("aaa") || command.includes("; aaa;") || command.includes("\naaa\n")) {
+			this.analyzedFiles.add(path);
+		}
 
 		// Use a marker to detect command completion
 		const marker = `__PIRE_END_${Date.now()}__`;
@@ -361,7 +371,11 @@ const r2Tool: AgentTool<{ path: string; command: string }> = {
 		command: Type.String({ description: "Radare2 command string" }),
 	}),
 	async execute(_id, params) {
-		return textResult(await r2Session.run(params.path, params.command));
+		// Auto-run 'aaa' on first call per file, prepend to subsequent commands only if not already analyzed
+		const cmd = params.command.startsWith("aaa") || r2Session.isAnalyzed(params.path)
+			? params.command
+			: `aaa; ${params.command}`;
+		return textResult(await r2Session.run(params.path, cmd));
 	},
 };
 
@@ -375,7 +389,10 @@ const decompileTool: AgentTool<{ path: string; address: string }> = {
 		address: Type.String({ description: "Function address (hex, e.g. 0x1400016b0)" }),
 	}),
 	async execute(_id, params) {
-		return textResult(await r2Session.run(params.path, `aaa; s ${params.address}; pdc`));
+		const cmd = r2Session.isAnalyzed(params.path)
+			? `s ${params.address}; pdc`
+			: `aaa; s ${params.address}; pdc`;
+		return textResult(await r2Session.run(params.path, cmd));
 	},
 };
 
@@ -1194,6 +1211,19 @@ else:
 };
 
 // ─── Tool Registry ─────────────────────────────────────────────
+
+/** Validate that required tool parameters are present and non-empty. Returns error string or null. */
+export function validateToolParams(tool: AgentTool<any>, params: Record<string, unknown>): string | null {
+	const schema = tool.parameters as any;
+	const required: string[] = schema?.required ?? Object.keys(schema?.properties ?? {});
+	for (const key of required) {
+		const val = params[key];
+		if (val === undefined || val === null || val === "") {
+			return `Missing required parameter "${key}" for tool "${tool.name}". You must provide this parameter.`;
+		}
+	}
+	return null;
+}
 
 export const RE_TOOLS: AgentTool<any>[] = [
 	// Shell (always available)
