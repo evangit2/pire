@@ -291,7 +291,16 @@ pkg_install() {
 	case "$PKG_MGR" in
 		apt)    sudo apt-get install -y -qq "$@" </dev/null >/dev/null 2>&1 ;;
 		dnf)    sudo dnf install -y -q "$@" </dev/null >/dev/null 2>&1 ;;
-		pacman) sudo pacman -S --noconfirm --needed "$@" </dev/null >/dev/null 2>&1 ;;
+		pacman)
+			# On Windows/MSYS2, pacman prints "Command line alias added" for
+			# every toolchain binary. Suppress that noise.
+			if [ "$OS" = "windows" ]; then
+				sudo pacman -S --noconfirm --needed "$@" </dev/null 2>&1 \
+					| grep -v "Command line alias added" >&2 || true
+			else
+				sudo pacman -S --noconfirm --needed "$@" </dev/null >/dev/null 2>&1
+			fi
+			;;
 		zypper) sudo zypper install -y -q "$@" </dev/null >/dev/null 2>&1 ;;
 		apk)    sudo apk add -q "$@" </dev/null >/dev/null 2>&1 ;;
 		brew)   brew install "$@" </dev/null >/dev/null 2>&1 ;;
@@ -327,8 +336,20 @@ pip_install() {
 	fi
 
 	# Try with --break-system-packages first (PEP 668 / Debian 12+),
-	# fall back to plain --user for older distros.
+	# but skip that flag on Windows/MSYS2 where it doesn't exist.
 	# Show last few lines of output so user can see real errors.
+	if [ "$OS" = "windows" ]; then
+		PIPRE_OUT=$($PIPRE_PY -m pip install --user "$@" </dev/null 2>&1)
+		PIPRE_RC=$?
+		if [ $PIPRE_RC -eq 0 ]; then
+			echo "$PIPRE_OUT" | grep -v "already satisfied" | tail -3
+			return 0
+		fi
+		echo "$PIPRE_OUT" | tail -3
+		log_warn "pip install failed: $*"
+		return 1
+	fi
+
 	PIPRE_OUT=$($PIPRE_PY -m pip install --user --break-system-packages "$@" </dev/null 2>&1)
 	PIPRE_RC=$?
 	if [ $PIPRE_RC -eq 0 ]; then
@@ -487,7 +508,10 @@ fi
 if [ "$INSTALL_GDB" = "1" ]; then
 	log_section "GDB"
 	log_step "Installing GDB..."
-	pkg_install gdb
+	case "$OS" in
+		windows) pkg_install mingw-w64-x86_64-gdb ;;
+		*)       pkg_install gdb ;;
+	esac
 fi
 
 # ── Install Binwalk ───────────────────────────────────────────
@@ -497,6 +521,21 @@ if [ "$INSTALL_BINWALK" = "1" ]; then
 	case "$OS" in
 		debian|fedora|arch|suse) pkg_install binwalk ;;
 		macos) brew install binwalk ;;
+		windows)
+			# Binwalk has limited Windows support — install via pip without
+			# the Linux-only --break-system-packages flag
+			if command -v python3 >/dev/null 2>&1; then
+				python3 -m pip install --user binwalk </dev/null 2>&1 | tail -3 \
+					|| python3 -m pip install binwalk </dev/null 2>&1 | tail -3 \
+					|| log_warn "Binwalk install failed — try: pip install binwalk"
+			elif command -v python >/dev/null 2>&1; then
+				python -m pip install --user binwalk </dev/null 2>&1 | tail -3 \
+					|| python -m pip install binwalk </dev/null 2>&1 | tail -3 \
+					|| log_warn "Binwalk install failed — try: pip install binwalk"
+			else
+				log_warn "Python not found — skipping binwalk"
+			fi
+			;;
 		*) pip_install binwalk ;;
 	esac
 fi
