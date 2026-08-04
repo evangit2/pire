@@ -33,6 +33,7 @@ import {
 	Input,
 	visibleWidth,
 	truncateToWidth,
+	wrapTextWithAnsi,
 	type Component,
 } from "@earendil-works/pi-tui";
 import { RE_TOOLS, RE_SYSTEM_PROMPT, probeTools } from "./index.js";
@@ -87,15 +88,17 @@ class ToolSidebar implements Component {
 	}
 
 	render(width: number): string[] {
-		if (this.cached && this.cachedW === width) return this.cached;
+		// Always render at fixed sidebar width regardless of what HStack passes
+		const fixedWidth = 20;
+		if (this.cached && this.cachedW === fixedWidth) return this.cached;
 		const lines: string[] = [];
 		lines.push(chalk.bold.cyan("Tools"));
-		lines.push(chalk.dim("─".repeat(Math.min(width, 20))));
+		lines.push(chalk.dim("─".repeat(fixedWidth)));
 		lines.push("");
 		for (const tool of RE_TOOLS) {
 			const ok = this.status[tool.name] ?? false;
 			const icon = ok ? chalk.green("✓") : chalk.gray("✗");
-			const name = truncateToWidth(tool.name, width - 4);
+			const name = truncateToWidth(tool.name, fixedWidth - 4);
 			lines.push(`${icon} ${chalk.dim(name)}`);
 		}
 		const avail = Object.values(this.status).filter(Boolean).length;
@@ -103,7 +106,7 @@ class ToolSidebar implements Component {
 		lines.push("");
 		lines.push(chalk.dim(`${avail}/${total} available`));
 		this.cached = lines;
-		this.cachedW = width;
+		this.cachedW = fixedWidth;
 		return lines;
 	}
 
@@ -139,6 +142,7 @@ class TranscriptView implements Component {
 	render(width: number): string[] {
 		if (this.cached && this.cachedW === width) return this.cached;
 		const lines: string[] = [];
+		const contentWidth = Math.max(10, width);
 		for (const e of this.entries) {
 			let prefix = "";
 			let color = (s: string) => s;
@@ -151,21 +155,20 @@ class TranscriptView implements Component {
 				case "error":     prefix = `${chalk.bold.red("error")} > `;   color = chalk.red; break;
 			}
 			const prefixLen = visibleWidth(prefix);
-			// Simple word-wrap that preserves ANSI
+			const wrapWidth = Math.max(10, contentWidth - prefixLen);
+			// Use Pi's wrapTextWithAnsi for proper ANSI-preserving word wrap
 			for (const rawLine of e.text.split("\n")) {
-				const words = rawLine.split(" ");
-				let cur = "";
-				for (const word of words) {
-					if (visibleWidth(cur + " " + word) > width - prefixLen && cur) {
-						lines.push(prefix + color(cur));
-						cur = word;
+				const wrapped = wrapTextWithAnsi(rawLine, wrapWidth);
+				for (let i = 0; i < wrapped.length; i++) {
+					if (i === 0) {
+						lines.push(prefix + color(wrapped[i]));
 					} else {
-						cur = cur ? cur + " " + word : word;
+						lines.push(" ".repeat(prefixLen) + color(wrapped[i]));
 					}
 				}
-				lines.push(prefix + color(cur));
-				// Continuation lines use spaces
-				prefix = " ".repeat(prefixLen);
+				if (wrapped.length === 0) {
+					lines.push(prefix);
+				}
 			}
 		}
 		this.cached = lines;
@@ -267,8 +270,7 @@ export class PirePiTUI {
 		this.chatContainer = new Container();
 		this.chatContainer.addChild(this.scrollView);
 		this.chatContainer.addChild(new DynamicBorder());
-		this.chatContainer.addChild(new Box(1, 0, (s: string) => chalk.dim(s)));
-		// Box wraps status bar with padding
+		// Status bar with padding
 		const statusBox = new Box(1, 0);
 		statusBox.addChild(this.statusBar);
 		this.chatContainer.addChild(statusBox);
@@ -284,7 +286,7 @@ export class PirePiTUI {
 			{ component: this.chatContainer, basis: 0, grow: 1, shrink: 1, minSize: 10 },
 		]);
 		const mainHStack = new HStack([
-			{ component: sidebarVStack, basis: 24, grow: 0, shrink: 0, minSize: 15 },
+			{ component: sidebarVStack, basis: 22, grow: 0, shrink: 0, minSize: 22, maxSize: 22 },
 			{ component: chatVStack, basis: 0, grow: 1, shrink: 1, minSize: 20 },
 		]);
 
