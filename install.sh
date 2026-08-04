@@ -326,8 +326,16 @@ pip_install() {
 		return 1
 	fi
 
+	# Use timeout if available, otherwise run without (macOS doesn't have timeout)
+	PIP_TIMEOUT_CMD=""
+	if command -v timeout >/dev/null 2>&1; then
+		PIP_TIMEOUT_CMD="timeout $PIP_INSTALL_TIMEOUT"
+	elif command -v gtimeout >/dev/null 2>&1; then
+		PIP_TIMEOUT_CMD="gtimeout $PIP_INSTALL_TIMEOUT"
+	fi
+
 	if [ "$OS" = "windows" ]; then
-		PIPRE_OUT=$(timeout "$PIP_INSTALL_TIMEOUT" $PIPRE_PY -m pip install --user "$@" </dev/null 2>&1)
+		PIPRE_OUT=$($PIP_TIMEOUT_CMD $PIPRE_PY -m pip install --user "$@" </dev/null 2>&1)
 		PIPRE_RC=$?
 		if [ $PIPRE_RC -eq 0 ]; then
 			echo "$PIPRE_OUT" | grep -v "already satisfied" | tail -3
@@ -337,13 +345,13 @@ pip_install() {
 		return 1
 	fi
 
-	PIPRE_OUT=$(timeout "$PIP_INSTALL_TIMEOUT" $PIPRE_PY -m pip install --user --break-system-packages "$@" </dev/null 2>&1)
+	PIPRE_OUT=$($PIP_TIMEOUT_CMD $PIPRE_PY -m pip install --user --break-system-packages "$@" </dev/null 2>&1)
 	PIPRE_RC=$?
 	if [ $PIPRE_RC -eq 0 ]; then
 		echo "$PIPRE_OUT" | grep -v "already satisfied" | tail -3
 		return 0
 	fi
-	PIPRE_OUT=$(timeout "$PIP_INSTALL_TIMEOUT" $PIPRE_PY -m pip install --user "$@" </dev/null 2>&1)
+	PIPRE_OUT=$($PIP_TIMEOUT_CMD $PIPRE_PY -m pip install --user "$@" </dev/null 2>&1)
 	PIPRE_RC=$?
 	if [ $PIPRE_RC -eq 0 ]; then
 		echo "$PIPRE_OUT" | grep -v "already satisfied" | tail -3
@@ -478,7 +486,11 @@ COMP_LABELS=""
 
 add_component() {
 	COMPONENTS="$COMPONENTS $1"
-	COMP_LABELS="$COMP_LABELS|$2"
+	if [ -z "$COMP_LABELS" ]; then
+		COMP_LABELS="$2"
+	else
+		COMP_LABELS="$COMP_LABELS|$2"
+	fi
 	echo "$ST_PENDING" > "$TMPDIR_PIRE/$1.status"
 }
 
