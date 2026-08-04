@@ -86,7 +86,13 @@ export class PireTUI {
 
 	async start() {
 		this.isActive = true;
-		this.push("info", `pire v${VERSION} — Reverse Engineering Agent`);
+		this.push("info", `       ,--.               `);
+		this.push("info", ` ,---. \`--',--.--. ,---.  `);
+		this.push("info", `| .-. |,--.|  .--'| .-. : `);
+		this.push("info", `| '-' '|  ||  |   \\   --. `);
+		this.push("info", `|  |-' \`--'\`--'    \`----'  v${VERSION}`);
+		this.push("info", `\`--'                      `);
+		this.push("info", ``);
 		this.push("info", `Tell me what you need. I'll run the tools myself.`);
 
 		if (this.llm) {
@@ -513,8 +519,14 @@ export class PireCLI {
 	}
 
 	async start() {
-		console.log(`pire v${VERSION} — Reverse Engineering Agent (CLI mode)`);
-		console.log(`Tell me what you need. I'll run the tools myself.`);
+		console.log("       ,--.               ");
+		console.log(" ,---. `--',--.--. ,---.  ");
+		console.log("| .-. |,--.|  .--'| .-. : ");
+		console.log("| '-' '|  ||  |   \\   --. ");
+		console.log(`|  |-' \`--'\`--'    \`----'  v${VERSION}`);
+		console.log("`--'                      ");
+		console.log("");
+		console.log("Tell me what you need. I'll run the tools myself.");
 
 		if (this.llm) {
 			console.log(`LLM: ${this.llm.model}`);
