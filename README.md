@@ -9,7 +9,7 @@ Reverse-engineering agent. Give it a binary, URL, or directory and it figures ou
 curl -fsSL https://raw.githubusercontent.com/evangit2/pire/main/install.sh | sh
 ```
 
-**Windows (PowerShell) (IN BETA, recommended to just install Linux/macOS in a Windows WSL instance):**
+**Windows (PowerShell) (IN BETA, recommended to just use WSL instead):**
 ```powershell
 irm https://raw.githubusercontent.com/evangit2/pire/main/install.ps1 | iex
 ```
