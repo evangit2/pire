@@ -88,12 +88,16 @@ ok(cliSrc.includes("probeTools"), "CLI calls probeTools");
 ok(!cliSrc.includes("--mcp"), "CLI no longer has --mcp flag");
 ok(cliSrc.includes("--tools"), "CLI has --tools flag");
 ok(cliSrc.includes("--skills"), "CLI has --skills flag");
-ok(cliSrc.includes("PireTUI"), "CLI imports PireTUI");
+ok(cliSrc.includes("PireTUI"), "CLI imports PireTUI (ANSI TUI)");
 ok(cliSrc.includes("PireCLI"), "CLI imports PireCLI");
-ok(cliSrc.includes("tui.start()"), "CLI starts TUI by default");
-ok(cliSrc.includes("cli.start()"), "CLI starts CLI mode with -cli flag");
+ok(cliSrc.includes("PirePiTUI"), "CLI imports PirePiTUI (Pi-framework TUI)");
+ok(cliSrc.includes("pi-tui"), "CLI has pi-tui import");
+ok(cliSrc.includes("-ansi"), "CLI has -ansi flag");
 ok(cliSrc.includes("-cli"), "CLI has -cli flag");
-ok(cliSrc.includes("useCliMode"), "CLI tracks useCliMode flag");
+ok(cliSrc.includes("mode === \"cli\""), "CLI routes to CLI mode");
+ok(cliSrc.includes("mode === \"ansi\""), "CLI routes to ANSI TUI mode");
+ok(cliSrc.includes("PirePiTUI(target)"), "CLI instantiates PirePiTUI for default mode");
+ok(!cliSrc.includes("mode === \"pi\""), "Pi TUI is the else/default branch (no explicit pi check needed)");
 ok(cliSrc.includes(":quit"), "CLI help mentions :quit");
 
 // ─── 5. TUI ────────────────────────────────────────────────────
@@ -112,6 +116,49 @@ ok(tuiSrc.includes(":quit"), "TUI has :quit command");
 ok(tuiSrc.includes(":clear"), "TUI has :clear command");
 ok(tuiSrc.includes("RE_TOOLS"), "TUI imports RE_TOOLS");
 ok(tuiSrc.includes("probeTools"), "TUI imports probeTools");
+
+// ─── 5b. Pi-framework TUI ─────────────────────────────────────
+
+console.log("\n─ Pi-framework TUI ─");
+
+const piTuiSrc = fs.readFileSync(path.join(__dirname, "..", "src", "pire-pi-tui.ts"), "utf-8");
+
+ok(piTuiSrc.includes("class PirePiTUI"), "PirePiTUI class exists");
+ok(piTuiSrc.includes("@earendil-works/pi-tui"), "Pi TUI imports from @earendil-works/pi-tui");
+ok(piTuiSrc.includes("TuiMainScreen"), "Pi TUI uses TuiMainScreen");
+ok(piTuiSrc.includes("ProcessTerminal"), "Pi TUI uses ProcessTerminal");
+ok(piTuiSrc.includes("ScrollView"), "Pi TUI uses ScrollView");
+ok(piTuiSrc.includes("VStack"), "Pi TUI uses VStack");
+ok(piTuiSrc.includes("HStack"), "Pi TUI uses HStack");
+ok(piTuiSrc.includes("Container"), "Pi TUI uses Container");
+ok(piTuiSrc.includes("Text"), "Pi TUI uses Text component");
+ok(piTuiSrc.includes("class ToolSidebar"), "Pi TUI has ToolSidebar component");
+ok(piTuiSrc.includes("class TranscriptView"), "Pi TUI has TranscriptView component");
+ok(piTuiSrc.includes("class StatusBar"), "Pi TUI has StatusBar component");
+ok(piTuiSrc.includes("class InputLine"), "Pi TUI has InputLine component");
+ok(piTuiSrc.includes("addInputListener"), "Pi TUI registers input listener");
+ok(piTuiSrc.includes("requestRender"), "Pi TUI calls requestRender for updates");
+ok(piTuiSrc.includes("addChild"), "Pi TUI adds layout root via addChild");
+ok(piTuiSrc.includes(":load"), "Pi TUI has :load command");
+ok(piTuiSrc.includes(":tools"), "Pi TUI has :tools command");
+ok(piTuiSrc.includes(":probe"), "Pi TUI has :probe command");
+ok(piTuiSrc.includes(":skills"), "Pi TUI has :skills command");
+ok(piTuiSrc.includes(":help"), "Pi TUI has :help command");
+ok(piTuiSrc.includes(":quit"), "Pi TUI has :quit command");
+ok(piTuiSrc.includes(":clear"), "Pi TUI has :clear command");
+ok(piTuiSrc.includes(":save"), "Pi TUI has :save command");
+ok(piTuiSrc.includes("callLLM"), "Pi TUI calls callLLM for inference");
+ok(piTuiSrc.includes("toolToFunction"), "Pi TUI converts tools to function schema");
+ok(piTuiSrc.includes("loadLLMConfig"), "Pi TUI loads LLM config");
+ok(piTuiSrc.includes("RE_TOOLS"), "Pi TUI imports RE_TOOLS");
+ok(piTuiSrc.includes("probeTools"), "Pi TUI imports probeTools");
+ok(piTuiSrc.includes("agentLoop"), "Pi TUI has agentLoop method");
+ok(piTuiSrc.includes("onContent"), "Pi TUI streams content via onContent callback");
+ok(piTuiSrc.includes("tool_call"), "Pi TUI displays tool calls");
+ok(piTuiSrc.includes("tool_result"), "Pi TUI displays tool results");
+ok(piTuiSrc.includes("0.85.0"), "Pi TUI version is 0.85.0");
+ok(piTuiSrc.includes("MAX_TURNS"), "Pi TUI has turn limit");
+ok(piTuiSrc.includes("MAX_OUTPUT"), "Pi TUI has output truncation");
 ok(tuiSrc.includes("agentLoop"), "TUI has agentLoop for autonomous tool calling");
 ok(tuiSrc.includes("tool_calls"), "TUI handles tool_calls from LLM");
 ok(tuiSrc.includes("toolToFunction"), "TUI converts tools to function schemas");

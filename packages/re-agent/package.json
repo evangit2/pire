@@ -12,6 +12,7 @@
 		"check": "tsc --noEmit"
 	},
 	"dependencies": {
+		"@earendil-works/pi-tui": "*",
 		"typebox": "*"
 	},
 	"devDependencies": {

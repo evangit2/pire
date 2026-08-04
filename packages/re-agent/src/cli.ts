@@ -3,10 +3,11 @@
  * pire CLI entry point
  *
  * Usage:
- *   pire                      — Start TUI dashboard (default)
- *   pire -cli                 — Start CLI-only mode (plain readline, no dashboard)
- *   pire <path>               — Start with a target loaded
- *   pire -cli <path>          — CLI mode with a target loaded
+ *   pire                      — Start Pi-framework TUI (default)
+ *   pire -ansi                — Start hand-rolled ANSI TUI
+ *   pire -cli                 — Start CLI-only mode (plain readline)
+ *   pire <path|URL>           — Start with a target loaded
+ *   pire -cli <path|URL>      — CLI mode with a target loaded
  *   pire --tools              — List available RE tools
  *   pire --skills             — List available RE skills
  *   pire --probe              — Probe system for installed tools
@@ -15,6 +16,7 @@
 
 import { RE_TOOLS, RE_SYSTEM_PROMPT, probeTools } from "./index.js";
 import { PireTUI, PireCLI } from "./tui.js";
+import { PirePiTUI } from "./pire-pi-tui.js";
 import { readdirSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -92,7 +94,8 @@ if (args[0] === "--help" || args[0] === "-h") {
 	console.log(`pire — Reverse Engineering Agent
 
 Usage:
-  pire                      Start TUI dashboard (default)
+  pire                      Start Pi-framework TUI (default)
+  pire -ansi                Start hand-rolled ANSI TUI
   pire -cli                 Start CLI-only mode (plain readline)
   pire <path|URL>           Start with a target loaded
   pire -cli <path|URL>      CLI mode with a target loaded
@@ -117,13 +120,15 @@ Chat Commands:
 	process.exit(0);
 }
 
-// Check for -cli flag
-let useCliMode = false;
+// Parse flags
+let mode: "pi" | "ansi" | "cli" = "pi";
 let positionalArgs: string[] = [];
 
 for (const arg of args) {
 	if (arg === "-cli" || arg === "--cli") {
-		useCliMode = true;
+		mode = "cli";
+	} else if (arg === "-ansi" || arg === "--ansi") {
+		mode = "ansi";
 	} else if (!arg.startsWith("-")) {
 		positionalArgs.push(arg);
 	}
@@ -144,17 +149,20 @@ switch (args[0]) {
 		showVersion();
 		break;
 	default:
-		if (args[0]?.startsWith("-") && args[0] !== "-cli" && args[0] !== "--cli") {
+		if (args[0]?.startsWith("-") && !["-cli", "--cli", "-ansi", "--ansi"].includes(args[0])) {
 			console.error(`Unknown option: ${args[0]}`);
 			process.exit(1);
 		}
-		// Start interactive session — TUI by default, CLI with -cli flag
+		// Start interactive session
 		const target = positionalArgs[0];
-		if (useCliMode) {
+		if (mode === "cli") {
 			const cli = new PireCLI(target);
 			cli.start();
-		} else {
+		} else if (mode === "ansi") {
 			const tui = new PireTUI(target);
+			tui.start();
+		} else {
+			const tui = new PirePiTUI(target);
 			tui.start();
 		}
 		break;
