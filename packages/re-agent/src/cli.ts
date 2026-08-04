@@ -8,6 +8,9 @@
  *   pire -cli                 — Start CLI-only mode (plain readline)
  *   pire <path|URL>           — Start with a target loaded
  *   pire -cli <path|URL>      — CLI mode with a target loaded
+ *   pire update               — Update to latest from GitHub main
+ *   pire update reverse       — Roll back to previous version
+ *   pire model                — Interactive model/provider configurator
  *   pire --tools              — List available RE tools
  *   pire --skills             — List available RE skills
  *   pire --probe              — Probe system for installed tools
@@ -99,6 +102,9 @@ Usage:
   pire -cli                 Start CLI-only mode (plain readline)
   pire <path|URL>           Start with a target loaded
   pire -cli <path|URL>      CLI mode with a target loaded
+  pire update               Update to latest version from GitHub
+  pire update reverse       Roll back to previous version
+  pire model                Interactive model/provider configurator
   pire --tools              List available RE tools
   pire --skills             List available RE skills
   pire --probe              Probe system for installed tools
@@ -147,6 +153,14 @@ switch (args[0]) {
 	case "--version":
 	case "-v":
 		showVersion();
+		break;
+	case "update":
+		// Hand off to pire-update.ts
+		await import("./pire-update.js");
+		break;
+	case "model":
+		// Hand off to pire-model.ts
+		await import("./pire-model.js");
 		break;
 	default:
 		if (args[0]?.startsWith("-") && !["-cli", "--cli", "-ansi", "--ansi"].includes(args[0])) {

@@ -14,6 +14,8 @@ export interface LLMConfig {
 	baseUrl: string;
 	apiKey: string;
 	model: string;
+	contextLength?: number;
+	maxTokens?: number;
 }
 
 export interface ToolCall {
@@ -76,6 +78,8 @@ export function loadLLMConfig(): LLMConfig | null {
 					baseUrl: parsed.base_url.replace(/\/$/, ""),
 					apiKey: parsed.api_key,
 					model: parsed.model,
+					contextLength: parsed.context_length ? parseInt(parsed.context_length) : undefined,
+					maxTokens: parsed.max_tokens ? parseInt(parsed.max_tokens) : undefined,
 				};
 			}
 		} catch {}
@@ -128,7 +132,7 @@ export async function callLLM(
 		model: config.model,
 		messages,
 		tools: tools?.length ? tools : undefined,
-		max_tokens: options?.maxTokens ?? 8192,
+		max_tokens: options?.maxTokens ?? config.maxTokens ?? 8192,
 		stream: true,
 	});
 
