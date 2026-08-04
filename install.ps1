@@ -250,6 +250,15 @@ function Refresh-Path {
     $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("PATH","User")
 }
 
+# Mutex for serializing package manager calls (choco/winget don't handle parallel)
+$pkgMutex = New-Object System.Threading.Mutex($false, "Global\pire-pkg-install")
+function Lock-Pkg {
+    $pkgMutex.WaitOne(300000) | Out-Null
+}
+function Unlock-Pkg {
+    $pkgMutex.ReleaseMutex()
+}
+
 function Has-Cmd($n) { [bool](Get-Command $n -ErrorAction SilentlyContinue) }
 
 function Run-Pip {
@@ -269,27 +278,27 @@ $ok = $false
 switch ($Component) {
     "wine" {
         switch ($PkgMgr) {
-            "choco"  { choco install wine -y --no-progress 2>&1 | Out-Null }
+            "choco"  { Lock-Pkg; choco install wine -y --no-progress 2>&1 | Out-Null; Unlock-Pkg }
             "winget" { Write-Host "Wine install on Windows via winget not automated." }
-            "scoop"  { scoop install wine 2>&1 | Out-Null }
+            "scoop"  { Lock-Pkg; scoop install wine 2>&1 | Out-Null; Unlock-Pkg }
         }
         $ok = Has-Cmd "wine"
     }
     "mingw" {
         switch ($PkgMgr) {
-            "choco"  { choco install mingw -y --no-progress 2>&1 | Out-Null }
-            "winget" { winget install --id MartinStorsjo.LLVM-MinGW.UCRT -e --accept-source-agreements --accept-package-agreements 2>&1 | Out-Null }
-            "scoop"  { scoop install mingw 2>&1 | Out-Null }
+            "choco"  { Lock-Pkg; choco install mingw -y --no-progress 2>&1 | Out-Null; Unlock-Pkg }
+            "winget" { Lock-Pkg; winget install --id MartinStorsjo.LLVM-MinGW.UCRT -e --accept-source-agreements --accept-package-agreements 2>&1 | Out-Null; Unlock-Pkg }
+            "scoop"  { Lock-Pkg; scoop install mingw 2>&1 | Out-Null; Unlock-Pkg }
         }
         Refresh-Path
         $ok = Has-Cmd "gcc"
     }
     "gdb" {
         switch ($PkgMgr) {
-            "choco"  { choco install gdb -y --no-progress 2>&1 | Out-Null }
+            "choco"  { Lock-Pkg; choco install gdb -y --no-progress 2>&1 | Out-Null; Unlock-Pkg }
             "winget" {
                 if (Has-Cmd "pacman") {
-                    pacman -S --noconfirm --needed mingw-w64-x86_64-gdb 2>&1 | Out-Null
+                    Lock-Pkg; pacman -S --noconfirm --needed mingw-w64-x86_64-gdb 2>&1 | Out-Null; Unlock-Pkg
                 }
                 if (-not (Has-Cmd "gdb")) {
                     Write-Host "GDB not available via winget directly."
@@ -297,7 +306,7 @@ switch ($Component) {
                     Write-Host "  pacman -S mingw-w64-x86_64-gdb"
                 }
             }
-            "scoop"  { scoop install gdb 2>&1 | Out-Null }
+            "scoop"  { Lock-Pkg; scoop install gdb 2>&1 | Out-Null; Unlock-Pkg }
         }
         $ok = Has-Cmd "gdb"
     }
@@ -311,18 +320,18 @@ switch ($Component) {
     }
     "jadx" {
         switch ($PkgMgr) {
-            "choco"  { choco install jadx -y --no-progress 2>&1 | Out-Null }
-            "winget" { winget install --id JesseGallagher.jadx -e --accept-source-agreements --accept-package-agreements 2>&1 | Out-Null }
-            "scoop"  { scoop install jadx 2>&1 | Out-Null }
+            "choco"  { Lock-Pkg; choco install jadx -y --no-progress 2>&1 | Out-Null; Unlock-Pkg }
+            "winget" { Lock-Pkg; winget install --id JesseGallagher.jadx -e --accept-source-agreements --accept-package-agreements 2>&1 | Out-Null; Unlock-Pkg }
+            "scoop"  { Lock-Pkg; scoop install jadx 2>&1 | Out-Null; Unlock-Pkg }
         }
         Refresh-Path
         $ok = Has-Cmd "jadx"
     }
     "ilspy" {
         switch ($PkgMgr) {
-            "choco"  { choco install dotnet-sdk -y --no-progress 2>&1 | Out-Null }
-            "winget" { winget install --id Microsoft.DotNet.SDK.8 -e --accept-source-agreements --accept-package-agreements 2>&1 | Out-Null }
-            "scoop"  { scoop install dotnet-sdk 2>&1 | Out-Null }
+            "choco"  { Lock-Pkg; choco install dotnet-sdk -y --no-progress 2>&1 | Out-Null; Unlock-Pkg }
+            "winget" { Lock-Pkg; winget install --id Microsoft.DotNet.SDK.8 -e --accept-source-agreements --accept-package-agreements 2>&1 | Out-Null; Unlock-Pkg }
+            "scoop"  { Lock-Pkg; scoop install dotnet-sdk 2>&1 | Out-Null; Unlock-Pkg }
         }
         Refresh-Path
         if (Has-Cmd "dotnet") {
@@ -332,7 +341,7 @@ switch ($Component) {
     }
     "ghidra" {
         switch ($PkgMgr) {
-            "choco"  { choco install ghidra -y --no-progress 2>&1 | Out-Null }
+            "choco"  { Lock-Pkg; choco install ghidra -y --no-progress 2>&1 | Out-Null; Unlock-Pkg }
             "winget" {
                 $ghidraDir = "$env:LOCALAPPDATA\ghidra"
                 $url = "https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_11.1.2_build/ghidra_11.1.2_PUBLIC_20240709.zip"
@@ -356,16 +365,16 @@ switch ($Component) {
                     Write-Host "Ghidra download failed: $_"
                 }
             }
-            "scoop"  { scoop install ghidra 2>&1 | Out-Null }
+            "scoop"  { Lock-Pkg; scoop install ghidra 2>&1 | Out-Null; Unlock-Pkg }
         }
         Refresh-Path
         $ok = Has-Cmd "ghidra"
     }
     "yara" {
         switch ($PkgMgr) {
-            "choco"  { choco install yara -y --no-progress 2>&1 | Out-Null }
+            "choco"  { Lock-Pkg; choco install yara -y --no-progress 2>&1 | Out-Null; Unlock-Pkg }
             "winget" { Write-Host "Yara not in winget -- trying pip..." }
-            "scoop"  { scoop install yara 2>&1 | Out-Null }
+            "scoop"  { Lock-Pkg; scoop install yara 2>&1 | Out-Null; Unlock-Pkg }
         }
         Refresh-Path
         if (-not (Has-Cmd "yara")) {

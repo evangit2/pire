@@ -284,6 +284,35 @@ fi
 
 # ── Package Manager Abstraction ───────────────────────────────
 pkg_install() {
+	# Serialize package manager calls — apt/dnf/pacman all use lock files
+	# and will fail if invoked in parallel.
+	PKG_LOCKFILE="/tmp/pire-pkg-install.lock"
+	PKG_LOCKHELD=0
+	if command -v flock >/dev/null 2>&1; then
+		exec 9>"$PKG_LOCKFILE"
+		if flock -w 300 9; then
+			PKG_LOCKHELD=1
+		else
+			log_warn "Could not acquire package lock for: $*"
+			exec 9>&-
+			return 1
+		fi
+	else
+		# No flock (macOS) — retry loop as fallback
+		PKG_TRIES=0
+		while [ $PKG_TRIES -lt 60 ]; do
+			if mkdir "$PKG_LOCKFILE" 2>/dev/null; then
+				PKG_LOCKHELD=2
+				break
+			fi
+			sleep 5
+			PKG_TRIES=$((PKG_TRIES + 1))
+		done
+		if [ "$PKG_LOCKHELD" != "2" ]; then
+			log_warn "Could not acquire package lock for: $*"
+			return 1
+		fi
+	fi
 	case "$PKG_MGR" in
 		apt)    sudo apt-get install -y -qq "$@" </dev/null >/dev/null 2>&1 ;;
 		dnf)    sudo dnf install -y -q "$@" </dev/null >/dev/null 2>&1 ;;
@@ -300,6 +329,14 @@ pkg_install() {
 		brew)   brew install "$@" </dev/null >/dev/null 2>&1 ;;
 		*)      log_warn "Unknown package manager for: $*" ;;
 	esac
+	PKG_RC=$?
+	if [ "$PKG_LOCKHELD" = "1" ]; then
+		flock -u 9
+		exec 9>&-
+	elif [ "$PKG_LOCKHELD" = "2" ]; then
+		rmdir "$PKG_LOCKFILE" 2>/dev/null
+	fi
+	return $PKG_RC
 }
 
 PIP_INSTALL_TIMEOUT=300
