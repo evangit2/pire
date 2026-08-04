@@ -50,7 +50,7 @@ function parseYAMLConfig(content: string): Record<string, string> {
 		// Strip comments
 		const commentIdx = rawLine.indexOf("#");
 		const line = commentIdx >= 0 ? rawLine.slice(0, commentIdx) : rawLine;
-		const match = line.match(/^(\w+)\s*:\s*(.+)$/);
+		const match = line.match(/^(\w+)\s*:\s*(.*)$/);
 		if (!match) continue;
 		let value = match[2].trim();
 		// Strip surrounding quotes
@@ -73,11 +73,11 @@ export function loadLLMConfig(): LLMConfig | null {
 		try {
 			const content = readFileSync(path, "utf-8");
 			const parsed = parseYAMLConfig(content);
-			if (parsed.base_url && parsed.api_key && parsed.model) {
+			if (parsed.base_url) {
 				return {
 					baseUrl: parsed.base_url.replace(/\/$/, ""),
 					apiKey: parsed.api_key,
-					model: parsed.model,
+					model: (parsed.model && parsed.model !== "none") ? parsed.model : "",
 					contextLength: parsed.context_length ? parseInt(parsed.context_length) : undefined,
 					maxTokens: parsed.max_tokens ? parseInt(parsed.max_tokens) : undefined,
 				};

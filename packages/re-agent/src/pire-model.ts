@@ -95,7 +95,7 @@ function loadConfig(): PireConfig | null {
 		for (const rawLine of content.split("\n")) {
 			const commentIdx = rawLine.indexOf("#");
 			const line = commentIdx >= 0 ? rawLine.slice(0, commentIdx) : rawLine;
-			const match = line.match(/^(\w+)\s*:\s*(.+)$/);
+			const match = line.match(/^(\w+)\s*:\s*(.*)$/);
 			if (!match) continue;
 			let value = match[2].trim();
 			if ((value.startsWith('"') && value.endsWith('"')) ||
@@ -104,11 +104,11 @@ function loadConfig(): PireConfig | null {
 			}
 			result[match[1]] = value;
 		}
-		if (result.base_url && result.api_key && result.model) {
+		if (result.base_url) {
 			return {
 				base_url: result.base_url,
 				api_key: result.api_key,
-				model: result.model,
+				model: (result.model && result.model !== "none") ? result.model : "",
 				context_length: result.context_length ? parseInt(result.context_length) : undefined,
 				max_tokens: result.max_tokens ? parseInt(result.max_tokens) : undefined,
 			};
@@ -122,7 +122,7 @@ function saveConfig(config: PireConfig): void {
 	const lines = [
 		`base_url: ${config.base_url}`,
 		`api_key: ${config.api_key}`,
-		`model: ${config.model}`,
+		`model: ${config.model || "none"}`,
 	];
 	if (config.context_length) lines.push(`context_length: ${config.context_length}`);
 	if (config.max_tokens) lines.push(`max_tokens: ${config.max_tokens}`);
@@ -276,10 +276,37 @@ async function main(): Promise<void> {
 		console.log(`  ${chalk.cyan("s.")} Select model (fetch from provider)`);
 		console.log(`  ${chalk.cyan("m.")} Manual model entry`);
 		console.log(`  ${chalk.cyan("t.")} Set context_length / max_tokens`);
+		console.log(`  ${chalk.dim("  (number)  Switch active provider")}`);
 		console.log(`  ${chalk.cyan("q.")} Quit`);
 		console.log();
 
 		const choice = await prompt(rlInst, chalk.bold("Choice> "));
+
+		// Numeric choice = activate that provider
+		const num = parseInt(choice);
+		if (!isNaN(num) && num >= 1 && num <= db.providers.length) {
+			const p = db.providers[num - 1];
+			db.active = p.name;
+			saveProviders(db);
+			// Write config with this provider's base_url + api_key
+			// (keep existing model/tokens if the config already exists and matches, otherwise just set the provider)
+			const existing = loadConfig();
+			const newConfig: PireConfig = {
+				base_url: p.base_url,
+				api_key: p.api_key,
+				model: existing?.model || "",
+				context_length: existing?.context_length,
+				max_tokens: existing?.max_tokens,
+			};
+			saveConfig(newConfig);
+			console.log(chalk.green(`✓ Switched to ${p.name}`));
+			if (!newConfig.model) {
+				console.log(chalk.dim("  No model set yet — use 's' or 'm' to select one."));
+			} else {
+				console.log(chalk.dim(`  Model: ${newConfig.model}`));
+			}
+			continue;
+		}
 
 		switch (choice.toLowerCase()) {
 			case "a": {
@@ -381,7 +408,7 @@ async function main(): Promise<void> {
 			case "t": {
 				const currentConfig = loadConfig();
 				if (!currentConfig) {
-					console.log(chalk.yellow("Set a model first (s or m)."));
+					console.log(chalk.yellow("No config file found. Select a provider first (number or 's'/'m')."));
 					break;
 				}
 				const ctxStr = await prompt(rlInst, `Context length [${currentConfig.context_length ?? "default"}]> `);
@@ -390,6 +417,9 @@ async function main(): Promise<void> {
 				if (maxStr) currentConfig.max_tokens = parseInt(maxStr);
 				saveConfig(currentConfig);
 				console.log(chalk.green("✓ Token settings saved."));
+				if (!currentConfig.model) {
+					console.log(chalk.dim("  Tip: use 's' or 'm' to set a model."));
+				}
 				break;
 			}
 			case "q":
