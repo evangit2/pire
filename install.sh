@@ -312,7 +312,11 @@ pip_install() {
 	fi
 
 	if [ -n "$PIPRE_PY" ]; then
-		$PIPRE_PY -m pip install --user -q "$@" </dev/null 2>/dev/null || log_warn "pip install failed: $*"
+		# --break-system-packages overrides PEP 668 (Debian externally-managed)
+		# --user keeps packages in ~/.local, not system-wide
+		$PIPRE_PY -m pip install --user --break-system-packages -q "$@" </dev/null 2>/dev/null \
+			|| $PIPRE_PY -m pip install --user -q "$@" </dev/null 2>/dev/null \
+			|| log_warn "pip install failed: $*"
 	else
 		# Try to bootstrap pip via ensurepip, then retry
 		PIPRE_BS=""
@@ -323,7 +327,9 @@ pip_install() {
 			fi
 		done
 		if [ -n "$PIPRE_BS" ]; then
-			"$PIPRE_BS" -m pip install --user -q "$@" </dev/null 2>/dev/null || log_warn "pip install failed: $*"
+			"$PIPRE_BS" -m pip install --user --break-system-packages -q "$@" </dev/null 2>/dev/null \
+				|| "$PIPRE_BS" -m pip install --user -q "$@" </dev/null 2>/dev/null \
+				|| log_warn "pip install failed: $*"
 		else
 			log_warn "pip not found, skipping: $*"
 		fi
