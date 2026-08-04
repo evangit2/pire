@@ -511,7 +511,48 @@ ok(src.includes("nm:") && src.includes("size:"), "probeTools checks nm and size"
 ok(src.includes("hash:") && src.includes("entropy:"), "probeTools checks hash and entropy");
 ok(src.includes("jadx:") && src.includes("ilspy:"), "probeTools checks jadx and ilspy");
 
-// ─── Summary ───────────────────────────────────────────────────
+// ─── 29. Install Scripts ──────────────────────────────────────
+
+console.log("\n─ Install Scripts ─");
+
+const installSh = fs.readFileSync(path.join(__dirname, "..", "..", "..", "install.sh"), "utf-8");
+const installPs1 = fs.readFileSync(path.join(__dirname, "..", "..", "..", "install.ps1"), "utf-8");
+
+// Shell installer
+ok(installSh.includes("curl -fsSL"), "install.sh has one-liner curl hint");
+ok(installSh.includes("debian") && installSh.includes("fedora") && installSh.includes("arch"), "install.sh detects Linux distros");
+ok(installSh.includes("macos") && installSh.includes("brew"), "install.sh supports macOS");
+ok(installSh.includes("windows") || installSh.includes("MSYS"), "install.sh supports Windows/MSYS2");
+ok(installSh.includes("wsl"), "install.sh supports WSL");
+ok(installSh.includes("--all"), "install.sh has --all flag");
+ok(installSh.includes("--core"), "install.sh has --core flag");
+ok(installSh.includes("--no-wine"), "install.sh has --no-wine flag");
+ok(installSh.includes("--help"), "install.sh has --help flag");
+ok(installSh.includes("prompt_yesno"), "install.sh has interactive prompt");
+ok(installSh.includes("INSTALL_WINE"), "install.sh has wine component selection");
+ok(installSh.includes("INSTALL_GHIDRA"), "install.sh has ghidra component selection");
+ok(installSh.includes("INSTALL_FRIDA"), "install.sh has frida component selection");
+ok(installSh.includes("INSTALL_JADX"), "install.sh has jadx component selection");
+ok(installSh.includes("INSTALL_ILSPY"), "install.sh has ilspy component selection");
+ok(installSh.includes("INSTALL_MINGW"), "install.sh has mingw component selection");
+ok(installSh.includes("INSTALL_GDB"), "install.sh has gdb component selection");
+ok(installSh.includes("INSTALL_BINWALK"), "install.sh has binwalk component selection");
+ok(installSh.includes("INSTALL_YARA"), "install.sh has yara component selection");
+ok(installSh.includes("INSTALL_VOLATILITY"), "install.sh has volatility component selection");
+ok(installSh.includes("INSTALL_PYTHON_TOOLS"), "install.sh has python tools component selection");
+ok(installSh.includes("suse") && installSh.includes("alpine"), "install.sh supports openSUSE and Alpine");
+ok(installSh.includes("NodeSource"), "install.sh handles Node 22+ upgrade");
+
+// PowerShell installer
+ok(installPs1.includes("irm") || installPs1.includes("iex"), "install.ps1 has one-liner");
+ok(installPs1.includes("winget") || installPs1.includes("Chocolatey"), "install.ps1 uses winget or choco");
+ok(installPs1.includes("-All"), "install.ps1 has -All flag");
+ok(installPs1.includes("-CoreOnly"), "install.ps1 has -CoreOnly flag");
+ok(installPs1.includes("Prompt-YesNo"), "install.ps1 has interactive prompt");
+ok(installPs1.includes("Ghidra"), "install.ps1 has ghidra component");
+ok(installPs1.includes("Frida"), "install.ps1 has frida component");
+ok(installPs1.includes("JADX"), "install.ps1 has jadx component");
+ok(installPs1.includes("ILSpy"), "install.ps1 has ilspy component");
 
 console.log(`\n${"─".repeat(50)}`);
 console.log(`\x1b[32m${pass} passed\x1b[0m, \x1b[31m${fail} failed\x1b[0m`);

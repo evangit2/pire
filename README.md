@@ -1,49 +1,94 @@
 # pire
 
-Autonomous reverse-engineering agent that analyzes Windows PE binaries and produces clean C reimplementations.
-
-## What it does
-
-Give pire a compiled Windows `.exe` and it will:
-
-1. **Triage** — identify file type, extract strings, map sections
-2. **Black-box test** — run the binary under Wine with various inputs, observe outputs
-3. **Disassemble & decompile** — use Radare2 to trace through functions and understand algorithms
-4. **Document** — write a detailed `analysis.md` describing the binary's behavior
-5. **Reimplement** — write a portable C source file (`reimpl.c`) that matches the original's behavior
-6. **Verify** — compile the reimplementation, run differential tests against the original
+Autonomous reverse-engineering agent. Give it a binary, a URL, or a directory — it auto-detects the format (PE, ELF, Mach-O, APK, .NET, firmware) and runs the right tools to analyze it.
 
 ## Quick start
 
+**One-line install (Linux/macOS):**
 ```bash
-# Install dependencies
-./install.sh
-
-# Run the agent on a binary
-pire targets/xxd/xxd.exe
-
-# Or use the reimplementation pipeline directly
-npx tsx packages/re-agent/src/pire-reimpl.ts targets/xxd/xxd.exe
+curl -fsSL https://raw.githubusercontent.com/evangit2/pire/main/install.sh | sh
 ```
+
+**One-line install (Windows PowerShell):**
+```powershell
+irm https://raw.githubusercontent.com/evangit2/pire/main/install.ps1 | iex
+```
+
+The installer detects your platform, asks which components you want (Wine, Ghidra, Frida, JADX, ILSpy, etc.), and installs everything accordingly. Use `--all` to install everything non-interactively, or `--core` for just the essentials.
+
+**Then run:**
+```bash
+pire                              # start chat — just tell it what to analyze
+pire /bin/ls                      # analyze a local binary
+pire https://example.com/app.exe  # download & analyze from URL
+```
+
+## What it does
+
+Give pire a binary (or a URL to one) and it will:
+
+1. **Fetch** — download from URL if needed
+2. **Auto-detect** — identify file type (PE, ELF, Mach-O, APK, .NET, firmware, archive)
+3. **Triage** — extract strings, map sections, parse imports/exports
+4. **Disassemble & decompile** — use Radare2, Ghidra, or format-specific tools
+5. **Document** — write a detailed `analysis.md` describing behavior
+6. **Reimplement** — write portable C source matching the original's behavior
+7. **Verify** — compile and run differential tests
 
 ## Requirements
 
 - **Node.js** 22+
-- **Radare2** 6.0+
-- **Wine** (with a 64-bit prefix)
-- **MinGW-w64** cross-compiler (`x86_64-w64-mingw32-gcc`)
-- **GCC** (native, for compiling reimplementations)
+- **Radare2** (core — always installed)
 - An LLM API endpoint (OpenAI-compatible)
+
+Optional (installer prompts for these):
+- **Wine** — run Windows PE binaries on Linux/macOS
+- **MinGW-w64** — cross-compile Windows binaries
+- **Ghidra** — decompiler (large download)
+- **Frida** — dynamic instrumentation
+- **GDB** — scripted debugging
+- **Binwalk** — firmware extraction
+- **JADX** — APK/DEX → Java decompiler
+- **ILSpy** — .NET → C# decompiler
+- **Yara** — pattern matching
+- **Volatility** — memory forensics
+- **Python RE tools** — capstone, keystone, unicorn, angr, lief
 
 ## Install
 
+### Linux / macOS
+
 ```bash
+# One-liner
+curl -fsSL https://raw.githubusercontent.com/evangit2/pire/main/install.sh | sh
+
+# Or clone and run
 git clone https://github.com/evangit2/pire.git
 cd pire
 ./install.sh
+
+# Non-interactive options
+./install.sh --all     # install everything
+./install.sh --core    # core only (node, npm, git, gcc, radare2)
+./install.sh --no-wine # skip wine
 ```
 
-The install script supports Ubuntu/Debian, Fedora/RHEL, Arch Linux, and macOS (via Homebrew).
+Supports: Ubuntu/Debian, Fedora/RHEL, Arch Linux, openSUSE, Alpine, macOS (Homebrew), WSL, Windows (Git Bash/MSYS2).
+
+### Windows (PowerShell)
+
+```powershell
+# One-liner
+irm https://raw.githubusercontent.com/evangit2/pire/main/install.ps1 | iex
+
+# Or clone and run
+git clone https://github.com/evangit2/pire.git
+cd pire
+.\install.ps1 -All      # install everything
+.\install.ps1 -CoreOnly # core only
+```
+
+Uses winget or Chocolatey for package management.
 
 ## Configuration
 
@@ -108,26 +153,40 @@ Runs the full RE pipeline autonomously. Output files are written to the binary's
 
 ## Tools
 
-The agent has access to 25+ RE tools:
+The agent has access to 36 RE tools:
 
 | Tool | Description |
 |------|-------------|
-| `filetype` | Identify file type |
+| `fetch` | Download files from URLs |
+| `extract` | Extract archives (zip, tar, 7z, rar) |
+| `filetype` | Identify file type, arch, format |
 | `strings` | Extract ASCII/UTF-16 strings |
-| `sections` | List PE sections |
-| `imports` | List imported functions |
-| `exports` | List exported functions |
-| `disasm` | Disassemble at an address |
-| `disasm_func` | Disassemble a function |
-| `decompile` | Radare2 pseudo-C decompilation (pdc) |
-| `r2` | Run arbitrary Radare2 commands |
-| `hexdump` | Hex dump at an address |
-| `shell` | Run shell commands (wine, gcc, diff, etc.) |
-| `write_file` | Save files (source code, analysis) |
+| `objdump` | Disassemble sections |
+| `disasm_func` | Disassemble a single function (handles stripped + PE + ELF) |
 | `readelf` | ELF header analysis |
-| `objdump` | Object file disassembly |
+| `hexdump` | Hex dump at an address |
 | `nm` | Symbol table listing |
-| ... | and more |
+| `size` | Section sizes |
+| `search` | Pattern search (text or hex) |
+| `patch` | Patch bytes at offset (with backup) |
+| `hash` | MD5, SHA1, SHA256 |
+| `entropy` | Shannon entropy (detect packing/encryption) |
+| `diff` | Compare two files |
+| `r2` | Run Radare2 commands (persistent session) |
+| `ghidra_*` | Ghidra decompilation, functions, xrefs, strings |
+| `capstone` | Multi-arch disassembly |
+| `keystone` | Multi-arch assembly |
+| `unicorn` | CPU emulation |
+| `angr` | Symbolic execution |
+| `lief` | Parse ELF/PE/Mach-O |
+| `binwalk` | Firmware extraction |
+| `yara` | Pattern matching |
+| `frida` | Dynamic instrumentation |
+| `gdb` | Scripted debugging |
+| `jadx` | APK/DEX/JAR → Java decompiler |
+| `ilspy` | .NET → C# decompiler |
+| `volatility` | Memory forensics |
+| `shell` | Run shell commands (sandboxed) |
 
 ## Case Study: Reimplementing xxd
 
@@ -249,7 +308,7 @@ pire/
 ├── packages/
 │   ├── re-agent/          # Core RE agent
 │   │   ├── src/
-│   │   │   ├── index.ts       # Tool registry (25+ tools)
+│   │   │   ├── index.ts       # Tool registry (36 tools)
 │   │   │   ├── pire-reimpl.ts # Autonomous RE pipeline
 │   │   │   ├── cli.ts         # CLI entry point
 │   │   │   └── tui.ts         # Interactive TUI
@@ -262,7 +321,8 @@ pire/
 │   └── ghidra-mcp/        # Ghidra MCP integration
 ├── targets/               # Test binaries
 │   └── xxd/               # Real-world target (ckormanyos/xxd v1.2)
-├── install.sh             # Cross-platform installer
+├── install.sh             # Cross-platform installer (Linux/macOS/WSL)
+├── install.ps1            # Windows installer (PowerShell)
 └── .github/workflows/     # CI + release pipelines
 ```
 
