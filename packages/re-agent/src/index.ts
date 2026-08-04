@@ -1203,12 +1203,13 @@ export function createReTools(extra: AgentTool<any>[] = []): AgentTool<any>[] {
 
 /** Probe system for available tools and return status. */
 export function probeTools(): Record<string, boolean> {
+	const ghidraOk = ghidra.getStatus().alive;
 	return {
 		shell: true,
 		fetch: !!which("wget") || !!which("curl"),
 		extract: !!which("unzip") || !!which("tar") || !!which("7z") || !!which("binwalk"),
 		strings: !!which("strings"),
-		file: !!which("file"),
+		filetype: !!which("file"),
 		objdump: !!which("objdump"),
 		disasm_func: !!which("objdump") || !!which("r2") || !!which("radare2"),
 		readelf: !!which("readelf"),
@@ -1222,7 +1223,12 @@ export function probeTools(): Record<string, boolean> {
 		hash: !!which("md5sum") || !!which("sha256sum"),
 		entropy: !!which("python3"),
 		diff: !!which("diff"),
-		ghidra: ghidra.getStatus().alive,
+		ghidra_status: ghidraOk,
+		ghidra_decompile: ghidraOk,
+		ghidra_functions: ghidraOk,
+		ghidra_rename: ghidraOk,
+		ghidra_xrefs: ghidraOk,
+		ghidra_strings: ghidraOk,
 		binwalk: !!which("binwalk"),
 		lief: pythonModule("lief"),
 		angr: pythonModule("angr"),
@@ -1232,7 +1238,7 @@ export function probeTools(): Record<string, boolean> {
 		yara: pythonModule("yara"),
 		frida: !!which("frida") || pythonModule("frida"),
 		gdb: !!which("gdb"),
-		volatility3: !!which("vol") || !!which("volatility3") || pythonModule("volatility3"),
+		volatility: !!which("vol") || !!which("volatility3") || pythonModule("volatility3"),
 		jadx: !!which("jadx") || !!which("jadx-cli"),
 		ilspy: !!which("ilspycmd") || !!which("monodis"),
 	};

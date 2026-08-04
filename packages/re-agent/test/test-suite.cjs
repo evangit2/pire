@@ -309,7 +309,7 @@ try {
 console.log("\n─ Probe Tools ─");
 
 // Verify probeTools would return expected keys
-const expectedProbeKeys = ["shell", "strings", "file", "objdump", "disasm_func", "readelf", "hexdump", "r2", "decompile", "ghidra", "binwalk", "lief", "angr", "capstone", "keystone", "unicorn", "yara", "frida", "gdb", "volatility3"];
+const expectedProbeKeys = ["shell", "strings", "filetype", "objdump", "disasm_func", "readelf", "hexdump", "r2", "decompile", "ghidra_status", "ghidra_decompile", "ghidra_functions", "ghidra_rename", "ghidra_xrefs", "ghidra_strings", "binwalk", "lief", "angr", "capstone", "keystone", "unicorn", "yara", "frida", "gdb", "volatility"];
 for (const key of expectedProbeKeys) {
 	ok(src.includes(`\t\t${key}:`), `probeTools checks ${key}`);
 }

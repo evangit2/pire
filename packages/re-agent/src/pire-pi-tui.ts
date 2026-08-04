@@ -236,16 +236,32 @@ class StatusBar implements Component {
 	private target = "none";
 	private model = "";
 	private processing = false;
+	private turnsLeft = 0;
+	private turnsTotal = 0;
+	private tokensIn = 0;
+	private tokensOut = 0;
 	private cached?: string[];
 	private cachedW = -1;
 
 	setTarget(t: string): void { this.target = t; this.cached = undefined; }
 	setModel(m: string): void { this.model = m; this.cached = undefined; }
 	setProcessing(p: boolean): void { this.processing = p; this.cached = undefined; }
+	setTurns(left: number, total: number): void { this.turnsLeft = left; this.turnsTotal = total; this.cached = undefined; }
+	addTokens(inTokens: number, outTokens: number): void { this.tokensIn += inTokens; this.tokensOut += outTokens; this.cached = undefined; }
+	resetTokens(): void { this.tokensIn = 0; this.tokensOut = 0; this.cached = undefined; }
 
 	render(width: number): string[] {
 		if (this.cached && this.cachedW === width) return this.cached;
-		const left = `${chalk.dim("target:")} ${this.target}  ${chalk.dim("model:")} ${this.model || "default"}`;
+		const parts: string[] = [];
+		parts.push(`${chalk.dim("target:")} ${this.target}`);
+		parts.push(`${chalk.dim("model:")} ${this.model || "default"}`);
+		if (this.turnsTotal > 0) {
+			parts.push(`${chalk.dim("turns:")} ${this.turnsLeft}/${this.turnsTotal}`);
+		}
+		if (this.tokensIn > 0 || this.tokensOut > 0) {
+			parts.push(`${chalk.dim("tokens:")} ${chalk.cyan("↑")}${this.tokensIn} ${chalk.magenta("↓")}${this.tokensOut}`);
+		}
+		const left = parts.join("  ");
 		const right = this.processing ? chalk.bold.yellow("⟳ working") : chalk.green("● ready");
 		const lLen = visibleWidth(left);
 		const rLen = visibleWidth(right);
@@ -478,6 +494,7 @@ export class PirePiTUI {
 
 		this.processing = true;
 		this.statusBar.setProcessing(true);
+		this.statusBar.resetTokens();
 		this.ui.requestRender();
 
 		try {
@@ -506,7 +523,7 @@ export class PirePiTUI {
 			const toolSchemas = RE_TOOLS.map((t) => toolToFunction(t));
 
 			for (let turn = 0; turn < MAX_TURNS; turn++) {
-				this.statusBar.setTarget(`turn ${turn + 1}/${MAX_TURNS}`);
+				this.statusBar.setTurns(MAX_TURNS - turn, MAX_TURNS);
 				this.ui.requestRender();
 
 				let assistantContent = "";
@@ -526,6 +543,11 @@ export class PirePiTUI {
 				});
 
 				this.transcript.finalizeLast();
+
+				// Track token usage
+				if (resp.usage) {
+					this.statusBar.addTokens(resp.usage.prompt_tokens, resp.usage.completion_tokens);
+				}
 
 				if (!resp.tool_calls || resp.tool_calls.length === 0) {
 					this.messages.push({ role: "assistant", content: resp.content ?? assistantContent });
@@ -551,6 +573,15 @@ export class PirePiTUI {
 					try {
 						args = JSON.parse(tc.function.arguments);
 					} catch { args = {}; }
+
+					// Auto-detect target from tool calls (path/binary/target/file args)
+					if (!this.loadedTarget) {
+						const candidate = args.path || args.binary || args.target || args.file;
+						if (candidate && typeof candidate === "string" && candidate.startsWith("/")) {
+							this.loadedTarget = candidate;
+							this.statusBar.setTarget(basename(candidate));
+						}
+					}
 
 					if (this.loadedTarget && !args.target && !args.binary && !args.path && !args.file) {
 						args.target = this.loadedTarget;

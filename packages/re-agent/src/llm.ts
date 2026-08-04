@@ -32,6 +32,7 @@ export interface ChatMessage {
 export interface LLMResponse {
 	content: string | null;
 	tool_calls?: ToolCall[];
+	usage?: { prompt_tokens: number; completion_tokens: number };
 }
 
 // ─── Config ────────────────────────────────────────────────────
@@ -150,6 +151,7 @@ export async function callLLM(
 			let content = "";
 			const toolCalls: ToolCall[] = [];
 			let buffer = "";
+			let usage: { prompt_tokens: number; completion_tokens: number } | undefined;
 
 			res.on("data", (chunk: Buffer) => {
 				buffer += chunk.toString();
@@ -165,7 +167,16 @@ export async function callLLM(
 					try {
 						const json = JSON.parse(data);
 						const delta = json.choices?.[0]?.delta;
-						if (!delta) continue;
+						if (!delta) {
+							// Check for usage in final chunk (some providers send it without choices)
+							if (json.usage) {
+								usage = {
+									prompt_tokens: json.usage.prompt_tokens ?? 0,
+									completion_tokens: json.usage.completion_tokens ?? 0,
+								};
+							}
+							continue;
+						}
 
 						if (delta.content) {
 							content += delta.content;
@@ -186,6 +197,13 @@ export async function callLLM(
 								if (tc.function?.arguments) toolCalls[idx].function.arguments += tc.function.arguments;
 							}
 						}
+						// Some providers send usage alongside the last delta
+						if (json.usage) {
+							usage = {
+								prompt_tokens: json.usage.prompt_tokens ?? 0,
+								completion_tokens: json.usage.completion_tokens ?? 0,
+							};
+						}
 					} catch { /* skip malformed */ }
 				}
 			});
@@ -194,6 +212,7 @@ export async function callLLM(
 				resolve({
 					content: content || null,
 					tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
+					usage,
 				});
 			});
 		});
