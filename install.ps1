@@ -32,9 +32,9 @@ try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new() } catch {}
 function Write-Banner {
     Write-Host ""
     Write-Host "+---------------------------------------------------------+" -ForegroundColor Magenta
-    Write-Host "|                   pire Installer                         |" -ForegroundColor Magenta
-    Write-Host "|  Autonomous reverse-engineering agent                    |" -ForegroundColor Magenta
-    Write-Host "|  github.com/evangit2/pire                                |" -ForegroundColor Magenta
+    Write-Host "|  pire Installer                                         |" -ForegroundColor Magenta
+    Write-Host "|  Autonomous reverse-engineering agent                   |" -ForegroundColor Magenta
+    Write-Host "|  github.com/evangit2/pire                               |" -ForegroundColor Magenta
     Write-Host "+---------------------------------------------------------+" -ForegroundColor Magenta
     Write-Host ""
 }

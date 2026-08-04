@@ -41,9 +41,9 @@ print_banner() {
 	printf '\n'
 	printf '\033[0;35m\033[1m\n'
 	printf '%s\n' "┌─────────────────────────────────────────────────────────┐"
-	printf '%s\n' "│                   pire Installer                      │"
-	printf '%s\n' "│  Autonomous reverse-engineering agent                    │"
-	printf '%s\n' "│  github.com/evangit2/pire                                │"
+	printf '%s\n' "│  pire Installer                                         │"
+	printf '%s\n' "│  Autonomous reverse-engineering agent                   │"
+	printf '%s\n' "│  github.com/evangit2/pire                               │"
 	printf '%s\n' "└─────────────────────────────────────────────────────────┘"
 	printf '\033[0m\n'
 }
