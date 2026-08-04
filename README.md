@@ -343,6 +343,22 @@ The agent streams LLM responses and includes guidance for:
 - Exit code matching
 - Error message exact matching
 
+## Token Efficiency
+
+pire is designed to be cheap to run. The initial input payload for a new chat session is approximately **~5,000 tokens** — that's the system prompt, 36 tool schemas, and context state combined. A typical first user message adds only 50–200 tokens on top.
+
+| Component | Tokens |
+|----------|--------|
+| System prompt | ~1,100 |
+| Tool schemas (36 tools) | ~3,800 |
+| TUI context (available tools, loaded target) | ~150 |
+| **Total initial input** | **~5,000** |
+| Output cap (`max_tokens`) | 8,192 |
+
+No hidden context window bloat — no RAG pipelines, no vector embeddings, no multi-megabyte system prompts. Just the tools and instructions, straightforward and compact.
+
+For comparison, a typical agentic framework with similar tool count easily runs 15,000–30,000+ input tokens per message. pire's lean system prompt means **3–6× lower input cost per turn**, which adds up fast over an 80-turn autonomous RE session.
+
 ## License
 
 MIT
