@@ -343,7 +343,7 @@ switch (args[0]) {
 		await import("./pire-uninstall.js");
 		break;
 	default: {
-		if (args[0]?.startsWith("-") && !["-cli", "--cli", "-ansi", "--ansi", "-mcp", "--mcp"].includes(args[0])) {
+		if (args[0]?.startsWith("-") && !["-cli", "--cli", "-ansi", "--ansi", "-mcp", "--mcp", "-loose", "--loose"].includes(args[0])) {
 			console.error(`Unknown option: ${args[0]}`);
 			process.exit(1);
 		}
