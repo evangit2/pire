@@ -669,6 +669,7 @@ const r2Session = new R2Session();
 
 const r2Tool: AgentTool<{ path: string; command: string }> = {
 	name: "r2",
+	executionMode: "sequential",
 	description:
 		"Run a radare2 command. e.g. 'aaa; afl', 'pdf @ main', 'iz'. Use 'aflj' instead of 'afl' for JSON output (machine-parseable). Use 'afl' address column for decompile tool. For large binaries, use '~' (tilde) to filter output, e.g. 'afl~main' or 'aflj~[0]' to avoid flooding context with hundreds of functions. WARNING: 'f~' (flag list) on large binaries can produce 500KB+ output even with tilde filter — use 'f~pattern' with a specific pattern or use 'afl~pattern' instead.",
 	parameters: Type.Object({
@@ -716,6 +717,7 @@ const r2Tool: AgentTool<{ path: string; command: string }> = {
 
 const decompileTool: AgentTool<{ path: string; address: string; format?: string }> = {
 	name: "decompile",
+	executionMode: "sequential",
 	description:
 		"Decompile a function via radare2. Accepts hex addr (e.g. 0x3ca60) or symbol name (e.g. main). Do NOT pass function indices from afl output — use hex addresses from the 'addr' column.",
 	parameters: Type.Object({
@@ -808,6 +810,7 @@ const decompileTool: AgentTool<{ path: string; address: string; format?: string 
 
 const ghidraDecompile: AgentTool<{ function: string }> = {
 	name: "ghidra_decompile",
+	executionMode: "sequential",
 	description: "Decompile a function via Ghidra.",
 	parameters: Type.Object({ function: Type.String() }),
 	async execute(_id, params) {
@@ -1057,6 +1060,7 @@ const yaraTool: AgentTool<{ path: string; rule: string }> = {
 
 const fridaTool: AgentTool<{ target: string; script: string; action: string }> = {
 	name: "frida",
+	executionMode: "sequential",
 	description: "Frida dynamic instrumentation. Actions: spawn, attach, list.",
 	parameters: Type.Object({
 		target: Type.String(),
@@ -1092,6 +1096,7 @@ const fridaTool: AgentTool<{ target: string; script: string; action: string }> =
 
 const gdbTool: AgentTool<{ path: string; commands: string }> = {
 	name: "gdb",
+	executionMode: "sequential",
 	description: "Run GDB commands on a binary.",
 	parameters: Type.Object({
 		path: Type.String(),

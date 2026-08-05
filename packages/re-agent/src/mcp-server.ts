@@ -290,17 +290,28 @@ IMPORTANT: When you need to write a file, use the write_file tool with path and 
 			session.messages.push({ role: "assistant", content: resp.content, tool_calls: resp.tool_calls });
 			messages.push({ role: "assistant", content: resp.content, tool_calls: resp.tool_calls });
 
+			// Execute tool calls in parallel when possible.
+			// Tools with executionMode "sequential" (e.g. r2, ghidra) run one at a time.
+			// All other tools run concurrently via Promise.all.
+			const sequentialCalls: typeof resp.tool_calls = [];
+			const parallelCalls: typeof resp.tool_calls = [];
 			for (const tc of resp.tool_calls) {
+				const tool = session.toolMap.get(tc.function.name);
+				if (tool?.executionMode === "sequential") {
+					sequentialCalls.push(tc);
+				} else {
+					parallelCalls.push(tc);
+				}
+			}
+
+			// Helper: execute a single tool call and return its result + messages
+			async function execToolCall(tc: NonNullable<typeof resp.tool_calls>[0]): Promise<void> {
 				const tool = session.toolMap.get(tc.function.name);
 				if (!tool) {
 					const errMsg = `Error: unknown tool "${tc.function.name}"`;
-					messages.push({
-						role: "tool",
-						tool_call_id: tc.id,
-						content: errMsg,
-					});
+					messages.push({ role: "tool", tool_call_id: tc.id, content: errMsg });
 					session.messages.push({ role: "tool", tool_call_id: tc.id, content: errMsg });
-					continue;
+					return;
 				}
 				let params: Record<string, unknown>;
 				try {
@@ -309,7 +320,6 @@ IMPORTANT: When you need to write a file, use the write_file tool with path and 
 					params = {};
 				}
 
-				// Validate required params
 				const validationError = validateToolParams(tool, params);
 				if (validationError) {
 					messages.push({ role: "tool", tool_call_id: tc.id, content: `Error: ${validationError}` });
@@ -317,27 +327,29 @@ IMPORTANT: When you need to write a file, use the write_file tool with path and 
 					options.onToolCall?.(tc.function.name, params);
 					options.onToolResult?.(tc.function.name, `Error: ${validationError}`);
 					toolCallLog.push({ name: tc.function.name, args: params, result: `Error: ${validationError}` });
-					continue;
+					return;
 				}
 
-				// Deduplicate
 				const callSig = `${tc.function.name}:${JSON.stringify(params)}`;
 				if (seenCalls.has(callSig)) {
 					const skipMsg = "Skipped: identical call already executed this turn.";
-					messages.push({
-						role: "tool",
-						tool_call_id: tc.id,
-						content: skipMsg,
-					});
+					messages.push({ role: "tool", tool_call_id: tc.id, content: skipMsg });
 					session.messages.push({ role: "tool", tool_call_id: tc.id, content: skipMsg });
-					continue;
+					return;
 				}
 				seenCalls.add(callSig);
 
 				options.onToolCall?.(tc.function.name, params);
 
 				try {
-					const result = await tool.execute("pire", params);
+					// Per-tool timeout: 120s default, 300s for known slow tools
+					const toolTimeout = ["angr", "ghidra_decompile", "decompile", "volatility"].includes(tc.function.name) ? 300000 : 120000;
+					const result = await Promise.race([
+						tool.execute("pire", params),
+						new Promise<never>((_, reject) =>
+							setTimeout(() => reject(new Error(`Tool "${tc.function.name}" timed out after ${toolTimeout / 1000}s`)), toolTimeout),
+						),
+					]);
 					const text = result.content.map((c: { text: string }) => c.text).join("\n");
 					const truncated = text.length > MAX_TOOL_OUTPUT ? text.slice(0, MAX_TOOL_OUTPUT) + "\n... (truncated)" : text;
 					messages.push({ role: "tool", tool_call_id: tc.id, content: truncated });
@@ -352,17 +364,23 @@ IMPORTANT: When you need to write a file, use the write_file tool with path and 
 					toolCallLog.push({ name: tc.function.name, args: params, result: `Error: ${errMsg}` });
 				}
 			}
+
+			// Run parallel tools concurrently, then sequential tools one-by-one
+			await Promise.all(parallelCalls.map((tc) => execToolCall(tc)));
+			for (const tc of sequentialCalls) {
+				await execToolCall(tc);
+			}
 			continue;
-		}
+			}
 
-		if (resp.content) {
+			if (resp.content) {
 			session.messages.push({ role: "assistant", content: resp.content });
-		}
-		break;
-	}
+			}
+			break;
+			}
 
-	return { content: finalContent, toolCalls: toolCallLog, turns: turnCount };
-}
+			return { content: finalContent, toolCalls: toolCallLog, turns: turnCount };
+			}
 
 // ─── JSON-RPC ──────────────────────────────────────────────────
 

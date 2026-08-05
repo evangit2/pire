@@ -184,3 +184,35 @@ Ran 24 integration tests covering the 12 previously untested tools: extract, fet
 ### Files Modified (Pass 4)
 
 - `packages/re-agent/src/index.ts` — angr symbol resolution + entry state, unicorn multi-line script, DEVNULL removed from 3 tools with stderr error extraction
+
+---
+
+## Pass 5: Parallel Tool Execution + Per-Tool Timeout (v0.89.11)
+
+### Feature #23: Parallel tool execution
+
+**File:** `packages/re-agent/src/mcp-server.ts`, `packages/re-agent/src/index.ts`
+
+**Problem:** When the LLM requested multiple tool calls in a single turn (e.g. `strings` + `file` + `hash`), they executed sequentially via `for...of` + `await`. This wasted time — 3 independent tools that could run in 1s took 3s.
+
+**Fix:** Refactored the tool execution loop to separate parallel and sequential calls:
+- Tools with `executionMode: "sequential"` (r2, decompile, ghidra_decompile, gdb, frida) run one-at-a-time since they use persistent sessions/state
+- All other tools run concurrently via `Promise.all`
+- The `execToolCall` helper handles validation, dedup, execution, and error handling for each call
+
+### Feature #24: Per-tool timeout
+
+**File:** `packages/re-agent/src/mcp-server.ts`
+
+**Problem:** A stuck tool (e.g. angr hanging on symbolic execution) blocked the entire agent loop indefinitely. The `run()` function had timeouts for shell commands, but `tool.execute()` itself had no timeout.
+
+**Fix:** Added `Promise.race` with a per-tool timeout:
+- Default: 120 seconds
+- Known slow tools (angr, ghidra_decompile, decompile, volatility): 300 seconds
+- On timeout, returns `Error: Tool "X" timed out after Ns` to the LLM
+
+### Files Modified (Pass 5)
+
+- `packages/re-agent/src/mcp-server.ts` — parallel execution, per-tool timeout, refactored tool call loop
+- `packages/re-agent/src/index.ts` — `executionMode: "sequential"` on r2, decompile, ghidra_decompile, gdb, frida
+- `packages/re-agent/test/test-pass5.cjs` — 15 unit tests for parallel execution + timeout
