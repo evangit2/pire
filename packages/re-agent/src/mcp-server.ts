@@ -648,11 +648,23 @@ async function runHttpServer(port: number, host: string) {
 			return;
 		}
 
+		// Limit body size to 10MB to prevent memory exhaustion
+		const MAX_BODY = 10 * 1024 * 1024;
 		let body = "";
+		let tooLarge = false;
 		req.on("data", (chunk) => {
 			body += chunk;
+			if (body.length > MAX_BODY) {
+				tooLarge = true;
+				req.destroy();
+			}
 		});
 		req.on("end", async () => {
+			if (tooLarge) {
+				res.writeHead(413, { "Content-Type": "application/json" });
+				res.end(JSON.stringify(err(0, -32600, "Request body too large (max 10MB)")));
+				return;
+			}
 			let rpcReq: RPCRequest;
 			try {
 				rpcReq = JSON.parse(body);
@@ -662,9 +674,23 @@ async function runHttpServer(port: number, host: string) {
 				return;
 			}
 
+			// Support JSON-RPC batch requests (array of requests)
+			if (Array.isArray(rpcReq)) {
+				const responses = await Promise.all(rpcReq.map((r) => handleRequest(r)));
+				res.writeHead(200, { "Content-Type": "application/json" });
+				res.end(JSON.stringify(responses));
+				return;
+			}
+
 			const response = await handleRequest(rpcReq);
 			res.writeHead(200, { "Content-Type": "application/json" });
 			res.end(JSON.stringify(response));
+		});
+		req.on("error", () => {
+			if (!res.headersSent) {
+				res.writeHead(400, { "Content-Type": "application/json" });
+				res.end(JSON.stringify(err(0, -32600, "Request error")));
+			}
 		});
 	});
 

@@ -1295,6 +1295,11 @@ const BLOCKED_PATTERNS = [
 	/\bmkfs\b/,
 	/\bdd\s+.*of=/,
 	/\b:()\{\s*:\|:&\s*\};:/, // fork bomb
+	// Network exfiltration via Python — block urllib, requests, socket
+	/python3?\s+.*-c.*import\s+(urllib|requests|socket|http)/,
+	/python3?\s+.*-c.*from\s+(urllib|requests|socket|http)/,
+	// Block /dev/tcp and /dev/udp (bash network redirect)
+	/\/dev\/(tcp|udp)\//,
 ];
 
 /** Check if a command matches any blocked pattern. Returns null if allowed. */

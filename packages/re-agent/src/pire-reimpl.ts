@@ -407,7 +407,51 @@ ${systemTemplate
 
 			messages.push({ role: "assistant", content: resp.content, tool_calls: resp.tool_calls });
 
+			// Split into parallel and sequential tool calls
+			const parallelTCs: typeof resp.tool_calls = [];
+			const sequentialTCs: typeof resp.tool_calls = [];
 			for (const tc of resp.tool_calls) {
+				const tool = toolMap.get(tc.function.name);
+				if (tool?.executionMode === "sequential") {
+					sequentialTCs.push(tc);
+				} else {
+					parallelTCs.push(tc);
+				}
+			}
+
+			// Execute parallel tools concurrently
+			await Promise.all(
+				parallelTCs.map(async (tc) => {
+					const tool = toolMap.get(tc.function.name)!;
+					let params: Record<string, unknown>;
+					try {
+						params = JSON.parse(tc.function.arguments);
+					} catch {
+						params = {};
+					}
+					try {
+						const toolTimeout = ["angr", "ghidra_decompile", "decompile", "volatility"].includes(tc.function.name) ? 300000 : 120000;
+						const result = await Promise.race([
+							tool.execute("reimpl", params),
+							new Promise<never>((_, reject) =>
+								setTimeout(() => reject(new Error(`Tool "${tc.function.name}" timed out after ${toolTimeout / 1000}s`)), toolTimeout),
+							),
+						]);
+						const text = result.content.map((c: { text: string }) => c.text).join("\n");
+						const truncated = text.length > MAX_TOOL_OUTPUT ? text.slice(0, MAX_TOOL_OUTPUT) + "\n... (truncated)" : text;
+						messages.push({ role: "tool", tool_call_id: tc.id, content: truncated });
+						const preview = text.slice(0, 200).replace(/\n/g, "\n  ");
+						console.log(`  → ${preview}${text.length > 200 ? "..." : ""}`);
+					} catch (e) {
+						const errMsg = e instanceof Error ? e.message : String(e);
+						messages.push({ role: "tool", tool_call_id: tc.id, content: `Error: ${errMsg}` });
+						console.log(`  ! ${errMsg.slice(0, 200)}`);
+					}
+				}),
+			);
+
+			// Execute sequential tools one-by-one
+			for (const tc of sequentialTCs) {
 				const tool = toolMap.get(tc.function.name);
 				if (!tool) {
 					messages.push({
@@ -425,7 +469,6 @@ ${systemTemplate
 				}
 
 				try {
-					// Per-tool timeout: 120s default, 300s for slow tools
 					const toolTimeout = ["angr", "ghidra_decompile", "decompile", "volatility"].includes(tc.function.name) ? 300000 : 120000;
 					const result = await Promise.race([
 						tool.execute("reimpl", params),
@@ -434,10 +477,8 @@ ${systemTemplate
 						),
 					]);
 					const text = result.content.map((c: { text: string }) => c.text).join("\n");
-					const truncated =
-						text.length > MAX_TOOL_OUTPUT ? text.slice(0, MAX_TOOL_OUTPUT) + "\n... (truncated)" : text;
+					const truncated = text.length > MAX_TOOL_OUTPUT ? text.slice(0, MAX_TOOL_OUTPUT) + "\n... (truncated)" : text;
 					messages.push({ role: "tool", tool_call_id: tc.id, content: truncated });
-
 					const preview = text.slice(0, 200).replace(/\n/g, "\n  ");
 					console.log(`  → ${preview}${text.length > 200 ? "..." : ""}`);
 				} catch (e) {

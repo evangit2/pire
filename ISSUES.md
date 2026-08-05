@@ -296,3 +296,48 @@ Ran 24 integration tests covering the 12 previously untested tools: extract, fet
 
 - `packages/re-agent/src/pire-model.ts` — YAML parser fix, saveConfig quoting, fetchModels URL normalization
 - `packages/re-agent/test/test-pass7.cjs` — 31 unit tests
+
+---
+
+## Pass 8: Sandbox hardening, HTTP server robustness, reimpl parallel execution (v0.89.14)
+
+### Bug #32: Sandbox bypass via Python network libraries
+
+**File:** `packages/re-agent/src/index.ts`
+
+**Problem:** The shell sandbox blocked `curl`, `wget`, `nc`, `ssh` etc., but didn't block Python-based network access. An LLM could exfiltrate data via `python3 -c "import urllib.request; ..."` or `python3 -c "import socket; ..."`.
+
+**Fix:** Added blocked patterns for:
+- `python3 -c ... import (urllib|requests|socket|http)`
+- `python3 -c ... from (urllib|requests|socket|http)`
+- `/dev/tcp/` and `/dev/udp/` (bash network redirects)
+
+### Bug #33: HTTP server had no body size limit
+
+**File:** `packages/re-agent/src/mcp-server.ts`
+
+**Problem:** The HTTP MCP server accepted unlimited-size request bodies. A malicious client could exhaust memory.
+
+**Fix:** Added 10MB body size limit. Returns HTTP 413 with JSON-RPC error if exceeded. Also added `req.on("error")` handler for robustness.
+
+### Feature #34: JSON-RPC batch request support
+
+**File:** `packages/re-agent/src/mcp-server.ts`
+
+**Problem:** The HTTP server didn't support JSON-RPC batch requests (array of requests), which is part of the JSON-RPC 2.0 spec.
+
+**Fix:** If the parsed body is an array, process all requests in parallel via `Promise.all` and return an array of responses.
+
+### Feature #35: Parallel tool execution in pire-reimpl
+
+**File:** `packages/re-agent/src/pire-reimpl.ts`
+
+**Problem:** The autonomous reimplementation pipeline executed all tool calls sequentially, even when they were independent.
+
+**Fix:** Split tool calls into parallel and sequential groups (same as mcp-server). Parallel tools run via `Promise.all`, sequential tools (r2, ghidra, gdb, frida, decompile) run one-by-one.
+
+### Files Modified (Pass 8)
+
+- `packages/re-agent/src/index.ts` — 3 new sandbox patterns
+- `packages/re-agent/src/mcp-server.ts` — body limit, batch support, error handler
+- `packages/re-agent/src/pire-reimpl.ts` — parallel tool execution
