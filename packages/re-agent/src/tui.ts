@@ -45,7 +45,7 @@ import { type ChatMessage, callLLM, loadLLMConfig, toolToFunction } from "./llm.
 import { loadSettings } from "./pire-config.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const VERSION = "0.89.2";
+const VERSION = "0.89.3";
 
 // ─── Context Window Management ─────────────────────────────────
 // Aggressive multi-stage compression: truncate → stub → drop.

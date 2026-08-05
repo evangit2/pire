@@ -473,24 +473,23 @@ class R2Session {
 		this.ensureProcess(path);
 		if (!this.proc) throw new Error("r2 process not started");
 
-		// Track analysis state
-		if (command.startsWith("aaa") || command.includes("; aaa;") || command.includes("\naaa\n")) {
-			this.analyzedFiles.add(path);
-		}
+		const isAnalysis = command.startsWith("aaa") || command.includes("; aaa") || command.startsWith("aa;");
+		const timeoutMs = isAnalysis ? 300000 : 60000;
 
 		// Use a marker to detect command completion
 		const marker = `__PIRE_END_${Date.now()}__`;
 		const stdoutChunks: string[] = [];
 		const child = this.proc.child;
 
-		// Determine timeout: aaa analysis can take a long time on large binaries
-		// Allow up to 5 minutes for analysis commands, 60s for everything else
-		const isAnalysis = command.startsWith("aaa") || command.includes("; aaa") || command.startsWith("aa;");
-		const timeoutMs = isAnalysis ? 300000 : 60000;
-
 		return new Promise<string>((resolve, reject) => {
 			const timeout = setTimeout(() => {
 				child.stdout?.removeAllListeners("data");
+				// Kill the r2 process on timeout — it's in a broken state
+				// with pending output that would contaminate the next command.
+				try { child.kill("SIGKILL"); } catch {}
+				this.proc = null;
+				this.currentFile = null;
+				// Don't mark as analyzed if the command timed out
 				reject(new Error("r2 command timeout"));
 			}, timeoutMs);
 
@@ -504,6 +503,10 @@ class R2Session {
 					let output = text.split(marker)[0];
 					// Strip leading null bytes from r2 -q0 startup
 					output = output.replace(/^\x00+/, "");
+					// Only mark as analyzed after successful completion of aaa
+					if (isAnalysis && output.length > 0) {
+						this.analyzedFiles.add(path);
+					}
 					resolve(output.trim());
 				}
 			};
@@ -533,7 +536,7 @@ const r2Session = new R2Session();
 const r2Tool: AgentTool<{ path: string; command: string }> = {
 	name: "r2",
 	description:
-		"Run a radare2 command. e.g. 'aaa; afl', 'pdf @ main', 'iz'. Use 'aflj' instead of 'afl' for JSON output (machine-parseable). Use 'afl' address column for decompile tool. For large binaries, use '~' (tilde) to filter output, e.g. 'afl~main' or 'aflj~[0]' to avoid flooding context with hundreds of functions.",
+		"Run a radare2 command. e.g. 'aaa; afl', 'pdf @ main', 'iz'. Use 'aflj' instead of 'afl' for JSON output (machine-parseable). Use 'afl' address column for decompile tool. For large binaries, use '~' (tilde) to filter output, e.g. 'afl~main' or 'aflj~[0]' to avoid flooding context with hundreds of functions. WARNING: 'f~' (flag list) on large binaries can produce 500KB+ output even with tilde filter — use 'f~pattern' with a specific pattern or use 'afl~pattern' instead.",
 	parameters: Type.Object({
 		path: Type.String(),
 		command: Type.String(),
@@ -562,6 +565,13 @@ const r2Tool: AgentTool<{ path: string; command: string }> = {
 						`Error: r2 analysis timed out even with 'aa'. The binary may be too large or complex for radare2's analysis. Try running specific r2 commands manually.\n\nOriginal error: ${(e2 as Error).message}`,
 					);
 				}
+			}
+			// Non-timeout errors or non-aaa timeouts: return a helpful message
+			if (errMsg.includes("timeout")) {
+				return textResult(
+					`r2 command timed out (60s limit). The command was: ${params.command}\n` +
+					"This may happen on very large binaries. Try a simpler command, use '~' to filter output, or use 'aa' instead of 'aaa'.",
+				);
 			}
 			throw e;
 		}
