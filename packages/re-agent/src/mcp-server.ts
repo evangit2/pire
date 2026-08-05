@@ -133,7 +133,7 @@ When you have gathered enough information, write your analysis to a file using t
 	session.messages.push({ role: "user", content: userMessage });
 
 	const toolSchemas = RE_TOOLS.map(toolToFunction);
-	const MAX_TURNS = options.maxTurns ?? 40;
+	const MAX_TURNS = options.maxTurns ?? 70;
 	const seenCalls = new Set<string>();
 	const toolCallLog: { name: string; args: Record<string, unknown>; result: string }[] = [];
 

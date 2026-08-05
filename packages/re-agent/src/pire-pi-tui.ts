@@ -63,7 +63,7 @@ function setupGracefulQuit(onQuit: () => void): void {
 	});
 }
 
-const MAX_TURNS = 40;
+const MAX_TURNS = 70;
 const MAX_OUTPUT = 16000;
 
 // ─── DynamicBorder ─────────────────────────────────────────────

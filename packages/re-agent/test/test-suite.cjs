@@ -513,7 +513,7 @@ ok(tuiSrc.includes("from \"./llm.js\""), "TUI imports shared llm module");
 ok(tuiSrc.includes(":load"), "TUI has :load command");
 ok(tuiSrc.includes(":save"), "TUI has :save command");
 ok(tuiSrc.includes("loadedTarget"), "TUI tracks loaded target");
-ok(tuiSrc.includes("MAX_TURNS = 40"), "TUI has 40 turn limit");
+ok(tuiSrc.includes("MAX_TURNS = 70"), "TUI has 70 turn limit");
 ok(tuiSrc.includes("onContent"), "TUI streams content to stdout");
 ok(tuiSrc.includes("VERSION"), "TUI has version constant");
 ok(tuiSrc.includes("0.88.9"), "TUI version is 0.88.9");
