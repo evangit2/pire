@@ -341,12 +341,16 @@ pkg_install() {
 		brew)
 			# HOMEBREW_NO_AUTO_UPDATE skips the slow auto-update step.
 			# sudo credentials are cached in the foreground before parallel phase.
-			# Don't redirect stderr to /dev/null — cask sudo prompts need to be visible
-			# if the cache expired.
-			HOMEBREW_NO_AUTO_UPDATE=1 run_with_timeout brew install "$@" </dev/null 2>&1 \
-				| grep -vE '^==> |^Warning: ' | head -5 \
-				|| HOMEBREW_NO_AUTO_UPDATE=1 run_with_timeout brew install --cask "$@" </dev/null 2>&1 \
-				| grep -vE '^==> |^Warning: ' | head -5
+			# Output goes to a temp log — piping through head/grep breaks the pipe
+			# and causes brew to hang on SIGPIPE.
+			local _brew_log
+			_brew_log=$(mktemp 2>/dev/null || echo /tmp/pire-brew-$$.log)
+			if ! HOMEBREW_NO_AUTO_UPDATE=1 run_with_timeout brew install "$@" </dev/null >"$_brew_log" 2>&1; then
+				if ! HOMEBREW_NO_AUTO_UPDATE=1 run_with_timeout brew install --cask "$@" </dev/null >"$_brew_log" 2>&1; then
+					tail -3 "$_brew_log" 2>/dev/null >&2
+				fi
+			fi
+			rm -f "$_brew_log" 2>/dev/null
 			;;
 		*)      log_warn "Unknown package manager for: $*" ;;
 	esac
