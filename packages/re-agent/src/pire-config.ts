@@ -132,7 +132,12 @@ async function main() {
 	}
 }
 
-main().catch((e) => {
-	console.error(chalk.red(`✗ ${e.message}`));
-	process.exit(1);
-});
+// Only run main() when invoked as `pire config`, not when imported
+// for loadSettings/saveSettings by other modules.
+const arg0 = process.argv[2];
+if (arg0 === "config") {
+	main().catch((e) => {
+		console.error(chalk.red(`✗ ${e.message}`));
+		process.exit(1);
+	});
+}
