@@ -1,6 +1,6 @@
 # pire — Reverse Engineering Agent
 # Build: docker build -t pire .
-# Run:   docker run -it --rm -v $(pwd):/workspace pire /workspace/binary.exe
+# Run:   docker run -it --rm -v $(pwd):/workspace pire
 FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
