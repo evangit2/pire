@@ -572,12 +572,12 @@ public class ProgramScriptService {
                     return Response.err("Import failed: no results. Log: " + log);
                 }
                 // getDomainObject(consumer) registers us as a consumer so the program stays open
-                program = loaded.getDomainObject(this);
+                program = loaded.getDomainObject();
                 if (program == null) {
                     return Response.err("Import failed: no primary program. Log: " + log);
                 }
                 // Save to project folder (creates DomainFile)
-                loaded.save(ghidra.util.task.TaskMonitor.DUMMY);
+                loaded.save(project, log, ghidra.util.task.TaskMonitor.DUMMY);
                 loaded.release(this);
             } else {
                 // Auto-detect format
@@ -593,7 +593,7 @@ public class ProgramScriptService {
                     return Response.err("Import failed: no primary program. Log: " + log);
                 }
                 // Save to project folder before releasing (prevents "Database is closed")
-                loadResults.save(ghidra.util.task.TaskMonitor.DUMMY);
+                loadResults.save(project, this, log, ghidra.util.task.TaskMonitor.DUMMY);
                 loadResults.release(this);
             }
 

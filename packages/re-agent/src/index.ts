@@ -162,6 +162,9 @@ class GhidraBridge {
 			const jarCandidates = [
 				join(process.env.HOME || "", ".config", `ghidra_${version}_PUBLIC`, "Extensions", "GhidraMCP", "lib"),
 				join(this.ghidraHome, "Extensions", "GhidraMCP", "lib"),
+				join(__dirname, "..", "..", "ghidra-mcp", "target"),
+				join(__dirname, "..", "..", "..", "packages", "ghidra-mcp", "target"),
+				join(__dirname, "..", "..", "..", "ghidra-mcp", "target"),
 				"/opt/ghidra-mcp/target",
 			];
 			for (const dir of jarCandidates) {
@@ -179,6 +182,76 @@ class GhidraBridge {
 		}
 	}
 
+	/** Build the GhidraMCP JAR from source. Auto-detects Ghidra version, patches pom.xml,
+	 * installs Ghidra JARs into local Maven repo, and builds with Maven. */
+	private buildMcpJar(): void {
+		if (!this.ghidraHome) return;
+		// Find the ghidra-mcp source directory
+		const sourceDirs = [
+			join(__dirname, "..", "..", "ghidra-mcp"),
+			join(__dirname, "..", "..", "..", "packages", "ghidra-mcp"),
+			join(__dirname, "..", "..", "..", "ghidra-mcp"),
+		];
+		let sourceDir: string | null = null;
+		for (const d of sourceDirs) {
+			if (existsSync(join(d, "pom.xml"))) {
+				sourceDir = d;
+				break;
+			}
+		}
+		if (!sourceDir) return;
+
+		// Check for Maven and JDK
+		const mvnPath = which("mvn");
+		const javacPath = which("javac");
+		if (!mvnPath || !javacPath) return;
+
+		// Detect installed Ghidra version and patch pom.xml if needed
+		const version = basename(this.ghidraHome).replace("_PUBLIC", "").replace("ghidra_", "");
+		const pomPath = join(sourceDir, "pom.xml");
+		if (!existsSync(pomPath)) return;
+		const pomContent = readFileSync(pomPath, "utf8");
+		const pomVersionMatch = pomContent.match(/<ghidra\.version>([^<]+)<\/ghidra\.version>/);
+		if (pomVersionMatch && pomVersionMatch[1] !== version) {
+			const patched = pomContent.replace(
+				/<ghidra\.version>[^<]+<\/ghidra\.version>/,
+				`<ghidra.version>${version}</ghidra.version>`,
+			);
+			writeFileSync(pomPath, patched);
+		}
+
+		// Install Ghidra JARs into local Maven repo (idempotent — skips if already there)
+		try {
+			run(`bash ${join(sourceDir, "ghidra-mcp-setup.sh")} --setup-deps --ghidra-path ${this.ghidraHome} 2>&1`, {
+				timeout: 120000,
+			});
+		} catch {
+			// setup-deps may fail if already installed — that's fine
+		}
+
+		// Build the JAR
+		try {
+			run(`cd ${sourceDir} && ${mvnPath} clean package assembly:single -DskipTests -q 2>&1`, {
+				timeout: 300000,
+			});
+		} catch {
+			return;
+		}
+
+		// Find the built JAR
+		const targetDir = join(sourceDir, "target");
+		if (!existsSync(targetDir)) return;
+		try {
+			const jars = execSync(`ls ${targetDir}/GhidraMCP-*.jar 2>/dev/null`, { encoding: "utf8" })
+				.trim()
+				.split("\n")
+				.filter(Boolean);
+			if (jars.length > 0) {
+				this.mcpJar = jars[0];
+			}
+		} catch {}
+	}
+
 	private isAlive(): boolean {
 		try {
 			run(`curl -sf ${this.ghidraUrl}health -m 2`, { timeout: 5000 });
@@ -188,14 +261,21 @@ class GhidraBridge {
 		}
 	}
 
-	/** Start the Ghidra headless MCP server with a target binary loaded. */
+	/** Start the Ghidra headless MCP server with a target binary loaded.
+	 * Two-phase approach:
+	 * 1. Use Ghidra's analyzeHeadless to import + analyze the binary into a project
+	 * 2. Start the MCP server pointing to that project + program
+	 */
 	startHeadless(targetPath: string): boolean {
-		if (this.isAlive()) return true;
+		if (this.isAlive() && this.isProgramLoaded()) return true;
 		if (!this.ghidraHome) {
 			throw new Error("Ghidra installation not found. Install Ghidra or set GHIDRA_HOME.");
 		}
 		if (!this.mcpJar) {
-			throw new Error("GhidraMCP extension JAR not found. Run: pire diagnose");
+			this.buildMcpJar();
+		}
+		if (!this.mcpJar) {
+			throw new Error("GhidraMCP extension JAR not found and auto-build failed. Ensure Maven and JDK are installed.");
 		}
 		if (!existsSync(targetPath)) {
 			throw new Error(`Target binary not found: ${targetPath}`);
@@ -206,21 +286,50 @@ class GhidraBridge {
 		mkdirSync(projectDir, { recursive: true });
 		const projectName = "pire_analysis";
 		const programName = basename(targetPath);
+		const projectPath = join(projectDir, projectName);
 		const classpath = this.buildClasspath();
 		const logFile = "/tmp/pire-ghidra-mcp.log";
+		const analyzeLog = "/tmp/pire-ghidra-analyze.log";
 
-		// Write startup script to avoid shell mangling
-		const script = `#!/bin/bash
-export GHIDRA_HOME=${this.ghidraHome}
-java -Xmx4g -XX:+UseG1GC \\
-    -Dghidra.home=${this.ghidraHome} -Dapplication.name=GhidraMCP \\
-    -classpath "${classpath}" \\
-    com.xebyte.headless.GhidraMCPHeadlessServer \\
-    --port 8089 --bind 127.0.0.1 \\
-    --project ${join(projectDir, projectName + ".gpr")} \\
-    --program ${shellEscape(programName)} \\
-    > ${logFile} 2>&1
-`;
+		// Phase 1: Import + analyze binary into Ghidra project using analyzeHeadless
+		// Skip if project already exists with this program
+		const gprPath = projectPath + ".gpr";
+		if (!existsSync(gprPath)) {
+			const analyzeScript = [
+				"#!/bin/bash",
+				`export GHIDRA_HOME=${this.ghidraHome}`,
+				`${this.ghidraHome}/support/analyzeHeadless \\`,
+				`    ${projectDir} ${projectName} \\`,
+				`    -import ${shellEscape(targetPath)} \\`,
+				`    -overwrite \\`,
+				`    > ${analyzeLog} 2>&1`,
+				"",
+			].join("\n");
+			const analyzeScriptPath = "/tmp/pire-analyze-ghidra.sh";
+			writeFileSync(analyzeScriptPath, analyzeScript, { mode: 0o755 });
+			try {
+				run(`bash ${analyzeScriptPath}`, { timeout: 300000 });
+			} catch {
+				// analyzeHeadless may return non-zero even on success
+			}
+		}
+
+		// Phase 2: Start MCP server with the project + program loaded
+		if (this.isAlive() && this.isProgramLoaded()) return true;
+
+		const script = [
+			"#!/bin/bash",
+			`export GHIDRA_HOME=${this.ghidraHome}`,
+			`java -Xmx4g -XX:+UseG1GC \\`,
+			`    -Dghidra.home=${this.ghidraHome} -Dapplication.name=GhidraMCP \\`,
+			`    -classpath "${classpath}" \\`,
+			`    com.xebyte.headless.GhidraMCPHeadlessServer \\`,
+			`    --port 8089 --bind 127.0.0.1 \\`,
+			`    --project ${shellEscape(gprPath)} \\`,
+			`    --program ${shellEscape("/" + programName)} \\`,
+			`    > ${logFile} 2>&1`,
+			"",
+		].join("\n");
 		const scriptPath = "/tmp/pire-start-ghidra.sh";
 		writeFileSync(scriptPath, script, { mode: 0o755 });
 
@@ -232,7 +341,7 @@ java -Xmx4g -XX:+UseG1GC \\
 		// Wait for startup (Ghidra JVM takes ~15-20s)
 		for (let i = 0; i < 30; i++) {
 			run("sleep 1", { timeout: 5000 });
-			if (this.isAlive()) return true;
+			if (this.isAlive() && this.isProgramLoaded()) return true;
 		}
 		return false;
 	}
@@ -265,16 +374,27 @@ java -Xmx4g -XX:+UseG1GC \\
 	}
 
 	private ensureAlive(): boolean {
-		if (this.isAlive()) return true;
+		if (this.isAlive() && (!this.currentTarget || this.isProgramLoaded())) return true;
 		if (this.restartCount >= this.maxRestarts) return false;
 		this.restartCount++;
 		// If we have a target loaded, try starting the headless server
+		// (which also imports+analyzes the binary via analyzeHeadless)
 		if (this.currentTarget) {
 			try {
 				if (this.startHeadless(this.currentTarget)) return true;
 			} catch {}
 		}
 		return false;
+	}
+
+	/** Check if the Ghidra server has a program loaded. */
+	private isProgramLoaded(): boolean {
+		try {
+			const resp = run(`curl -sf ${this.ghidraUrl}health -m 2`, { timeout: 5000 });
+			return resp.includes('"program_loaded": true') || resp.includes('"program_loaded":true');
+		} catch {
+			return false;
+		}
 	}
 
 	private api(endpoint: string, method = "GET", body?: string): string {
@@ -286,35 +406,37 @@ java -Xmx4g -XX:+UseG1GC \\
 	}
 
 	decompile(functionName: string): string {
-		return this.api(`decompile/${encodeURIComponent(functionName)}`);
+		return this.api(`decompile_function?address=${encodeURIComponent(functionName)}`);
 	}
 
 	listFunctions(): string {
-		return this.api("functions");
+		return this.api("list_functions");
 	}
 
 	rename(oldName: string, newName: string): string {
-		return this.api(`rename/${encodeURIComponent(oldName)}/${encodeURIComponent(newName)}`, "POST");
+		return this.api("rename_function", "POST", JSON.stringify({ old_name: oldName, new_name: newName }));
 	}
 
 	xrefs(address: string): string {
-		return this.api(`xrefs/${address}`);
+		return this.api(`get_xrefs_to?address=${encodeURIComponent(address)}`);
 	}
 
 	searchStrings(pattern: string): string {
-		return this.api(`strings?pattern=${encodeURIComponent(pattern)}`);
+		return this.api(`list_strings?filter=${encodeURIComponent(pattern)}`);
 	}
 
 	listDataTypes(): string {
-		return this.api("dataTypes");
+		return this.api("list_data_types");
 	}
 
 	disassemble(address: string): string {
-		return this.api(`disassemble/${address}`);
+		return this.api(`disassemble_function?address=${encodeURIComponent(address)}`);
 	}
 
 	/** Check if the headless server can be auto-started (JAR + Ghidra installed). */
 	canAutoStart(): boolean {
+		if (!this.ghidraHome) return false;
+		if (!this.mcpJar) this.buildMcpJar();
 		return !!this.ghidraHome && !!this.mcpJar;
 	}
 
@@ -722,11 +844,18 @@ const ghidraStrings: AgentTool<{ pattern?: string }> = {
 
 const ghidraStatus: AgentTool<Record<string, never>> = {
 	name: "ghidra_status",
-	description: "Check Ghidra server status.",
+	description: "Check Ghidra server status. If Ghidra is installed but not running, this will attempt to auto-start the headless server with the currently loaded binary.",
 	parameters: Type.Object({}),
 	async execute() {
-		const s = ghidra.getStatus();
-		return textResult(`Ghidra: ${s.alive ? "connected" : "offline"} at ${s.url} (restart attempts: ${s.restarts})`);
+		const alive = ghidra.getStatus().alive;
+		if (!alive) {
+			const canStart = ghidra.canAutoStart();
+			if (canStart) {
+				return textResult(`Ghidra: offline at ${ghidra.getStatus().url}. Auto-start is available — call ghidra_functions or ghidra_decompile to automatically start the headless server with the loaded binary.`);
+			}
+			return textResult(`Ghidra: offline at ${ghidra.getStatus().url}. No Ghidra installation found or MCP JAR not built.`);
+		}
+		return textResult(`Ghidra: connected at ${ghidra.getStatus().url} (restart attempts: ${ghidra.getStatus().restarts})`);
 	},
 };
 

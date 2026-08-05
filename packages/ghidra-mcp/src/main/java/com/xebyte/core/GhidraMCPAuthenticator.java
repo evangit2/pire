@@ -64,7 +64,7 @@ public class GhidraMCPAuthenticator implements ClientAuthenticator {
 
     @Override
     public boolean processPasswordCallbacks(String title, String serverType, String serverName,
-            boolean nameEditable, NameCallback nameCb, PasswordCallback passCb,
+            NameCallback nameCb, PasswordCallback passCb,
             javax.security.auth.callback.ChoiceCallback choiceCb, AnonymousCallback anonymousCb,
             String loginError) {
         try {

@@ -216,6 +216,7 @@ export class PireTUI {
 				this.pendingUrl = target;
 			} else {
 				this.loadedTarget = target;
+				setGhidraTarget(target);
 			}
 		}
 	}
@@ -740,6 +741,7 @@ export class PireCLI {
 				this.pendingUrl = target;
 			} else {
 				this.loadedTarget = target;
+				setGhidraTarget(target);
 			}
 		}
 	}
