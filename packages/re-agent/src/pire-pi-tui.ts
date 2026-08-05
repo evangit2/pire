@@ -378,7 +378,7 @@ export class PirePiTUI {
 		// without flicker. Transition points (turn boundaries, status changes)
 		// call flushRender() which does a forced full redraw to clear stale
 		// content.
-		this.throttle = new RenderThrottle(() => this.ui.requestRender(), 16);
+		this.throttle = new RenderThrottle(() => this.ui.requestRender(true), 33);
 
 		this.input = new Input();
 		this.input.onSubmit = (value: string) => {
@@ -478,7 +478,9 @@ export class PirePiTUI {
 		this.ui.setFocus(this.input);
 	}
 
-	/** Request a render (throttled to reduce flicker) */
+	/** Request a render — always forces a full redraw to prevent stale content.
+	 *  Synchronized output (BEGIN/END SYNCHRONIZED_OUTPUT) in the framework
+	 *  prevents visible flicker. */
 	private requestRender(): void {
 		this.throttle.request();
 	}
