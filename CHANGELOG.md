@@ -1,3 +1,33 @@
+# pire v0.88.3 — Multi-Toolchain E2E Verification
+
+Released: 2026-08-04
+
+## Verified
+
+E2E analysis across 9 binaries spanning 5 toolchains (C/C++, Go, Rust, static, large C):
+
+| Binary | Size | Toolchain | Functions | Good | Partial | Annoyances |
+|--------|------|-----------|-----------|------|---------|------------|
+| gawk | 740KB | C | 705 | 2 | 8 | 0 |
+| ssh | 847KB | C | 907 | 5 | 5 | 0 |
+| nginx | 1.3MB | C | 1193 | 7 | 3 | 0 |
+| bash | 1.4MB | C | 2292 | 9 | 0 | 0 |
+| docker-proxy | 2.3MB | Go | 1842 | 10 | 0 | 0 |
+| rg | 5.3MB | Rust | 4755 | 7 | 3 | 0 |
+| busybox | 2.1MB | static C | 2905 | 9 | 1 | 0 |
+| git | 4.1MB | C | 3274 | 8 | 2 | 0 |
+| python3.12 | 8MB | C | 4111 | 5 | 5 | 0 |
+
+**Total: 0 annoyances, 0 crashes, 0 empty decompilations across all 9 binaries.**
+
+All "partial" ratings are r2 `pdc` limitations (loc_ labels, no function signatures, very long functions) — not pire bugs.
+
+## Fixed
+
+- **Harness quality scoring false positive** — Rust decompilation output containing the substring "not found" in pseudo-C body was misclassified as an error. Changed to check if output *starts with* error messages rather than contains them.
+
+---
+
 # pire v0.88.2 — Large Binary Analysis Improvements
 
 Released: 2026-08-04
