@@ -155,8 +155,11 @@ async function doUpdate(): Promise<void> {
 	}
 
 	try {
-		// Pull
-		git("pull origin main --no-rebase", { cwd: repo, stdio: "ignore" });
+		// Force-update to origin/main. Using reset --hard instead of pull
+		// because pull can fail on divergent branches (merge conflicts,
+		// no rebase config, etc.). We already stashed local changes above,
+		// and the backup SHA allows rollback, so a hard reset is safe.
+		git("reset --hard origin/main", { cwd: repo, stdio: "ignore" });
 
 		// Reinstall npm deps if needed — non-fatal, pire can still run with stale deps
 		if (existsSync(join(repo, "package.json"))) {
