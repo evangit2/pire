@@ -153,13 +153,17 @@ async function doUpdate(): Promise<void> {
 		// Pull
 		git("pull origin main --no-rebase", { cwd: repo, stdio: "ignore" });
 
-		// Reinstall npm deps if needed
+		// Reinstall npm deps if needed — non-fatal, pire can still run with stale deps
 		if (existsSync(join(repo, "package.json"))) {
 			console.log(chalk.dim("  Installing dependencies..."));
-			execSync("npm install --silent", { cwd: repo, stdio: "ignore", timeout: 120000 });
+			try {
+				execSync("npm install --silent", { cwd: repo, stdio: "ignore", timeout: 120000 });
+			} catch {
+				console.log(chalk.yellow("  ⚠ npm install had issues — continuing anyway"));
+			}
 		}
 
-		// Rebuild TUI if needed (dist/ is gitignored)
+		// Rebuild TUI if needed (dist/ is gitignored) — non-fatal
 		const tuiBuild = join(repo, "packages/tui/tsconfig.build.json");
 		if (existsSync(tuiBuild)) {
 			console.log(chalk.dim("  Building TUI framework..."));
@@ -169,7 +173,9 @@ async function doUpdate(): Promise<void> {
 					stdio: "ignore",
 					timeout: 30000,
 				});
-			} catch {}
+			} catch {
+				console.log(chalk.yellow("  ⚠ TUI build had issues — continuing anyway"));
+			}
 		}
 
 		const newVersion = git(`describe --tags --abbrev=0 ${DEVNULL}`, { cwd: repo }) || "unknown";
