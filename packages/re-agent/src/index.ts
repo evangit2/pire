@@ -10,7 +10,7 @@
  */
 
 import { Type } from "typebox";
-import { execSync, spawn } from "node:child_process";
+import { execSync, execFileSync, spawn } from "node:child_process";
 import { writeFileSync, existsSync, openSync, readSync, closeSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -20,15 +20,18 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // ─── Platform helpers ──────────────────────────────────────────
 const IS_WIN = process.platform === "win32";
 const DEVNULL = IS_WIN ? "2>nul" : "2>/dev/null";
-// Prefer Homebrew Python on macOS (Xcode CLT Python has ancient pip)
+// Prefer Homebrew Python on macOS (Xcode CLT Python has ancient pip).
+// On Linux, prefer /usr/bin/python3 (system Python) over whatever
+// python3 resolves to on PATH — the system Python is where pip --user
+// installs packages like yara-python, capstone, etc.
 function findPython(): string {
 	if (IS_WIN) return "python";
 	const candidates = process.platform === "darwin"
 		? ["/opt/homebrew/bin/python3", "/usr/local/bin/python3", "python3"]
-		: ["python3"];
+		: ["/usr/bin/python3", "python3"];
 	for (const p of candidates) {
 		try {
-			require("child_process").execFileSync(p, ["--version"], { stdio: "ignore" });
+			execFileSync(p, ["--version"], { stdio: "ignore" });
 			return p;
 		} catch {}
 	}
@@ -1380,6 +1383,7 @@ export function createReTools(extra: AgentTool<any>[] = []): AgentTool<any>[] {
 
 /** Probe system for available tools and return status. */
 export function probeTools(): Record<string, boolean> {
+	const ghidraInstalled = !!which("ghidra") || !!which("ghidraRun");
 	const ghidraOk = ghidra.getStatus().alive;
 	return {
 		shell: true,
@@ -1400,7 +1404,7 @@ export function probeTools(): Record<string, boolean> {
 		hash: !!which("md5sum") || !!which("sha256sum") || (IS_WIN && !!which("certutil")),
 		entropy: !!which(PYTHON),
 		diff: !!which("diff"),
-		ghidra_status: ghidraOk,
+		ghidra_status: ghidraInstalled,
 		ghidra_decompile: ghidraOk,
 		ghidra_functions: ghidraOk,
 		ghidra_rename: ghidraOk,

@@ -85,6 +85,147 @@ function showProbe() {
 	console.log(`\n${available.length}/${Object.keys(status).length} tools available`);
 }
 
+async function showDiagnose() {
+	const { execSync, execFileSync } = await import("node:child_process");
+	const { existsSync } = await import("node:fs");
+
+	console.log("pire diagnose — tool detection diagnostics\n");
+	console.log("═══════════════════════════════════════════════════");
+	console.log("Environment");
+	console.log("═══════════════════════════════════════════════════");
+	console.log(`  Node.js:    ${process.version}`);
+	console.log(`  Platform:   ${process.platform} ${process.arch}`);
+	console.log(`  tsx:        ${existsSync("/home/evan/pire/node_modules/.bin/tsx") ? "found (local)" : "not found"}`);
+	console.log(`  PATH:       ${process.env.PATH?.split(":").slice(0, 5).join(":")}...`);
+
+	// Python detection
+	console.log("\n═══════════════════════════════════════════════════");
+	console.log("Python Detection");
+	console.log("═══════════════════════════════════════════════════");
+
+	const pyCandidates = process.platform === "darwin"
+		? ["/opt/homebrew/bin/python3", "/usr/local/bin/python3", "python3"]
+		: ["/usr/bin/python3", "python3"];
+
+	let resolvedPython = "python3";
+	for (const p of pyCandidates) {
+		try {
+			execFileSync(p, ["--version"], { stdio: "pipe" });
+			const ver = execFileSync(p, ["--version"], { encoding: "utf-8" }).trim();
+			console.log(`  ✓ ${p.padEnd(30)} ${ver}`);
+			if (resolvedPython === "python3") resolvedPython = p;
+		} catch {
+			console.log(`  ✗ ${p.padEnd(30)} not found`);
+		}
+	}
+	console.log(`  → Resolved: ${resolvedPython}`);
+
+	// Check which python3 on PATH
+	try {
+		const pathPy = execSync("which python3", { encoding: "utf-8" }).trim();
+		console.log(`  python3 on PATH: ${pathPy}`);
+		if (pathPy !== resolvedPython) {
+			console.log(`  ⚠ PATH python3 differs from resolved python — modules may not be found`);
+		}
+	} catch {}
+
+	// Python modules
+	console.log("\n═══════════════════════════════════════════════════");
+	console.log("Python Modules (checking with " + resolvedPython + ")");
+	console.log("═══════════════════════════════════════════════════");
+	const pyMods = ["yara", "frida", "capstone", "lief", "angr", "keystone", "unicorn", "volatility3"];
+	for (const mod of pyMods) {
+		try {
+			execFileSync(resolvedPython, ["-c", `import ${mod}`], { stdio: "ignore" });
+			console.log(`  ✓ ${mod.padEnd(15)} importable`);
+		} catch {
+			console.log(`  ✗ ${mod.padEnd(15)} not found — install: pip install --user ${mod === "volatility3" ? "volatility3" : mod}`);
+		}
+	}
+
+	// CLI tools
+	console.log("\n═══════════════════════════════════════════════════");
+	console.log("CLI Tools");
+	console.log("═══════════════════════════════════════════════════");
+	const cliTools: [string, string, string][] = [
+		["radare2", "r2", "sudo apt install radare2"],
+		["objdump", "objdump", "sudo apt install binutils"],
+		["readelf", "readelf", "sudo apt install binutils"],
+		["nm", "nm", "sudo apt install binutils"],
+		["size", "size", "sudo apt install binutils"],
+		["strings", "strings", "sudo apt install binutils"],
+		["file", "file", "sudo apt install file"],
+		["hexdump", "hexdump", "sudo apt install bsdmainutils"],
+		["diff", "diff", "sudo apt install diffutils"],
+		["gdb", "gdb", "sudo apt install gdb"],
+		["binwalk", "binwalk", "sudo apt install binwalk"],
+		["yara", "yara", "sudo apt install yara"],
+		["frida", "frida", "pip install --user frida-tools"],
+		["jadx", "jadx", "See install.sh jadx section"],
+		["ghidra", "ghidra", "See install.sh ghidra section"],
+		["monodis", "monodis", "sudo apt install mono-utils"],
+	];
+	for (const [label, cmd, fixHint] of cliTools) {
+		try {
+			const path = execSync(`which ${cmd} 2>/dev/null`, { encoding: "utf-8" }).trim();
+			if (path) {
+				console.log(`  ✓ ${label.padEnd(15)} ${path}`);
+			} else {
+				console.log(`  ✗ ${label.padEnd(15)} not on PATH — ${fixHint}`);
+			}
+		} catch {
+			console.log(`  ✗ ${label.padEnd(15)} not found — ${fixHint}`);
+		}
+	}
+
+	// PATH issues
+	console.log("\n═══════════════════════════════════════════════════");
+	console.log("PATH Issues");
+	console.log("═══════════════════════════════════════════════════");
+	const pathDirs = process.env.PATH?.split(":") ?? [];
+	const localBin = `${process.env.HOME}/.local/bin`;
+	const dotnetTools = `${process.env.HOME}/.dotnet/tools`;
+	if (!pathDirs.includes(localBin) && existsSync(localBin)) {
+		console.log(`  ⚠ ~/.local/bin exists but is NOT on PATH`);
+		console.log(`    Fix: echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc && source ~/.bashrc`);
+	} else if (existsSync(localBin)) {
+		console.log(`  ✓ ~/.local/bin on PATH`);
+	} else {
+		console.log(`  ℹ ~/.local/bin doesn't exist (no pip --user installs yet)`);
+	}
+	if (!pathDirs.includes(dotnetTools) && existsSync(dotnetTools)) {
+		console.log(`  ⚠ ~/.dotnet/tools exists but is NOT on PATH`);
+	} else if (existsSync(dotnetTools)) {
+		console.log(`  ✓ ~/.dotnet/tools on PATH`);
+	}
+
+	// Ghidra MCP server
+	console.log("\n═══════════════════════════════════════════════════");
+	console.log("Ghidra MCP Server");
+	console.log("═══════════════════════════════════════════════════");
+	try {
+		const resp = await fetch("http://127.0.0.1:8089/");
+		console.log(`  ✓ MCP server responding (status ${resp.status})`);
+	} catch {
+		console.log(`  ✗ MCP server not running on port 8089`);
+		console.log(`    Ghidra tools (decompile, functions, etc.) need the MCP bridge running.`);
+		console.log(`    Start it with: ghidra + pire's bridge_mcp_ghidra.py`);
+	}
+
+	// Summary
+	console.log("\n═══════════════════════════════════════════════════");
+	console.log("Summary");
+	console.log("═══════════════════════════════════════════════════");
+	const status = probeTools();
+	const available = Object.values(status).filter(Boolean).length;
+	const total = Object.keys(status).length;
+	console.log(`  ${available}/${total} tools available`);
+	if (available < total) {
+		console.log(`\n  To fix missing tools, re-run the installer:`);
+		console.log(`    curl -fsSL https://raw.githubusercontent.com/evangit2/pire/main/install.sh | sh`);
+	}
+}
+
 function showVersion() {
 	const pkg = JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf-8"));
 	console.log(`pire ${pkg.version}`);
@@ -110,6 +251,7 @@ Usage:
   pire --tools              List available RE tools
   pire --skills             List available RE skills
   pire --probe              Probe system for installed tools
+  pire diagnose             Diagnose why tools aren't detected
   pire -mcp [--port N]      Start MCP server (stdio by default, TCP with --port)
   pire --version            Print version
 
@@ -152,6 +294,10 @@ switch (args[0]) {
 		break;
 	case "--probe":
 		showProbe();
+		break;
+	case "diagnose":
+	case "--diagnose":
+		await showDiagnose();
 		break;
 	case "--version":
 	case "-v":

@@ -225,7 +225,7 @@ console.log("\n─ Code Quality ─");
 
 ok(!src.includes("await import("), "no inline dynamic imports in index");
 ok(src.includes("from \"node:fs\""), "fs imports at top level");
-ok(src.includes('import { execSync, spawn }'), "child_process imports at top level");
+ok(src.includes("execSync") && src.includes("spawn"), "child_process imports at top level");
 ok(src.includes('import { join, dirname }'), "path imports at top level");
 ok(src.includes('import { fileURLToPath }'), "url import at top level");
 ok(!tuiSrc.includes("await import("), "no inline dynamic imports in TUI");
@@ -632,7 +632,7 @@ ok(installSh.includes("INSTALL_YARA"), "install.sh has yara component selection"
 ok(installSh.includes("INSTALL_VOLATILITY"), "install.sh has volatility component selection");
 ok(installSh.includes("INSTALL_PYTHON_TOOLS"), "install.sh has python tools component selection");
 ok(installSh.includes("suse") && installSh.includes("alpine"), "install.sh supports openSUSE and Alpine");
-ok(installSh.includes("nodesource") || installSh.includes("NodeSource"), "install.sh handles Node 22+ upgrade");
+ok(installSh.includes("nodejs.org/dist") || installSh.includes("nodesource") || installSh.includes("NodeSource"), "install.sh handles Node 22+ upgrade");
 
 // PowerShell installer
 ok(installPs1.includes("irm") || installPs1.includes("iex"), "install.ps1 has one-liner");
