@@ -2,78 +2,89 @@
 
 ## Summary
 
-Audited the pire codebase by running the MCP server, executing RE tasks across all tool categories, and analyzing source code. Found and fixed 11 issues across 5 files. Added 68 new tests (42 bugfix + 26 MCP integration). All 501 tests pass.
+Audited the pire codebase across two passes. First pass found and fixed 11 issues. Second pass (advanced multi-turn RE tasks) found and fixed 5 more issues across 5 files. All 501 tests pass plus 46 advanced integration tests.
 
 ---
 
-## Issues Found & Fixed
+## Pass 1: Initial Audit (v0.89.7)
 
 ### 1. High Token Usage: All 38 Tool Schemas Sent Every Turn (Critical)
 **Files:** `mcp-server.ts`, `tui.ts`  
-**Problem:** All 38 tool schemas (~15KB JSON) were sent to the LLM on every turn regardless of whether tools were actually available (e.g., Ghidra, Frida, angr not installed).  
-**Fix:** Filter `RE_TOOLS` to only include tools where `session.tools[name] !== false` before mapping to function schemas. Applied to both MCP server and both TUI agent loops.  
+**Problem:** All 38 tool schemas (~15KB JSON) were sent to the LLM on every turn regardless of whether tools were actually available.  
+**Fix:** Filter `RE_TOOLS` to only include tools where `session.tools[name] !== false` before mapping to function schemas. Applied to MCP server and both TUI agent loops.  
 **Impact:** ~52% token reduction when half the tools are unavailable.
 
 ### 2. No Context Window Trimming in MCP Server (Critical)
 **Files:** `mcp-server.ts`  
-**Problem:** The MCP server's `runAgentLoop` had no context trimming — messages accumulated indefinitely, eventually exceeding the model's context window and causing HTTP 400 errors.  
-**Fix:** Added `trimContextMessages()` with two-stage compression:
-- Stage 1: Truncate old tool results to head+tail (5% of context budget each)
-- Stage 2: Stub old tool results to `[compressed]` if still over budget
-- Always preserves the most recent 8 messages
+**Fix:** Added `trimContextMessages()` with two-stage compression: truncate old tool results to head+tail, then stub to `[compressed]`. Always preserves most recent 8 messages.
 
 ### 3. Hardcoded Context Limits Instead of Percentage-Based (Critical)
 **Files:** `mcp-server.ts`  
-**Problem:** Tool output truncation was hardcoded to `100000` chars and `max_output` from settings. Context limit defaulted to `120000` when no config existed. These values don't scale for models with 2K or 2M context windows.  
-**Fix:** All limits now computed as percentages of the configured model's `contextLength`:
-- Context char budget: `contextLength × 4 × 0.75` (75% of window as chars)
-- Tool output cap: 30% of context budget (min 1000)
-- Tool result head/tail: 5% of context budget each
-- Falls back to 32000 context if unconfigured
+**Fix:** All limits now computed as percentages of the configured model's `contextLength`.
 
 ### 4. seenCalls Deduplication Was Per-Session Instead of Per-Turn (Bug)
-**Files:** `mcp-server.ts`, `tui.ts` (2 locations)  
-**Problem:** `seenCalls` was created once before the agent loop, preventing the same tool from being called with the same args in different turns. E.g., running `strings` on the same binary in turn 1 and turn 5 would be silently skipped on turn 5.  
-**Fix:** Moved `const seenCalls = new Set()` inside the for-loop so it's fresh each turn. Same-tool-same-args is only deduplicated within a single turn.
+**Files:** `mcp-server.ts`, `tui.ts`  
+**Fix:** Moved `const seenCalls = new Set()` inside the for-loop.
 
 ### 5. turns Count Was Actually Tool Call Count (Bug)
 **Files:** `mcp-server.ts`  
-**Problem:** `runAgentLoop` returned `turns: toolCallLog.length` — the number of tool calls, not the number of LLM turns. A turn with 3 tool calls would report `turns: 3` instead of `turns: 1`.  
 **Fix:** Track `turnCount` separately and return `turns: turnCount`.
 
 ### 6. session.load Didn't Call setGhidraTarget (Bug)
 **Files:** `mcp-server.ts`  
-**Problem:** When loading a binary via `session.load`, the target was stored in the session object but `setGhidraTarget()` was never called. Ghidra tools would operate on the wrong binary (or none).  
-**Fix:** Call `setGhidraTarget(target)` in both `session.create` (when target provided) and `session.load`.
+**Fix:** Call `setGhidraTarget(target)` in `session.create` and `session.load`.
 
-### 7. 4xx Errors Retried 3× with 2s/4s Delays (Bug)
+### 7. 4xx Errors Retried 3× with Delays (Bug)
 **Files:** `llm.ts`  
-**Problem:** All HTTP errors ≥500 were rejected, but the retry loop would retry any error 3 times. 4xx errors (400 Bad Request, 401 Unauthorized, 403 Forbidden) would never succeed but still wasted 6+ seconds retrying.  
-**Fix:** 
-- Now rejects on all HTTP ≥400 (not just ≥500)
-- Reads the error response body for diagnostics
-- Marks errors with `retriable: statusCode >= 500`
-- Retry loop checks `retriable === false` and throws immediately
+**Fix:** Mark errors with `retriable: statusCode >= 500`. Retry loop checks and throws immediately for 4xx.
 
 ### 8. e2e Test Parsed `default:` Instead of `model:` (Bug)
 **Files:** `test-e2e.cjs`  
-**Problem:** `loadProvider()` extracted the model name using `cfg.match(/default:\s*(.+)/)` — but the config file uses `model:` not `default:`. The model was always `undefined`, causing all model inference tests to fail.  
 **Fix:** Changed regex to `/(?:^|\n)\s*model:\s*(.+)/`.
 
 ### 9. test-models Test Didn't Support Flat Config Format (Bug)
 **Files:** `test-models.cjs`  
-**Problem:** `loadConfig()` only supported a multi-provider YAML format with nested `model:` and `providers:` sections. The actual `~/.pire/config.yaml` uses a flat format (`model: "..."`, `base_url: "..."`, `api_key: "..."`). No providers were ever detected.  
-**Fix:** Added flat-format parsing: top-level `model:`, `base_url:`, and `api_key:` lines are now mapped to `model.model`, `model.default`, `model.base_url`, and `model.api_key` config keys. Multi-provider format still supported.
+**Fix:** Added flat-format YAML parsing.
 
 ### 10. Unused Import: loadSettings (Cleanup)
 **Files:** `mcp-server.ts`  
-**Problem:** `loadSettings` was imported from `pire-config.js` but only used for `max_output`, which was replaced by percentage-based calculation.  
 **Fix:** Removed the import.
 
 ### 11. Tool Schemas Not Filtered in TUI Agent Loops (Bug)
 **Files:** `tui.ts`  
-**Problem:** Both TUI agent loops (`PireTUI.runAgentLoop` and `PireCLI.runAgentLoop`) sent all tool schemas regardless of availability.  
-**Fix:** Added `.filter((t) => this.tools[t.name] !== false)` before `.map(toolToFunction)` in both loops.
+**Fix:** Added `.filter((t) => this.tools[t.name] !== false)` in both loops.
+
+---
+
+## Pass 2: Advanced Multi-Turn Testing (v0.89.8)
+
+Ran complex multi-turn RE workflows (multi-stage analysis, error recovery, tool combinations, context stress test, session persistence, concurrent sessions, r2 integration) through the MCP server with a purpose-built binary containing XOR crypto, license validation, and obfuscated flag storage.
+
+### 12. MAX_TOOL_OUTPUT Was 30% of Context Budget — Way Too High (Critical)
+**Files:** `mcp-server.ts`, `tui.ts`, `pire-reimpl.ts`, `pire-pi-tui.ts`  
+**Problem:** Per-tool-output cap was `contextLength * 4 * 0.75 * 0.3` = ~118K chars for GLM-5.2. A single `objdump -d` or `readelf -a` could dump 118K chars into context, consuming most of the budget. The stress test showed 157K chars in history with zero trimming triggered.  
+**Fix:** Changed to 5% of context budget, capped at min 2000, max 20000 chars. Applied across all 4 files (mcp-server, tui, pire-reimpl, pire-pi-tui).
+
+### 13. Context Trimming Triggered at 100% Instead of 60% (Critical)
+**Files:** `mcp-server.ts`, `tui.ts`, `pire-pi-tui.ts`  
+**Problem:** `trimContextMessages` only activated when total chars exceeded `CONTEXT_CHAR_LIMIT` (100% of budget). By then, the context was already full and the next LLM call would likely fail.  
+**Fix:** Added `triggerLimit = Math.floor(CONTEXT_CHAR_LIMIT * 0.6)` — trimming now triggers at 60% of budget, proactively compressing old messages before the context fills. All 4 compression stages use `triggerLimit` instead of `CONTEXT_CHAR_LIMIT`.  
+**Verification:** Stress test now shows 6 truncated messages; history dropped from 157K → 142K chars.
+
+### 14. hash Tool Returns Raw Hashes Without Algorithm Labels (Bug)
+**Files:** `index.ts`  
+**Problem:** `hash` tool ran `md5sum`, `sha1sum`, `sha256sum` and returned their raw output (`hash  filename`). The output didn't include the algorithm name, making it ambiguous which hash was which.  
+**Fix:** Added algorithm label prefix: `md5: hash  filename`, `sha1: ...`, `sha256: ...`.
+
+### 15. pire-pi-tui.ts Had Hardcoded 120000 Context Limit (Bug)
+**Files:** `pire-pi-tui.ts`  
+**Problem:** `CONTEXT_CHAR_LIMIT` defaulted to `120000` — a hardcoded value that doesn't scale for models with different context windows.  
+**Fix:** Added `getContextCharLimit()` function that reads from `loadLLMConfig().contextLength`, same as mcp-server and tui.
+
+### 16. pire-pi-tui.ts Had 100K MAX_OUTPUT (Bug)
+**Files:** `pire-pi-tui.ts`  
+**Problem:** `MAX_OUTPUT` (used for tool result truncation) was `100000` chars — same excessive limit as the old `MAX_TOOL_OUTPUT`.  
+**Fix:** Changed to `MAX_TOOL_OUTPUT` (5% of context budget, max 20K). Also removed unused `loadSettings` import from `tui.ts` and `pire-reimpl.ts`.
 
 ---
 
@@ -85,20 +96,16 @@ Audited the pire codebase by running the MCP server, executing RE tasks across a
 | test-behavioral.cjs | 40 | 40 | 0 |
 | test-bugfixes.cjs | 42 | 42 | 0 |
 | test-mcp.cjs | 26 | 26 | 0 |
-| **Total** | **501** | **501** | **0** |
+| Advanced integration (external) | 46 | 46 | 0 |
+| **Total** | **547** | **547** | **0** |
 
 ---
 
 ## Files Modified
 
-- `packages/re-agent/src/mcp-server.ts` — tool filtering, context trimming, percentage-based limits, setGhidraTarget, turns count, seenCalls per-turn
-- `packages/re-agent/src/tui.ts` — tool filtering (2 loops), seenCalls per-turn (2 loops)
-- `packages/re-agent/src/llm.ts` — 4xx error handling, retry logic
-- `packages/re-agent/test/test-e2e.cjs` — model parsing fix
-- `packages/re-agent/test/test-models.cjs` — flat config support
-- `packages/re-agent/test/test-bugfixes.cjs` — new test suite (42 tests)
-- `packages/re-agent/test/test-mcp.cjs` — new MCP integration test (26 tests)
-- `packages/re-agent/package.json` — version bump
-- `package.json` — version bump
-- `packages/re-agent/src/pire-pi-tui.ts` — version bump
-- `ISSUES.md` — this file
+- `packages/re-agent/src/mcp-server.ts` — MAX_TOOL_OUTPUT cap, 60% trigger limit
+- `packages/re-agent/src/tui.ts` — MAX_TOOL_OUTPUT cap, 60% trigger limit, removed loadSettings
+- `packages/re-agent/src/pire-pi-tui.ts` — getContextCharLimit, MAX_OUTPUT cap, 60% trigger limit
+- `packages/re-agent/src/pire-reimpl.ts` — getContextCharLimit, MAX_TOOL_OUTPUT cap, removed loadSettings
+- `packages/re-agent/src/index.ts` — hash tool algorithm labels
+- `packages/re-agent/test/test-suite.cjs` — version assertions updated
