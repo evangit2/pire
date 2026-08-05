@@ -88,7 +88,7 @@ export function loadLLMConfig(): LLMConfig | null {
 		return {
 			baseUrl: process.env.OPENAI_BASE_URL,
 			apiKey: process.env.OPENAI_API_KEY,
-			model: process.env.OPENAI_MODEL || process.env.PIRE_MODEL || "gpt-4o",
+			model: process.env.OPENAI_MODEL || process.env.PIRE_MODEL || "GLM-5.2",
 		};
 	}
 	return null;

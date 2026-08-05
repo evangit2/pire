@@ -138,16 +138,16 @@ function parseYAMLConfig(content) {
 
 const yaml1 = `base_url: "https://api.example.com/v1"
 api_key: sk-abc123
-model: gpt-4o`;
+model: GLM-5.2`;
 
 const parsed1 = parseYAMLConfig(yaml1);
 ok(parsed1.base_url === "https://api.example.com/v1", "parses quoted URL");
 ok(parsed1.api_key === "sk-abc123", "parses unquoted key");
-ok(parsed1.model === "gpt-4o", "parses model name");
+ok(parsed1.model === "GLM-5.2", "parses model name");
 
 const yaml2 = `base_url: https://api.example.com/v1  # comment here
 api_key: 'sk-xyz'
-model: gpt-4o`;
+model: GLM-5.2`;
 const parsed2 = parseYAMLConfig(yaml2);
 ok(parsed2.base_url === "https://api.example.com/v1", "strips comments from URL");
 ok(parsed2.api_key === "sk-xyz", "parses single-quoted values");

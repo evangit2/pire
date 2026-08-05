@@ -30,7 +30,7 @@ And just tell it what you need:
 
 ## What it does
 
-pire has 36 RE tools available and picks the right ones based on what you ask for. A typical workflow might include some of:
+pire has 30 RE tools available and picks the right ones based on what you ask for. A typical workflow might include some of:
 
 - **Fetch** — download from URL if needed
 - **Auto-detect** — identify file type (PE, ELF, Mach-O, APK, .NET, firmware, archive)
@@ -109,7 +109,7 @@ Example using environment variables:
 ```bash
 export OPENAI_API_KEY="your-key-here"
 export OPENAI_BASE_URL="https://api.openai.com/v1"
-export OPENAI_MODEL="gpt-4o"
+export OPENAI_MODEL="GLM-5.2"
 ```
 
 Alternatively, create `~/.pire/config.yaml`:
@@ -117,7 +117,7 @@ Alternatively, create `~/.pire/config.yaml`:
 ```yaml
 base_url: https://api.openai.com/v1
 api_key: your-key-here
-model: gpt-4o
+model: GLM-5.2
 ```
 
 Set `PIRE_MODEL` to override the model at runtime:
@@ -135,9 +135,11 @@ export PIRE_MODEL="your-preferred-model"
 | `PIRE_MODEL` | Override model name | From config |
 | `OPENAI_API_KEY` | LLM API key | — |
 | `OPENAI_BASE_URL` | LLM API base URL | — |
-| `OPENAI_MODEL` | Model name | `gpt-4o` |
+| `OPENAI_MODEL` | Model name | `GLM-5.2` |
 
 ## Usage
+
+### Interactive TUI
 
 ```bash
 pire
@@ -145,7 +147,41 @@ pire
 
 Terminal chat interface. Load a binary with `:load <path>` or just mention a path in chat.
 
-For autonomous reimplementation with deadlines:
+### MCP Server
+
+pire includes a JSON-RPC 2.0 MCP server for programmatic control — drive analysis from scripts, other agents, or CI pipelines:
+
+```bash
+pire -mcp                    # stdio mode (for MCP clients)
+pire -mcp --port 4242        # HTTP mode on a port
+pire -mcp --stdio            # explicit stdio mode
+```
+
+The MCP server exposes all 30 tools plus session management:
+
+| Method | Description |
+|--------|-------------|
+| `initialize` | Handshake + server info |
+| `tools/list` | List all available tools with schemas |
+| `session.create` | Create an analysis session for a target binary |
+| `session.list` | List active sessions |
+| `tool.execute` | Run a tool with parameters (optional `sessionId` to record in history) |
+
+Example session:
+
+```bash
+# Create a session
+echo '{"jsonrpc":"2.0","id":1,"method":"initialize"}
+{"jsonrpc":"2.0","id":2,"method":"session.create","params":{"target":"/bin/ls"}}' | pire -mcp --stdio
+
+# List functions, decompile entry point
+echo '{"jsonrpc":"2.0","id":3,"method":"tool.execute","params":{"name":"r2","arguments":{"path":"/bin/ls","command":"afl"}}}
+{"jsonrpc":"2.0","id":4,"method":"tool.execute","params":{"name":"decompile","arguments":{"path":"/bin/ls","address":"entry0"}}}' | pire -mcp --stdio
+```
+
+The `decompile` tool accepts hex addresses (`0x1140`) or symbol names (`main`, `entry0`), supports `format: "pdc"` (pseudo-C, default) or `format: "pdf"` (annotated disassembly), and auto-falls back from `pdc` to `pdf` when output is empty.
+
+### Autonomous Reimplementation
 
 ```bash
 pire-reimpl <binary.exe>
@@ -156,7 +192,7 @@ Output files go in the binary's directory (`analysis.md`, `reimpl.c`).
 
 ## Tools
 
-36 RE tools:
+30 RE tools:
 
 | Tool | Description |
 |------|-------------|
@@ -165,6 +201,7 @@ Output files go in the binary's directory (`analysis.md`, `reimpl.c`).
 | `filetype` | Identify file type, arch, format |
 | `strings` | Extract ASCII/UTF-16 strings |
 | `objdump` | Disassemble sections |
+| `decompile` | Decompile functions via Radare2 (pseudo-C or annotated disassembly) |
 | `disasm_func` | Disassemble a single function (handles stripped + PE + ELF) |
 | `readelf` | ELF header analysis |
 | `hexdump` | Hex dump at an address |
@@ -175,7 +212,7 @@ Output files go in the binary's directory (`analysis.md`, `reimpl.c`).
 | `hash` | MD5, SHA1, SHA256 |
 | `entropy` | Shannon entropy (detect packing/encryption) |
 | `diff` | Compare two files |
-| `r2` | Run Radare2 commands (persistent session) |
+| `r2` | Run Radare2 commands (persistent session, auto-caches analysis) |
 | `ghidra_*` | Ghidra decompilation, functions, xrefs, strings |
 | `capstone` | Multi-arch disassembly |
 | `keystone` | Multi-arch assembly |
@@ -265,10 +302,11 @@ Files in `targets/xxd/`.
 ## Testing
 
 ```bash
-node packages/re-agent/test/test-suite.cjs
+node packages/re-agent/test/test-suite.cjs    # 394 tests
+node packages/re-agent/test/test-mcp.cjs       # 72 MCP E2E tests
 ```
 
-Covers tool registration, lazy loading, system prompt structure, agent loop mechanics, deadline enforcement, decompile integration, SIMD/SSE guidance, CRLF/exit code matching.
+Covers tool registration, lazy loading, system prompt structure, agent loop mechanics, deadline enforcement, decompile integration, MCP server protocol, R2 analysis caching, SIMD/SSE guidance, CRLF/exit code matching.
 
 ## Architecture
 
@@ -277,12 +315,15 @@ pire/
 ├── packages/
 │   ├── re-agent/          # Core RE agent
 │   │   ├── src/
-│   │   │   ├── index.ts       # Tool registry (36 tools)
+│   │   │   ├── index.ts       # Tool registry (30 tools)
+│   │   │   ├── mcp-server.ts  # MCP JSON-RPC server
 │   │   │   ├── pire-reimpl.ts # Autonomous RE pipeline
 │   │   │   ├── cli.ts         # CLI entry point
-│   │   │   └── tui.ts         # Interactive TUI
+│   │   │   ├── tui.ts         # Interactive TUI
+│   │   │   └── pire-pi-tui.ts # Pi TUI variant
 │   │   └── test/
-│   │       └── test-suite.cjs # CI test suite
+│   │       ├── test-suite.cjs # CI test suite (394 tests)
+│   │       └── test-mcp.cjs   # MCP E2E tests (72 tests)
 │   ├── coding-agent/      # General-purpose coding agent
 │   ├── ai/                # LLM abstraction layer
 │   ├── client/            # API client
@@ -306,7 +347,7 @@ LLM loop with tool calls. The agent picks tools based on the task, runs them, an
 | Component | Tokens |
 |----------|--------|
 | System prompt | ~250 |
-| Tool schemas (36 tools) | ~3,800 |
+| Tool schemas (30 tools) | ~3,800 |
 | **Total initial input** | **~4,000** |
 | Output cap (`max_tokens`) | 8,192 |
 
