@@ -341,10 +341,6 @@ pire/
 └── .github/workflows/     # CI + release pipelines
 ```
 
-## How it works
-
-LLM loop with tool calls. The agent picks tools based on the task, runs them, and iterates. In autonomous mode (reimplementation), it has an 80-turn budget with deadlines to ensure output files get written.
-
 ## Token efficiency
 
 ~4,000 tokens initial input per chat session:
