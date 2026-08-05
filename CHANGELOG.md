@@ -1,3 +1,36 @@
+# pire v0.88.2 — Large Binary Analysis Improvements
+
+Released: 2026-08-04
+
+## Fixed
+
+- **Output truncation too aggressive** — `textResult()` was capping at 50KB, cutting off large decompilations and objdump output mid-function. Raised to 200KB with a visible `[... output truncated ...]` marker showing original length.
+
+- **`objdump` ENOBUFS on large binaries** — `execSync` maxBuffer was 10MB, not enough for 1MB+ binaries' full disassembly. Raised to 100MB for objdump, 50MB default.
+
+- **R2 `aaa` timeout on complex binaries** — SSH (847KB) and other binaries could hang indefinitely during `aaa` analysis. Now: 5-minute timeout for analysis commands, automatic fallback from `aaa` to `aa` (lighter analysis) on timeout, with a note in output.
+
+## Added
+
+- **`decompile` format parameter** — New optional `format` param: `"pdc"` (pseudo-C, default) or `"pdf"` (annotated disassembly with type info and variable names). When `pdc` returns empty, automatically falls back to `pdf`.
+
+- **`endbr` cleanup in decompile output** — CET instructions (`endbr64`, `endbr`) are stripped from pseudo-C output. Removes noise that was causing quality degradation on nginx (0 good → 7 good out of 10 functions).
+
+## Verified
+
+E2E analysis across 4 binaries of increasing complexity:
+
+| Binary | Size | Functions | Quality (good/partial) | Annoyances |
+|--------|------|-----------|------------------------|------------|
+| gawk | 740KB | 705 | 2/8 | 0 |
+| ssh | 847KB | 907 | 5/5 | 0 |
+| nginx | 1.3MB | 1193 | 7/3 | 0 |
+| bash | 1.4MB | 2292 | 9/0 | 0 |
+
+All rounds: 0 annoyances, 0 crashes, 0 empty decompilations.
+
+---
+
 # pire v0.88.1 — Bug Fixes from E2E Analysis
 
 Released: 2026-08-04

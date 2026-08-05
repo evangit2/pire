@@ -83,15 +83,20 @@ function run(cmd: string, opts: { timeout?: number; maxBuffer?: number; cwd?: st
 	return execSync(cmd, {
 		encoding: "utf-8",
 		timeout: opts.timeout ?? 30000,
-		maxBuffer: opts.maxBuffer ?? 10 * 1024 * 1024,
+		maxBuffer: opts.maxBuffer ?? 50 * 1024 * 1024,
 		cwd: opts.cwd,
 	});
 }
 
 function textResult(text: string, details?: Record<string, unknown>): ToolResult {
+	const limit = 200000;
+	const truncated = text.length > limit;
+	const out = truncated
+		? text.slice(0, limit) + "\n\n[... output truncated: showing first " + limit + " of " + text.length + " chars ...]"
+		: text;
 	return {
-		content: [{ type: "text" as const, text: text.slice(0, 50000) }],
-		details: { ...details, truncated: text.length > 50000 },
+		content: [{ type: "text" as const, text: out }],
+		details: { ...details, truncated, originalLength: text.length },
 	};
 }
 
@@ -246,7 +251,7 @@ const objdumpTool: AgentTool<{ path: string; section?: string; disassemble?: boo
 		if (params.section) parts.push("-s", `-j ${shellEscape(params.section)}`);
 		if (!params.disassemble && !params.section) parts.push("-h");
 		parts.push(shellEscape(params.path));
-		return textResult(run(parts.join(" ")));
+		return textResult(run(parts.join(" "), { maxBuffer: 100 * 1024 * 1024, timeout: 60000 }));
 	},
 };
 
@@ -327,11 +332,16 @@ class R2Session {
 		const stdoutChunks: string[] = [];
 		const child = this.proc.child;
 
+		// Determine timeout: aaa analysis can take a long time on large binaries
+		// Allow up to 5 minutes for analysis commands, 60s for everything else
+		const isAnalysis = command.startsWith("aaa") || command.includes("; aaa") || command.startsWith("aa;");
+		const timeoutMs = isAnalysis ? 300000 : 60000;
+
 		return new Promise<string>((resolve, reject) => {
 			const timeout = setTimeout(() => {
 				child.stdout?.removeAllListeners("data");
 				reject(new Error("r2 command timeout"));
-			}, 60000);
+			}, timeoutMs);
 
 			const onData = (chunk: Buffer) => {
 				stdoutChunks.push(chunk.toString());
@@ -377,20 +387,37 @@ const r2Tool: AgentTool<{ path: string; command: string }> = {
 		const cmd = params.command.startsWith("aaa") || r2Session.isAnalyzed(params.path)
 			? params.command
 			: `aaa; ${params.command}`;
-		return textResult(await r2Session.run(params.path, cmd));
+		try {
+			return textResult(await r2Session.run(params.path, cmd));
+		} catch (e) {
+			// If aaa analysis timed out, fall back to lighter 'aa' analysis
+			const errMsg = (e as Error).message;
+			if (errMsg.includes("timeout") && cmd.startsWith("aaa")) {
+				const fallbackCmd = cmd.replace(/^aaa/, "aa");
+				try {
+					const result = await r2Session.run(params.path, fallbackCmd);
+					return textResult(result + "\n\n[Note: 'aaa' analysis timed out, used 'aa' (lighter analysis) instead. Some functions may not be fully analyzed.]");
+				} catch (e2) {
+					return textResult(`Error: r2 analysis timed out even with 'aa'. The binary may be too large or complex for radare2's analysis. Try running specific r2 commands manually.\n\nOriginal error: ${(e2 as Error).message}`);
+				}
+			}
+			throw e;
+		}
 	},
 };
 
 // ─── r2 Pseudo-Decompiler ─────────────────────────────────────
 
-const decompileTool: AgentTool<{ path: string; address: string }> = {
+const decompileTool: AgentTool<{ path: string; address: string; format?: string }> = {
 	name: "decompile",
-	description: "Decompile a function at an address using radare2's pdc (pseudo-C). Accepts hex addresses (e.g. 0x1140) or symbol names (e.g. main, entry0). Auto-runs aaa analysis on first call per file.",
+	description: "Decompile a function using radare2. Accepts hex addresses (e.g. 0x1140) or symbol names (e.g. main, entry0). Auto-runs aaa analysis on first call per file. Format: 'pdc' (pseudo-C, default) or 'pdf' (annotated disassembly with types/vars).",
 	parameters: Type.Object({
 		path: Type.String({ description: "Path to the binary" }),
 		address: Type.String({ description: "Function address (hex, e.g. 0x1400016b0) or symbol name (e.g. main)" }),
+		format: Type.Optional(Type.String({ description: "Output format: 'pdc' (pseudo-C, default) or 'pdf' (annotated disassembly)" })),
 	}),
 	async execute(_id, params) {
+		const fmt = params.format === "pdf" ? "pdf" : "pdc";
 		// For symbol names, resolve via r2 first so we seek to the right place
 		let seekTarget = params.address;
 		if (!/^0x[0-9a-fA-F]+$/.test(params.address) && !/^[0-9a-fA-F]+$/.test(params.address)) {
@@ -398,8 +425,13 @@ const decompileTool: AgentTool<{ path: string; address: string }> = {
 			// but we use `?v` to validate it resolves
 			const checkCmd = r2Session.isAnalyzed(params.path)
 				? `?v ${params.address}`
-				: `aaa; ?v ${params.address}`;
-			const resolved = await r2Session.run(params.path, checkCmd);
+				: `aa; ?v ${params.address}`;
+			let resolved: string;
+			try {
+				resolved = await r2Session.run(params.path, checkCmd);
+			} catch {
+				resolved = await r2Session.run(params.path, `aa; ?v ${params.address}`);
+			}
 			const cleaned = resolved.replace(/\x00/g, "").trim();
 			if (!cleaned || cleaned === "0x0" || cleaned === "0") {
 				return textResult(`Symbol "${params.address}" not found in binary. Use 'r2' with 'afl' to list valid function addresses.`);
@@ -407,15 +439,43 @@ const decompileTool: AgentTool<{ path: string; address: string }> = {
 			seekTarget = params.address; // r2's `s` handles symbol names natively
 		}
 		const cmd = r2Session.isAnalyzed(params.path)
-			? `s ${seekTarget}; pdc`
-			: `aaa; s ${seekTarget}; pdc`;
-		const result = await r2Session.run(params.path, cmd);
-		// r2 pdc outputs a null byte or empty string when there's nothing to decompile
-		// at the given address (e.g. data section, padding, invalid address)
-		const cleaned = result.replace(/\x00/g, "").trim();
-		if (!cleaned) {
-			return textResult(`No decompilable function found at ${params.address}. The address may be in a data section, alignment padding, or not a function entry point. Use 'r2' with 'afl' to list valid function addresses.`);
+			? `s ${seekTarget}; ${fmt}`
+			: `aaa; s ${seekTarget}; ${fmt}`;
+		let result: string;
+		try {
+			result = await r2Session.run(params.path, cmd);
+		} catch (e) {
+			if ((e as Error).message.includes("timeout") && cmd.startsWith("aaa")) {
+				result = await r2Session.run(params.path, cmd.replace(/^aaa/, "aa"));
+			} else {
+				throw e;
+			}
 		}
+		// r2 pdc/pdf outputs a null byte or empty string when there's nothing to decompile
+		// at the given address (e.g. data section, padding, invalid address)
+		let cleaned = result.replace(/\x00/g, "").trim();
+		if (!cleaned) {
+			// Try fallback: if pdc produced nothing, try pdf
+			if (fmt === "pdc") {
+				const fallbackCmd = r2Session.isAnalyzed(params.path)
+					? `s ${seekTarget}; pdf`
+					: `aaa; s ${seekTarget}; pdf`;
+				const fallback = await r2Session.run(params.path, fallbackCmd);
+				cleaned = fallback.replace(/\x00/g, "").trim();
+				if (!cleaned) {
+					return textResult(`No decompilable function found at ${params.address}. The address may be in a data section, alignment padding, or not a function entry point. Use 'r2' with 'afl' to list valid function addresses.`);
+				}
+			} else {
+				return textResult(`No disassembly found at ${params.address}. The address may be invalid or in a data section.`);
+			}
+		}
+		// Post-process: clean up r2 pdc noise
+		cleaned = cleaned
+			// Remove endbr64/endbr lines (CET instruction, not useful in pseudo-C)
+			.replace(/^\s*endbr\d*\s*$/gm, "")
+			// Remove empty lines left by endbr removal
+			.replace(/\n{3,}/g, "\n\n")
+			.trim();
 		return textResult(cleaned);
 	},
 };
