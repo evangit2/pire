@@ -934,7 +934,16 @@ const angrTool: AgentTool<{ path: string; action: string; target?: string }> = {
 		if (params.action === "cfg") {
 			script = `import angr; p=angr.Project("${params.path}", auto_load_libs=False); cfg=p.analyses.CFGFast(); print(f"Functions: {len(cfg.functions)}"); [print(f"  {n}: {f.addr:#x}") for n,f in list(cfg.functions.items())[:50]]`;
 		} else if (params.action === "find" && params.target) {
-			script = `import angr; p=angr.Project("${params.path}", auto_load_libs=False); sm=p.factory.simulation_manager(); sm.explore(find=int("${params.target}",16)); print(f"Found: {len(sm.found)} active: {len(sm.active)}"); [print(s.posix.dumps(1)) for s in sm.found[:3]]`;
+			// Resolve symbol name to address if not a hex number
+			script = `import angr; p=angr.Project("${params.path}", auto_load_libs=False); 
+tgt="${params.target}";
+try:
+    addr=int(tgt,16);
+except ValueError:
+    sym=p.loader.find_symbol(tgt);
+    addr=sym.rebased_addr if sym else None;
+    if addr is None: print(f"Symbol not found: {tgt}"); exit(1);
+state=p.factory.entry_state(); sm=p.factory.simulation_manager(state); sm.explore(find=addr); print(f"Found: {len(sm.found)} active: {len(sm.active)}"); [print(s.posix.dumps(1)) for s in sm.found[:3]]`;
 		} else {
 			script = `import angr; p=angr.Project("${params.path}", auto_load_libs=False); print(f"Arch: {p.arch} Entry: {p.entry:#x} PIE: {p.loader.main_object.pic}")`;
 		}
@@ -1001,9 +1010,17 @@ const unicornTool: AgentTool<{ path: string; entry?: string; arch?: string; mode
 		const mode = params.mode ?? "64";
 		const steps = params.steps ?? 1000;
 		const entry = params.entry ?? "0";
-		const script = `from unicorn import *; from unicorn.x86_const import *; import struct; data=open("${params.path}","rb").read(); uc=Uc(UC_ARCH_${arch.toUpperCase()},UC_MODE_${mode == "64" ? "64" : mode == "32" ? "32" : "ARM"}); uc.mem_map(0x10000, 2*1024*1024); uc.mem_write(0x10000, data); uc.emu_start(0x10000+int("${entry}",16) if "${entry}" else 0x10000, 0x10000+len(data), count=${steps}); rax=uc.reg_read(UC_X86_REG_RAX); print(f"Emulated ${steps} steps. RAX={rax:#x}")`;
+		const script = `from unicorn import *; from unicorn.x86_const import *; import struct
+data=open("${params.path}","rb").read()
+uc=Uc(UC_ARCH_${arch.toUpperCase()},UC_MODE_${mode == "64" ? "64" : mode == "32" ? "32" : "ARM"})
+uc.mem_map(0x10000, 2*1024*1024)
+uc.mem_write(0x10000, data)
+entry_off=int("${entry}",16) if "${entry}" else 0
+uc.emu_start(0x10000+entry_off, 0x10000+len(data), count=${steps})
+rax=uc.reg_read(UC_X86_REG_RAX)
+print(f"Emulated ${steps} steps. RAX={rax:#x}")`;
 		try {
-			return textResult(run(`${PYTHON} -c '${script.replace(/'/g, "'\\''")}' ${DEVNULL}`, { timeout: 30000 }));
+			return textResult(run(`${PYTHON} -c '${script.replace(/'/g, "'\\''")}'`, { timeout: 30000 }));
 		} catch (e: any) {
 			const stderr = e.stderr ? e.stderr.toString() : "";
 			const errLine =
@@ -1106,7 +1123,7 @@ const volatilityTool: AgentTool<{ memdump: string; plugin: string; extraArgs?: s
 		const cmd = vol ?? `${PYTHON} -m volatility3`;
 		try {
 			return textResult(
-				run(`${cmd} -f ${shellEscape(params.memdump)} ${params.plugin} ${params.extraArgs ?? ""} ${DEVNULL}`, {
+				run(`${cmd} -f ${shellEscape(params.memdump)} ${params.plugin} ${params.extraArgs ?? ""}`, {
 					timeout: 60000,
 				}),
 			);
@@ -1698,7 +1715,7 @@ with open(path, "r+b") as f:
     print(f"New:      {data.hex()}")
 `;
 		try {
-			const out = run(`${PYTHON} -c '${script.replace(/'/g, "'\\''")}' ${DEVNULL}`, { timeout: 10000 });
+			const out = run(`${PYTHON} -c '${script.replace(/'/g, "'\\''")}'`, { timeout: 10000 });
 			return textResult(out, { backupPath: backup ? backupPath : undefined });
 		} catch (e: any) {
 			// Extract just the error line, not the full traceback

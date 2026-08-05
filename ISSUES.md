@@ -150,3 +150,37 @@ Built a test binary with license validation + XOR-encoded flag, ran 38 integrati
 - `packages/re-agent/src/pire-pi-tui.ts` — getContextCharLimit, MAX_OUTPUT cap, 60% trigger
 - `packages/re-agent/test/test-pass3.cjs` — 30 unit tests for agent loop + context fixes
 - `/tmp/pire-pass3-test.py` — 38 integration tests (not committed, external test script)
+
+---
+
+## Pass 4: All 12 Untested Tools Exercised (v0.89.10)
+
+Ran 24 integration tests covering the 12 previously untested tools: extract, fetch, binwalk, lief, angr, keystone, unicorn, frida, gdb, volatility, jadx, ilspy. Created test artifacts (ZIP, Java .class, .NET DLL, firmware blob, shellcode, memory dump).
+
+### Issue #20: angr `find` action crashed on symbol names (BUG)
+
+**File:** `packages/re-agent/src/index.ts`
+
+**Problem:** `int("${params.target}",16)` crashed when target was a symbol name like "main" instead of a hex address. Also, `p.factory.simulation_manager()` was called without an initial state.
+
+**Fix:** Added try/except to resolve symbol names via `p.loader.find_symbol()` and fall back to hex parsing. Added `p.factory.entry_state()` as the initial state.
+
+### Issue #21: unicorn Python script used semicolons for multi-line statements (BUG)
+
+**File:** `packages/re-agent/src/index.ts`
+
+**Problem:** The unicorn Python script was a single line joined by semicolons, which broke the `if/else` ternary expression for entry offset calculation. Also, `int("${entry}",16)` was evaluated in a confusing ternary.
+
+**Fix:** Rewrote as multi-line Python script with proper newlines. Separated entry offset calculation into its own variable.
+
+### Issue #22: DEVNULL hiding stderr in tools with try/catch error reporting (BUG)
+
+**File:** `packages/re-agent/src/index.ts`
+
+**Problem:** 3 tools (unicorn, volatility, patch) appended `2>/dev/null` to their Python commands, but had try/catch blocks that tried to read `e.stderr` for error messages. Since stderr was redirected to /dev/null, error messages were always empty, making debugging impossible.
+
+**Fix:** Removed `DEVNULL` from all 3 tools that have try/catch stderr extraction. Tools that don't have error extraction (hexdump, objdump, r2, etc.) keep DEVNULL for clean output.
+
+### Files Modified (Pass 4)
+
+- `packages/re-agent/src/index.ts` — angr symbol resolution + entry state, unicorn multi-line script, DEVNULL removed from 3 tools with stderr error extraction
