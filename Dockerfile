@@ -34,19 +34,16 @@ WORKDIR /home/pireuser/pire
 # Core tools + Ghidra. Users can install Wine/ILSpy/etc. inside the
 # container if needed — keeps the image lean.
 RUN ./install.sh --core --no-tests 2>&1 || true
-# Install Ghidra separately (not part of --core)
-RUN cd /home/pireuser/pire && \
-    export GHIDRA_VER=11.1.2 && \
+# Install Ghidra + build MCP JAR separately (not part of --core)
+RUN export GHIDRA_VER=11.1.2 && \
     export GHIDRA_DATE=20240709 && \
     curl -fsSL "https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_${GHIDRA_VER}_build/ghidra_${GHIDRA_VER}_PUBLIC_${GHIDRA_DATE}.zip" -o /tmp/ghidra.zip && \
     sudo unzip -q -o /tmp/ghidra.zip -d /opt/ && \
     sudo ln -sf /opt/ghidra_${GHIDRA_VER}_PUBLIC/ghidraRun /usr/local/bin/ghidra && \
     rm /tmp/ghidra.zip && \
-    GHIDRA_DIR=/opt/ghidra_11.1.2_PUBLIC && \
-    GHIDRA_VERSION=11.1.2 && \
-    cd packages/ghidra-mcp && \
-    sed -i "s|<ghidra.version>.*</ghidra.version>|<ghidra.version>${GHIDRA_VERSION}</ghidra.version>|" pom.xml && \
-    bash ghidra-mcp-setup.sh --setup-deps --ghidra-path "$GHIDRA_DIR" >/dev/null 2>&1 || true && \
+    cd /home/pireuser/pire/packages/ghidra-mcp && \
+    sed -i "s|<ghidra.version>.*</ghidra.version>|<ghidra.version>${GHIDRA_VER}</ghidra.version>|" pom.xml && \
+    bash ghidra-mcp-setup.sh --setup-deps --ghidra-path /opt/ghidra_${GHIDRA_VER}_PUBLIC >/dev/null 2>&1 || true && \
     mvn clean package -DskipTests -q 2>&1 || true
 
 # ── Workspace mount point ─────────────────────────────────────
