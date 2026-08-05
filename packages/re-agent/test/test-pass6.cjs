@@ -103,8 +103,8 @@ console.log("\n─ 6. Version consistency ─");
 const PKG = JSON.parse(fs.readFileSync(path.join(REPO, "package.json"), "utf-8"));
 const TUI = fs.readFileSync(path.join(SRC, "tui.ts"), "utf-8");
 const tuiVersion = TUI.match(/const VERSION = "([^"]+)"/);
-ok(PKG.version === "0.89.12", `package.json version: ${PKG.version}`);
-ok(tuiVersion && tuiVersion[1] === "0.89.12", `tui.ts VERSION: ${tuiVersion?.[1]}`);
+ok(PKG.version === "0.89.13", `package.json version: ${PKG.version}`);
+ok(tuiVersion && tuiVersion[1] === "0.89.13", `tui.ts VERSION: ${tuiVersion?.[1]}`);
 
 // ─── Summary ───────────────────────────────────────────────────
 console.log("\n============================================================");

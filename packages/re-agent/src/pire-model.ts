@@ -93,13 +93,17 @@ function loadConfig(): PireConfig | null {
 		const content = readFileSync(CONFIG_FILE, "utf-8");
 		const result: Record<string, string> = {};
 		for (const rawLine of content.split("\n")) {
-			const commentIdx = rawLine.indexOf("#");
-			const line = commentIdx >= 0 ? rawLine.slice(0, commentIdx) : rawLine;
-			const match = line.match(/^(\w+)\s*:\s*(.*)$/);
+			const match = rawLine.match(/^\s*(\w+)\s*:\s*(.*)$/);
 			if (!match) continue;
 			let value = match[2].trim();
-			if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-				value = value.slice(1, -1);
+			// Strip comments only if NOT inside quotes
+			if (value.startsWith('"') || value.startsWith("'")) {
+				const quote = value[0];
+				const endQuote = value.indexOf(quote, 1);
+				if (endQuote >= 0) value = value.slice(1, endQuote);
+			} else {
+				const commentIdx = value.indexOf("#");
+				if (commentIdx >= 0) value = value.slice(0, commentIdx).trim();
 			}
 			result[match[1]] = value;
 		}
@@ -118,7 +122,16 @@ function loadConfig(): PireConfig | null {
 
 function saveConfig(config: PireConfig): void {
 	if (!existsSync(PIRE_DIR)) mkdirSync(PIRE_DIR, { recursive: true });
-	const lines = [`base_url: ${config.base_url}`, `api_key: ${config.api_key}`, `model: ${config.model || "none"}`];
+	// Quote values that contain special characters (#, spaces, etc.)
+	const q = (v: string) => {
+		if (/[#\s'"]/.test(v)) return `"${v.replace(/"/g, '\\"')}"`;
+		return v;
+	};
+	const lines = [
+		`base_url: ${q(config.base_url)}`,
+		`api_key: ${q(config.api_key)}`,
+		`model: ${q(config.model || "none")}`,
+	];
 	if (config.context_length) lines.push(`context_length: ${config.context_length}`);
 	if (config.max_tokens) lines.push(`max_tokens: ${config.max_tokens}`);
 	writeFileSync(CONFIG_FILE, lines.join("\n") + "\n");
@@ -128,7 +141,10 @@ function saveConfig(config: PireConfig): void {
 
 function fetchModels(baseUrl: string, apiKey: string): Promise<string[]> {
 	return new Promise((resolve, reject) => {
-		const url = new URL(baseUrl.replace(/\/$/, "") + "/models");
+		// Normalize: strip trailing /, ensure /v1 prefix, append /models
+		let base = baseUrl.replace(/\/$/, "");
+		if (!base.endsWith("/v1") && !base.endsWith("/v1beta")) base += "/v1";
+		const url = new URL(base + "/models");
 		const client = url.protocol === "https:" ? https : http;
 		const req = client.request(
 			url,

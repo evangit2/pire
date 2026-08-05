@@ -263,3 +263,36 @@ Ran 24 integration tests covering the 12 previously untested tools: extract, fet
 - `packages/re-agent/src/llm.ts` — YAML parser fix, ECONNREFUSED fail-fast
 - `packages/re-agent/src/pire-reimpl.ts` — context trimming, per-tool timeout
 - `packages/re-agent/test/test-pass6.cjs` — 18 unit tests
+
+---
+
+## Pass 7: pire-model YAML parser, saveConfig quoting, fetchModels URL fix (v0.89.13)
+
+### Bug #29: pire-model had same YAML parser bug as llm.ts
+
+**File:** `packages/re-agent/src/pire-model.ts`
+
+**Problem:** `loadConfig()` in pire-model.ts had the exact same `#` stripping bug as llm.ts — it found the first `#` on the line and truncated there, even inside quoted strings. An API key like `"secret-key-with-#-hash"` would be truncated to `"secret-key-with-`.
+
+**Fix:** Applied the same quote-aware comment stripping as llm.ts.
+
+### Bug #30: saveConfig didn't quote values with special characters
+
+**File:** `packages/re-agent/src/pire-model.ts`
+
+**Problem:** `saveConfig()` wrote values unquoted: `api_key: secret-key-with-#-hash`. On reload, the `#` would be treated as a comment, truncating the value.
+
+**Fix:** `saveConfig()` now quotes values containing `#`, spaces, or quotes. Double quotes inside values are escaped.
+
+### Bug #31: fetchModels didn't normalize base URL
+
+**File:** `packages/re-agent/src/pire-model.ts`
+
+**Problem:** `fetchModels()` appended `/models` to the base URL. If the user entered `https://api.openai.com` (without `/v1`), it would fetch `https://api.openai.com/models` — wrong endpoint.
+
+**Fix:** Normalize the base URL: strip trailing `/`, check if it already ends with `/v1` or `/v1beta`, and append `/v1` if not.
+
+### Files Modified (Pass 7)
+
+- `packages/re-agent/src/pire-model.ts` — YAML parser fix, saveConfig quoting, fetchModels URL normalization
+- `packages/re-agent/test/test-pass7.cjs` — 31 unit tests
