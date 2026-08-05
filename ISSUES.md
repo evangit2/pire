@@ -365,3 +365,29 @@ Ran 24 integration tests covering the 12 previously untested tools: extract, fet
 **Fix:** Added read protection:
 - Blocks reading `/etc/shadow`, `/etc/gshadow`
 - Blocks reading files matching `/.ssh/id_`, `/.ssh/authorized_keys`, `/.ssh/config`
+
+---
+
+## Pass 11: Shared path protection, extract+patch validation (v0.89.17)
+
+### Bug #41: extract tool had no output path validation
+
+**File:** `packages/re-agent/src/index.ts`
+
+**Problem:** `extract` tool could extract archives to `/etc`, `/usr`, `~/.ssh/`, etc.
+
+**Fix:** Added `isProtectedPath()` check on the output directory.
+
+### Bug #42: patch tool could modify system binaries
+
+**File:** `packages/re-agent/src/index.ts`
+
+**Problem:** `patch` tool could patch `/usr/bin/sudo` or other system binaries.
+
+**Fix:** Added `isProtectedPath()` check on the target file.
+
+### Refactor #43: DRY path protection
+
+**Problem:** The blocked paths list was duplicated in 3 places (write_file, extract, patch).
+
+**Fix:** Extracted `isProtectedPath()` helper function. All three tools now call it.

@@ -1302,6 +1302,17 @@ const BLOCKED_PATTERNS = [
 	/\/dev\/(tcp|udp)\//,
 ];
 
+/** Check if a path is within a protected system directory. Returns true if blocked. */
+function isProtectedPath(pathStr: string): boolean {
+	const resolved = resolve(pathStr);
+	const blockedRoots = ["/etc", "/usr", "/bin", "/sbin", "/boot", "/proc", "/sys", "/dev", "/lib", "/lib64"];
+	for (const blocked of blockedRoots) {
+		if (resolved.startsWith(blocked + "/") || resolved === blocked) return true;
+	}
+	if (resolved.includes("/.ssh/")) return true;
+	return false;
+}
+
 /** Check if a command matches any blocked pattern. Returns null if allowed. */
 function isCommandBlocked(command: string): string | null {
 	if (!sandboxEnabled) return null;
@@ -1488,8 +1499,12 @@ const extractTool: AgentTool<{ path: string; outputDir?: string }> = {
 		outputDir: Type.Optional(Type.String()),
 	}),
 	async execute(_id, params) {
+		// Validate output directory is not a sensitive system path
 		const baseName = params.path.split("/").pop() || "extracted";
 		const outDir = params.outputDir || join("/tmp/pire-extracted", baseName);
+		if (isProtectedPath(outDir)) {
+			return textResult(`Extract blocked: ${resolve(outDir)} is a protected system path`);
+		}
 		try {
 			mkdirSync(outDir, { recursive: true });
 		} catch {}
@@ -1706,6 +1721,10 @@ const patchTool: AgentTool<{ path: string; offset: string; bytes: string; backup
 		backup: Type.Optional(Type.Boolean({ default: true })),
 	}),
 	async execute(_id, params) {
+		// Block patching sensitive system files
+		if (isProtectedPath(params.path)) {
+			return textResult(`Patch blocked: ${resolve(params.path)} is a protected system path`);
+		}
 		const backup = params.backup !== false;
 		const backupPath = params.path + ".bak";
 
@@ -1806,14 +1825,11 @@ const writeFileTool: AgentTool<{ path: string; content: string }> = {
 	async execute(_id, params) {
 		try {
 			// Prevent writing to sensitive system paths
-			const resolved = resolve(params.path);
-			const blockedPaths = ["/etc", "/usr", "/bin", "/sbin", "/boot", "/proc", "/sys", "/dev"];
-			for (const blocked of blockedPaths) {
-				if (resolved.startsWith(blocked + "/") || resolved === blocked) {
-					return textResult(`Write blocked: ${resolved} is a protected system path`);
-				}
+			if (isProtectedPath(params.path)) {
+				return textResult(`Write blocked: ${resolve(params.path)} is a protected system path`);
 			}
-			// Block writes to SSH authorized_keys
+			// Block writes to SSH authorized_keys specifically
+			const resolved = resolve(params.path);
 			if (resolved.endsWith("/.ssh/authorized_keys") || resolved.endsWith("/.ssh/authorized_keys2")) {
 				return textResult(`Write blocked: cannot modify SSH authorized_keys`);
 			}
