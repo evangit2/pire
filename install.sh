@@ -33,6 +33,14 @@ log_section() {
 
 has() { command -v "$1" >/dev/null 2>&1; }
 
+# Ensure user-local bin dirs are on PATH (pip --user, dotnet tools, etc.)
+for _dir in "$HOME/.local/bin" "$HOME/.dotnet/tools"; do
+	case ":$PATH:" in
+		*":$_dir:"*) ;;
+		*) [ -d "$_dir" ] && PATH="$_dir:$PATH" && export PATH ;;
+	esac
+done
+
 # ── Banner ────────────────────────────────────────────────────
 print_banner() {
 	printf '\n'
@@ -1133,6 +1141,25 @@ if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/package.json" ]; then
 			log_warn "Some tests failed"
 		fi
 	fi
+fi
+
+# ── Persist PATH for user-local bin dirs ──────────────────────
+# pip --user installs to ~/.local/bin, dotnet tools to ~/.dotnet/tools
+# These need to be on PATH for pire to find frida, ilspycmd, vol, etc.
+NEEDS_PROFILE_UPDATE=0
+for _dir in "$HOME/.local/bin" "$HOME/.dotnet/tools"; do
+	[ -d "$_dir" ] || continue
+	for _profile in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.profile"; do
+		[ -f "$_profile" ] || continue
+		if ! grep -q "$_dir" "$_profile" 2>/dev/null; then
+			printf '\n# Added by pire installer\nexport PATH="%s:$PATH"\n' "$_dir" >> "$_profile"
+			NEEDS_PROFILE_UPDATE=1
+		fi
+	done
+done
+if [ "$NEEDS_PROFILE_UPDATE" = "1" ]; then
+	log_step "Added ~/.local/bin and ~/.dotnet/tools to PATH"
+	log_warn "Run 'source ~/.bashrc' (or restart your terminal) for changes to take effect"
 fi
 
 # ── Done ──────────────────────────────────────────────────────
