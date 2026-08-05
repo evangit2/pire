@@ -1,0 +1,307 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>com.xebyte</groupId>
+    <artifactId>GhidraMCP</artifactId>
+    <packaging>jar</packaging>
+    <version>5.2.0</version>
+    <name>Ghidra MCP Server</name>
+    <description>Production-ready Model Context Protocol server for Ghidra reverse engineering platform. v5.2.0: 195+ MCP tools, completeness scoring with budgeted deductions, naming convention enforcement, atomic set_variables tool, CodeBrowser integration, fun-doc automation engine, and multi-provider AI support (Claude/Codex).</description>
+    <url>https://github.com/bethington/ghidra-mcp</url>
+    <properties>
+        <maven.compiler.release>21</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <ghidra.version>11.1.2</ghidra.version>
+        <!-- Build timestamp generated at compile time (format: yyyyMMdd-HHmmss) -->
+        <build.timestamp>${maven.build.timestamp}</build.timestamp>
+        <maven.build.timestamp.format>yyyyMMdd-HHmmss</maven.build.timestamp.format>
+        <!-- Build number - use current time as unique identifier -->
+        <build.number>${maven.build.timestamp}</build.number>
+    </properties>
+    <licenses>
+        <license>
+            <name>Apache License, Version 2.0</name>
+            <url>http://www.apache.org/licenses/LICENSE-2.0.txt</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+    <developers>
+        <developer>
+            <id>bethington</id>
+            <name>Project Maintainer</name>
+            <url>https://github.com/bethington</url>
+        </developer>
+    </developers>
+    <scm>
+        <connection>scm:git:git://github.com/bethington/ghidra-mcp.git</connection>
+        <developerConnection>scm:git:ssh://github.com:bethington/ghidra-mcp.git</developerConnection>
+        <url>http://github.com/bethington/ghidra-mcp/tree/main</url>
+    </scm>
+    <dependencies>
+        <!-- Ghidra dependencies (installed locally via mvn install:install-file) -->
+        <dependency>
+            <groupId>ghidra</groupId>
+            <artifactId>Generic</artifactId>
+            <version>${ghidra.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>ghidra</groupId>
+            <artifactId>SoftwareModeling</artifactId>
+            <version>${ghidra.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>ghidra</groupId>
+            <artifactId>Project</artifactId>
+            <version>${ghidra.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>ghidra</groupId>
+            <artifactId>Docking</artifactId>
+            <version>${ghidra.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>ghidra</groupId>
+            <artifactId>Decompiler</artifactId>
+            <version>${ghidra.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>ghidra</groupId>
+            <artifactId>Utility</artifactId>
+            <version>${ghidra.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>ghidra</groupId>
+            <artifactId>Base</artifactId>
+            <version>${ghidra.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>ghidra</groupId>
+            <artifactId>Gui</artifactId>
+            <version>${ghidra.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>ghidra</groupId>
+            <artifactId>FileSystem</artifactId>
+            <version>${ghidra.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>ghidra</groupId>
+            <artifactId>Help</artifactId>
+            <version>${ghidra.version}</version>
+        </dependency>
+        <!-- Gson (provided — bundled with Ghidra in Framework/Generic/lib/) -->
+        <dependency>
+            <groupId>com.google.code.gson</groupId>
+            <artifactId>gson</artifactId>
+            <version>2.10.1</version>
+            <scope>provided</scope>
+        </dependency>
+        <!-- JUnit (test only) -->
+        <dependency>
+            <groupId>junit</groupId>
+            <artifactId>junit</artifactId>
+            <version>4.13.2</version>
+            <scope>test</scope>
+        </dependency>
+        <!-- Mockito (test only) -->
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-core</artifactId>
+            <version>5.8.0</version>
+            <scope>test</scope>
+        </dependency>
+        <!-- Ghidra DB (test only) — needed so Mockito can instrument Program's type hierarchy -->
+        <dependency>
+            <groupId>ghidra</groupId>
+            <artifactId>DB</artifactId>
+            <version>${ghidra.version}</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+    <build>
+        <finalName>${project.artifactId}-${project.version}</finalName>
+        <!-- Enable resource filtering for version substitution -->
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+                <filtering>true</filtering>
+                <includes>
+                    <include>version.properties</include>
+                    <include>extension.properties</include>
+                </includes>
+            </resource>
+            <resource>
+                <directory>src/main/resources</directory>
+                <filtering>false</filtering>
+                <excludes>
+                    <exclude>version.properties</exclude>
+                    <exclude>extension.properties</exclude>
+                </excludes>
+            </resource>
+        </resources>
+        <plugins>
+            <!-- Maven Surefire Plugin — enable Byte Buddy experimental mode for Java 25 -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.2.5</version>
+                <configuration>
+                    <argLine>-Dnet.bytebuddy.experimental=true</argLine>
+                </configuration>
+            </plugin>
+            <!-- Maven Compiler Plugin -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.11.0</version>
+                <configuration>
+                    <release>${maven.compiler.release}</release>
+                    <encoding>UTF-8</encoding>
+                    <showWarnings>false</showWarnings>
+                </configuration>
+            </plugin>
+            <!-- Ensure deterministic resource/properties encoding -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-resources-plugin</artifactId>
+                <version>3.3.1</version>
+                <configuration>
+                    <encoding>${project.build.sourceEncoding}</encoding>
+                    <propertiesEncoding>${project.build.sourceEncoding}</propertiesEncoding>
+                </configuration>
+            </plugin>
+            <!-- Use custom MANIFEST.MF -->
+            <plugin>
+                <artifactId>maven-jar-plugin</artifactId>
+                <version>3.2.2</version>
+                <configuration>
+                    <archive>
+                        <manifestFile>src/main/resources/META-INF/MANIFEST.MF</manifestFile>
+                    </archive>
+                    <!-- Exclude the App class -->
+                    <excludes>
+                        <exclude>**/App.class</exclude>
+                    </excludes>
+                    <!-- Make sure output directory is target for consistency -->
+                    <outputDirectory>${project.build.directory}</outputDirectory>
+                </configuration>
+            </plugin>
+            <!-- The Assembly Plugin for creating the Ghidra extension ZIP -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-assembly-plugin</artifactId>
+                <version>3.3.0</version>
+                <configuration>
+                    <!-- Using the custom assembly descriptor -->
+                    <descriptors>
+                        <descriptor>src/assembly/ghidra-extension.xml</descriptor>
+                    </descriptors>
+                    <!-- Don't append the assembly ID -->
+                    <appendAssemblyId>false</appendAssemblyId>
+                </configuration>
+            </plugin>
+            <!-- Copy dependencies to target/lib for the assembly -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <version>3.1.2</version>
+                <executions>
+                    <execution>
+                        <id>copy-dependencies</id>
+                        <phase>prepare-package</phase>
+                        <goals>
+                            <goal>copy-dependencies</goal>
+                        </goals>
+                        <configuration>
+                            <outputDirectory>${project.build.directory}/lib</outputDirectory>
+                            <includeScope>runtime</includeScope>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+
+    <!-- Build Profiles -->
+    <profiles>
+        <!-- Headless Server Profile -->
+        <profile>
+            <id>headless</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-jar-plugin</artifactId>
+                        <version>3.2.2</version>
+                        <configuration>
+                            <archive>
+                                <manifest>
+                                    <mainClass>com.xebyte.headless.GhidraMCPHeadlessServer</mainClass>
+                                    <addClasspath>true</addClasspath>
+                                    <classpathPrefix>lib/</classpathPrefix>
+                                </manifest>
+                            </archive>
+                            <outputDirectory>${project.build.directory}</outputDirectory>
+                        </configuration>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-assembly-plugin</artifactId>
+                        <version>3.3.0</version>
+                        <configuration>
+                            <descriptors>
+                                <descriptor>src/assembly/headless-jar.xml</descriptor>
+                            </descriptors>
+                            <appendAssemblyId>false</appendAssemblyId>
+                        </configuration>
+                        <executions>
+                            <execution>
+                                <id>make-headless-assembly</id>
+                                <phase>package</phase>
+                                <goals>
+                                    <goal>single</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+
+        <!-- Docker Build Profile -->
+        <profile>
+            <id>docker</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>io.fabric8</groupId>
+                        <artifactId>docker-maven-plugin</artifactId>
+                        <version>0.43.4</version>
+                        <configuration>
+                            <images>
+                                <image>
+                                    <name>ghidra-mcp-headless:${project.version}</name>
+                                    <build>
+                                        <contextDir>${project.basedir}</contextDir>
+                                        <dockerFile>docker/Dockerfile</dockerFile>
+                                    </build>
+                                </image>
+                            </images>
+                        </configuration>
+                        <executions>
+                            <execution>
+                                <id>build-docker</id>
+                                <phase>package</phase>
+                                <goals>
+                                    <goal>build</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
+</project>
