@@ -38,10 +38,14 @@ import {
 	probeTools,
 	RE_SYSTEM_PROMPT,
 	RE_TOOLS,
+	setGhidraTarget,
 	type ToolResult,
 	validateToolParams,
 } from "./index.js";
 import { type ChatMessage, callLLM, type LLMConfig, loadLLMConfig, toolToFunction } from "./llm.js";
+
+// Context window management — percentage-based, works with any model/context size
+const MAX_TOOL_OUTPUT = Math.max(1000, Math.floor(getContextCharLimit() * 0.3));
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname_mcp = dirname(__filename);
@@ -59,6 +63,98 @@ for (const rel of ["../package.json", "../../package.json"]) {
 			break;
 		}
 	} catch {}
+}
+
+// ─── Context Window Management (shared) ────────────────────────
+
+/**
+ * Context budget based on the configured model's context length.
+ * Uses percentages so it works with any model — 2k or 2M context.
+ * - 75% of context window is the char budget (leaves room for new generation)
+ * - Tool result compression: keep first/last 5% of budget each
+ * - Always preserve the most recent 8 messages
+ */
+function getContextCharLimit(): number {
+	const llm = loadLLMConfig();
+	const ctxLen = llm?.contextLength && llm.contextLength > 0 ? llm.contextLength : 32000;
+	return Math.floor(ctxLen * 4 * 0.75); // tokens → chars, use 75% of window
+}
+
+const CONTEXT_CHAR_LIMIT = parseInt(process.env.PIRE_CONTEXT_LIMIT || "0", 10) || getContextCharLimit();
+const PRESERVE_RECENT = 8;
+
+function getToolResultHeadTail(): { head: number; tail: number } {
+	// 5% of context budget each (head + tail = 10% total per tool result)
+	const slice = Math.max(200, Math.floor(CONTEXT_CHAR_LIMIT * 0.05));
+	return { head: slice, tail: slice };
+}
+
+function estimateMessageChars(messages: ChatMessage[]): number {
+	let total = 0;
+	for (const msg of messages) {
+		if (typeof msg.content === "string") total += msg.content.length;
+		if (msg.tool_calls) {
+			for (const tc of msg.tool_calls) total += (tc.function?.arguments?.length ?? 0) + 100;
+		}
+	}
+	return total;
+}
+
+/** Multi-stage context compression: truncate → stub → drop old messages. */
+function trimContextMessages(messages: ChatMessage[]): ChatMessage[] {
+	if (messages.length <= PRESERVE_RECENT) return messages;
+	let totalChars = estimateMessageChars(messages);
+	if (totalChars <= CONTEXT_CHAR_LIMIT) return messages;
+	const result = messages.map((m) => ({ ...m }));
+	const cutoff = result.length - PRESERVE_RECENT;
+	const { head: toolHead, tail: toolTail } = getToolResultHeadTail();
+
+	// Stage 1: Truncate old tool results to head+tail
+	for (let i = 0; i < cutoff && totalChars > CONTEXT_CHAR_LIMIT; i++) {
+		const msg = result[i];
+		if (msg.role === "tool" && typeof msg.content === "string" && msg.content.length > toolHead + toolTail) {
+			const originalLen = msg.content.length;
+			msg.content = msg.content.slice(0, toolHead) + `\n... (truncated ${originalLen - toolHead - toolTail} chars) ...\n` + msg.content.slice(-toolTail);
+			totalChars -= originalLen - msg.content.length;
+		}
+	}
+
+	// Stage 2: Replace old tool results with 1-line stubs
+	for (let i = 0; i < cutoff && totalChars > CONTEXT_CHAR_LIMIT; i++) {
+		const msg = result[i];
+		if (msg.role === "tool" && typeof msg.content === "string" && msg.content.length > 100) {
+			const originalLen = msg.content.length;
+			const firstLine = msg.content.split("\n")[0]?.slice(0, 80) ?? "";
+			msg.content = `[compressed: ${firstLine}...]`;
+			totalChars -= originalLen - msg.content.length;
+		}
+	}
+
+	// Stage 3: Compress old assistant messages
+	for (let i = 0; i < cutoff && totalChars > CONTEXT_CHAR_LIMIT; i++) {
+		const msg = result[i];
+		if (msg.role === "assistant" && typeof msg.content === "string" && msg.content.length > 200) {
+			const originalLen = msg.content.length;
+			msg.content = (msg.content.split("\n")[0]?.slice(0, 120) ?? "") + " [...]";
+			totalChars -= originalLen - msg.content.length;
+			if (msg.tool_calls) {
+				totalChars -= msg.tool_calls.reduce((sum, tc) => sum + (tc.function?.arguments?.length ?? 0) + 100, 0);
+				delete msg.tool_calls;
+			}
+		}
+	}
+
+	// Stage 4: Compress old user messages
+	for (let i = 0; i < cutoff && totalChars > CONTEXT_CHAR_LIMIT; i++) {
+		const msg = result[i];
+		if (msg.role === "user" && typeof msg.content === "string" && msg.content.length > 200) {
+			const originalLen = msg.content.length;
+			msg.content = (msg.content.split("\n")[0]?.slice(0, 120) ?? "") + " [...]";
+			totalChars -= originalLen - msg.content.length;
+		}
+	}
+
+	return result;
 }
 
 // ─── Session ───────────────────────────────────────────────────
@@ -92,6 +188,7 @@ function createSession(target?: string): MCPSession {
 		toolMap,
 		createdAt: Date.now(),
 	};
+	if (target) setGhidraTarget(target);
 	sessions.set(id, session);
 	return session;
 }
@@ -129,14 +226,14 @@ export async function runAgentLoop(
 		throw new Error("No LLM configured. Run: pire model");
 	}
 
-	const availTools = Object.entries(session.tools)
+	const availToolNames = Object.entries(session.tools)
 		.filter(([, v]) => v)
-		.map(([k]) => k)
-		.join(", ");
+		.map(([k]) => k);
+	const availTools = availToolNames.join(", ");
 	const targetInfo = session.target ? `\n\nCurrently loaded target: ${session.target}` : "";
 	const systemPrompt = `${RE_SYSTEM_PROMPT}
 
-You have ${RE_TOOLS.length} tools available. Available on this system: ${availTools}.${targetInfo}
+You have ${availToolNames.length} tools available. Available on this system: ${availTools}.${targetInfo}
 
 When the user mentions a path, binary, or directory — run tools on it yourself. Don't ask them to type commands.
 When the user provides a URL — use the fetch tool to download it first.
@@ -144,23 +241,36 @@ Pick the right tools for whatever the user is asking for. Don't follow a fixed w
 
 IMPORTANT: When you need to write a file, use the write_file tool with path and content parameters. Do not use shell heredocs or echo commands. Always write your analysis to a file before reporting completion.`;
 
-	const messages: ChatMessage[] = [
-		{ role: "system", content: systemPrompt },
-		...session.messages,
-		{ role: "user", content: userMessage },
-	];
-
-	session.messages.push({ role: "user", content: userMessage });
-
-	const toolSchemas = RE_TOOLS.map(toolToFunction);
+	// Only send schemas for tools that are actually available — saves ~50% tokens
+	const toolSchemas = RE_TOOLS
+		.filter((t) => session.tools[t.name] !== false)
+		.map(toolToFunction);
 	const MAX_TURNS = options.maxTurns ?? 70;
-	const seenCalls = new Set<string>();
 	const toolCallLog: { name: string; args: Record<string, unknown>; result: string }[] = [];
 
 	let finalContent = "";
+	let turnCount = 0;
+
+	// Add user message to session history once
+	session.messages.push({ role: "user", content: userMessage });
 
 	for (let turn = 0; turn < MAX_TURNS; turn++) {
+		turnCount = turn + 1;
 		options.onTurn?.(turn + 1, MAX_TURNS);
+
+		// Build messages from trimmed session history (excludes the just-added user message,
+		// which we append separately)
+		const historyBeforeUser = session.messages.slice(0, -1);
+		const trimmedHistory = trimContextMessages(historyBeforeUser);
+
+		const messages: ChatMessage[] = [
+			{ role: "system", content: systemPrompt },
+			...trimmedHistory,
+			{ role: "user", content: userMessage },
+		];
+
+		// seenCalls is per-turn, not per-session — allows re-running same tool in different turns
+		const seenCalls = new Set<string>();
 
 		const resp = await callLLM(session.llm, messages, toolSchemas, {
 			onContent: (chunk) => {
@@ -223,7 +333,7 @@ IMPORTANT: When you need to write a file, use the write_file tool with path and 
 				try {
 					const result = await tool.execute("pire", params);
 					const text = result.content.map((c: { text: string }) => c.text).join("\n");
-					const truncated = text.length > 100000 ? text.slice(0, 100000) + "\n... (truncated)" : text;
+					const truncated = text.length > MAX_TOOL_OUTPUT ? text.slice(0, MAX_TOOL_OUTPUT) + "\n... (truncated)" : text;
 					messages.push({ role: "tool", tool_call_id: tc.id, content: truncated });
 					session.messages.push({ role: "tool", tool_call_id: tc.id, content: truncated });
 					options.onToolResult?.(tc.function.name, text);
@@ -245,7 +355,7 @@ IMPORTANT: When you need to write a file, use the write_file tool with path and 
 		break;
 	}
 
-	return { content: finalContent, toolCalls: toolCallLog, turns: toolCallLog.length };
+	return { content: finalContent, toolCalls: toolCallLog, turns: turnCount };
 }
 
 // ─── JSON-RPC ──────────────────────────────────────────────────
@@ -371,6 +481,7 @@ async function handleRequest(req: RPCRequest): Promise<RPCResponse> {
 					return err(id, -32602, `Session not found: ${sid}`);
 				}
 				session.target = target;
+				setGhidraTarget(target);
 				return ok(id, { loaded: target });
 			}
 

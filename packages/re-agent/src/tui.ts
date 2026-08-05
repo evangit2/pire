@@ -45,7 +45,7 @@ import { type ChatMessage, callLLM, loadLLMConfig, toolToFunction } from "./llm.
 import { loadSettings } from "./pire-config.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const VERSION = "0.89.4";
+const VERSION = "0.89.7";
 
 // ─── Context Window Management ─────────────────────────────────
 // Aggressive multi-stage compression: truncate → stub → drop.
@@ -349,12 +349,16 @@ Run tools on paths/URLs yourself. Use fetch for URLs. Use write_file for files.`
 
 		this.messages.push({ role: "user", content: userMessage });
 
-		const toolSchemas = RE_TOOLS.map(toolToFunction);
+		const toolSchemas = RE_TOOLS
+			.filter((t) => this.tools[t.name] !== false)
+			.map(toolToFunction);
 		const MAX_TURNS = parseInt(process.env.PIRE_MAX_TURNS || "70", 10) || 70;
-		const seenCalls = new Set<string>();
 
 		for (let turn = 0; turn < MAX_TURNS; turn++) {
 			this.push("info", `${C.dim}[turn ${turn + 1}/${MAX_TURNS}]${C.reset}`);
+
+			// seenCalls is per-turn — allows re-running same tool in different turns
+			const seenCalls = new Set<string>();
 
 			let resp;
 			try {
@@ -860,12 +864,16 @@ Run tools on paths/URLs yourself. Use fetch for URLs. Use write_file for files.`
 
 		this.messages.push({ role: "user", content: userMessage });
 
-		const toolSchemas = RE_TOOLS.map(toolToFunction);
+		const toolSchemas = RE_TOOLS
+			.filter((t) => this.tools[t.name] !== false)
+			.map(toolToFunction);
 		const MAX_TURNS = parseInt(process.env.PIRE_MAX_TURNS || "70", 10) || 70;
-		const seenCalls = new Set<string>();
 
 		for (let turn = 0; turn < MAX_TURNS; turn++) {
 			process.stdout.write(`\r${C.dim}[turn ${turn + 1}/${MAX_TURNS}]${C.reset} `);
+
+			// seenCalls is per-turn — allows re-running same tool in different turns
+			const seenCalls = new Set<string>();
 
 			let resp;
 			try {

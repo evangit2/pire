@@ -30,10 +30,28 @@ const CONFIG_PATH = process.env.PIRE_CONFIG || path.join(process.env.HOME, ".pir
 function loadConfig() {
 	const raw = fs.readFileSync(CONFIG_PATH, "utf-8");
 	const config = {};
-	// Simple YAML parsing for the fields we need
+	// Simple YAML parsing — supports both flat and multi-provider formats
 	const lines = raw.split("\n");
 	let inModel = false, inProviders = false, currentProvider = null;
 	for (const line of lines) {
+		// Flat format: model: "xxx", base_url: "xxx", api_key: "xxx"
+		const flatModel = line.match(/^(?:model|default_model):\s*(.+)$/);
+		if (flatModel && !inProviders) {
+			config["model.default"] = flatModel[1].replace(/^["']|["']$/g, "");
+			config["model.model"] = flatModel[1].replace(/^["']|["']$/g, "");
+			continue;
+		}
+		const flatUrl = line.match(/^base_url:\s*(.+)$/);
+		if (flatUrl && !inProviders && !inModel) {
+			config["model.base_url"] = flatUrl[1].replace(/^["']|["']$/g, "");
+			continue;
+		}
+		const flatKey = line.match(/^api_key:\s*(.+)$/);
+		if (flatKey && !inProviders && !inModel) {
+			config["model.api_key"] = flatKey[1].replace(/^["']|["']$/g, "");
+			continue;
+		}
+		// Multi-provider format
 		if (line.startsWith("model:")) { inModel = true; inProviders = false; continue; }
 		if (line.startsWith("providers:")) { inModel = false; inProviders = true; continue; }
 		if (line.startsWith("fallback_providers:")) { inProviders = false; continue; }
@@ -56,13 +74,13 @@ function loadConfig() {
 
 function getProviders(cfg) {
 	const providers = {};
-	// Main provider
+	// Main provider (supports both flat and multi-provider config)
 	if (cfg["model.base_url"] && cfg["model.api_key"]) {
 		providers["main"] = {
 			name: cfg["model.provider"] || "main",
 			url: cfg["model.base_url"].replace(/\/$/, "") + "/chat/completions",
 			apiKey: cfg["model.api_key"],
-			model: cfg["model.default"],
+			model: cfg["model.model"] || cfg["model.default"],
 		};
 	}
 	// Named providers

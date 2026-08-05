@@ -146,8 +146,17 @@ export async function callLLM(
 		new Promise((resolve, reject) => {
 			const client = url.protocol === "https:" ? https : http;
 			const req = client.request(url, optionsReq, (res) => {
-				if (res.statusCode && res.statusCode >= 500) {
-					reject(new Error(`HTTP ${res.statusCode}`));
+				if (res.statusCode && res.statusCode >= 400) {
+					// Read error body for diagnostics
+					let errBody = "";
+					res.on("data", (c: Buffer) => (errBody += c.toString()));
+					res.on("end", () => {
+						const sc = res.statusCode ?? 500;
+						const err = new Error(`HTTP ${sc}: ${errBody.slice(0, 500)}`);
+						(err as any).statusCode = sc;
+						(err as any).retriable = sc >= 500;
+						reject(err);
+					});
 					return;
 				}
 
@@ -244,6 +253,9 @@ export async function callLLM(
 			return await doRequest();
 		} catch (e) {
 			lastErr = e instanceof Error ? e : new Error(String(e));
+			// Don't retry 4xx client errors — they will never succeed
+			const retriable = (lastErr as any).retriable;
+			if (retriable === false) throw lastErr;
 			if (i < 2) await new Promise((r) => setTimeout(r, 2000 * (i + 1)));
 		}
 	}

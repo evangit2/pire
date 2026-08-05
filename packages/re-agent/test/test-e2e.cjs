@@ -27,7 +27,7 @@ function loadProvider() {
 	return {
 		url: cfg.match(/base_url:\s*(.+)/)?.[1]?.trim().replace(/['"]/g, "").replace(/\/$/, "") + "/chat/completions",
 		apiKey: cfg.match(/api_key:\s*(.+)/)?.[1]?.trim().replace(/['"]/g, ""),
-		model: cfg.match(/default:\s*(.+)/)?.[1]?.trim().replace(/['"]/g, ""),
+		model: cfg.match(/(?:^|\n)\s*model:\s*(.+)/)?.[1]?.trim().replace(/['"]/g, ""),
 	};
 }
 
