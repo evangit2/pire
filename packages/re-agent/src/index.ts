@@ -279,6 +279,11 @@ java -Xmx4g -XX:+UseG1GC \\
 		return this.api(`disassemble/${address}`);
 	}
 
+	/** Check if the headless server can be auto-started (JAR + Ghidra installed). */
+	canAutoStart(): boolean {
+		return !!this.ghidraHome && !!this.mcpJar;
+	}
+
 	/** Set the target binary path for auto-start. */
 	setTarget(path: string): void {
 		this.currentTarget = path;
@@ -1475,6 +1480,7 @@ export function createReTools(extra: AgentTool<any>[] = []): AgentTool<any>[] {
 export function probeTools(): Record<string, boolean> {
 	const ghidraInstalled = !!which("ghidra") || !!which("ghidraRun");
 	const ghidraOk = ghidra.getStatus().alive;
+	const ghidraReady = ghidra.canAutoStart();
 	return {
 		shell: true,
 		fetch: !!which("wget") || !!which("curl"),
@@ -1495,11 +1501,11 @@ export function probeTools(): Record<string, boolean> {
 		entropy: !!which(PYTHON),
 		diff: !!which("diff"),
 		ghidra_status: ghidraInstalled,
-		ghidra_decompile: ghidraOk,
-		ghidra_functions: ghidraOk,
-		ghidra_rename: ghidraOk,
-		ghidra_xrefs: ghidraOk,
-		ghidra_strings: ghidraOk,
+		ghidra_decompile: ghidraOk || ghidraReady,
+		ghidra_functions: ghidraOk || ghidraReady,
+		ghidra_rename: ghidraOk || ghidraReady,
+		ghidra_xrefs: ghidraOk || ghidraReady,
+		ghidra_strings: ghidraOk || ghidraReady,
 		binwalk: !!which("binwalk"),
 		lief: pythonModule("lief"),
 		angr: pythonModule("angr"),
