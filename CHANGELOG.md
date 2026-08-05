@@ -1,4 +1,16 @@
-# pire v0.88.4 — Ctrl+C Abort, macOS Installer Fixes, TUI Build Fix
+# pire v0.88.5 — Ctrl+C raw mode fix, status bar layout
+
+Released: 2026-08-04
+
+## Fixed
+
+- **Ctrl+C now actually works.** Root cause: TUI runs in raw mode where Ctrl+C arrives as byte `0x03` in stdin, not as SIGINT. The `Input` component silently dropped control chars, and `process.on("SIGINT")` never fired. Now an `addInputListener` intercepts `0x03` before it reaches Input: first press aborts the LLM request via AbortController, second press within 5s exits, if not processing then first press exits immediately.
+- **Status bar doubling (transient).** Removed unnecessary `Box(0,0)` wrapper around StatusBar that could cause layout measurement to allocate extra rows during rapid streaming updates. StatusBar is now a direct child of the VStack with `basis: 1, maxSize: 1`.
+- **SIGTERM handler simplified.** No longer pretends to handle SIGINT (which never fires in raw mode).
+
+---
+
+# pire v0.88.4 — Ctrl+C abort, macOS installer fixes, TUI build fix
 
 Released: 2026-08-04
 

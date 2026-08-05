@@ -38,7 +38,7 @@ import { join, dirname, basename } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const VERSION = "0.88.4";
+const VERSION = "0.88.5";
 
 // Use chalk for proper Pi-style colors
 import chalk from "chalk";
@@ -357,12 +357,10 @@ export class PirePiTUI {
 		});
 
 		// Chat column: scrollview (grows) + border + status + input
-		const statusBox = new Box(0, 0);
-		statusBox.addChild(this.statusBar);
 		const chatVStack = new VStack([
 			{ component: this.scrollView, basis: 0, grow: 1, shrink: 1, minSize: 3 },
 			{ component: new DynamicBorder(), basis: 1, grow: 0, shrink: 0 },
-			{ component: statusBox, basis: 1, grow: 0, shrink: 0, maxSize: 1 },
+			{ component: this.statusBar, basis: 1, grow: 0, shrink: 0, maxSize: 1 },
 			{ component: this.input, basis: 1, grow: 0, shrink: 0, maxSize: 1 },
 		]);
 

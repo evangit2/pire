@@ -236,7 +236,7 @@ async function handleRequest(req: RPCRequest): Promise<RPCResponse> {
 			case "initialize": {
 				return ok(id, {
 					protocolVersion: "2024-11-05",
-					serverInfo: { name: "pire", version: "0.88.4" },
+					serverInfo: { name: "pire", version: "0.88.5" },
 					capabilities: { tools: {}, resources: {}, prompts: {} },
 					tools: RE_TOOLS.map(t => ({
 						name: t.name,
@@ -369,7 +369,7 @@ async function handleRequest(req: RPCRequest): Promise<RPCResponse> {
 					return err(id, -32602, `Session not found: ${sid}`);
 				}
 				const data = JSON.stringify({
-					version: "0.88.4",
+					version: "0.88.5",
 					target: session.target,
 					messages: session.messages,
 				}, null, 2);
