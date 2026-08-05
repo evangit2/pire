@@ -457,26 +457,29 @@ log_section "Core Components"
 case "$OS" in
 	debian)
 		log_step "Updating package index..."
-		sudo apt-get update -qq </dev/null >/dev/null 2>&1
+		# Allow apt-get update to fail on broken third-party repos
+		# (e.g. Sonarr missing GPG keys) — we only need the core repos
+		sudo apt-get update -qq </dev/null 2>/dev/null
 		log_step "Installing core packages..."
-		pkg_install nodejs npm git build-essential radare2 binutils file python3-pip python3-venv
+		# Note: nodejs/npm installed separately from official binary below
+		pkg_install git build-essential radare2 binutils file python3-pip python3-venv
 		/usr/bin/python3 -m pip --version >/dev/null 2>&1 || /usr/bin/python3 -m ensurepip --user </dev/null >/dev/null 2>&1
 		;;
 	fedora)
 		log_step "Installing core packages..."
-		pkg_install nodejs npm git gcc make radare2 binutils file python3-pip
+		pkg_install git gcc make radare2 binutils file python3-pip
 		;;
 	arch)
 		log_step "Installing core packages..."
-		pkg_install nodejs npm git base-devel radare2 binutils file python-pip
+		pkg_install git base-devel radare2 binutils file python-pip
 		;;
 	suse)
 		log_step "Installing core packages..."
-		pkg_install nodejs npm git gcc make radare2 binutils file python3-pip
+		pkg_install git gcc make radare2 binutils file python3-pip
 		;;
 	alpine)
 		log_step "Installing core packages..."
-		pkg_install nodejs npm git build-base radare2 binutils file py3-pip
+		pkg_install git build-base radare2 binutils file py3-pip
 		;;
 	macos)
 		if ! has brew; then
@@ -497,21 +500,21 @@ case "$OS" in
 			ubuntu|debian|linuxmint|pop)
 				OS="debian"; PKG_MGR="apt"
 				log_step "Updating package index..."
-				sudo apt-get update -qq </dev/null >/dev/null 2>&1
+				sudo apt-get update -qq </dev/null 2>/dev/null
 				log_step "Installing core packages..."
-				pkg_install nodejs npm git build-essential radare2 binutils file
+				pkg_install git build-essential radare2 binutils file
 				;;
 			fedora|rhel|centos|rocky|alma)
 				OS="fedora"; PKG_MGR="dnf"
 				log_step "Installing core packages..."
-				pkg_install nodejs npm git gcc make radare2 binutils file
+				pkg_install git gcc make radare2 binutils file
 				;;
 			*)
 				OS="debian"; PKG_MGR="apt"
 				log_step "Updating package index..."
-				sudo apt-get update -qq </dev/null >/dev/null 2>&1
+				sudo apt-get update -qq </dev/null 2>/dev/null
 				log_step "Installing core packages..."
-				pkg_install nodejs npm git build-essential radare2 binutils file
+				pkg_install git build-essential radare2 binutils file
 				;;
 		esac
 		;;
@@ -526,37 +529,49 @@ log_step "Checking Node.js version..."
 NODE_VER=$(node -v 2>/dev/null | sed 's/v//' | cut -d. -f1 || echo "0")
 if [ "$NODE_VER" -lt 22 ] 2>/dev/null; then
 	log_warn "Node.js is v$NODE_VER, need v22+"
-	log_step "Installing Node.js 22 from official binary..."
+	log_step "Installing Node.js 22..."
 
-	# Detect arch and install Node.js 22 from the official binary tarball.
-	# This avoids all apt/dnf repo issues (broken third-party repos, GPG keys,
-	# stale caches) — just download and extract to /usr/local.
-	NODE_ARCH="x64"
-	case "$(uname -m)" in
-		aarch64|arm64) NODE_ARCH="arm64" ;;
-		x86_64|amd64)  NODE_ARCH="x64" ;;
-		*)             log_warn "Unknown arch $(uname -m), trying x64" ;;
+	case "$OS" in
+		macos)
+			# macOS: use Homebrew
+			pkg_install node@22 2>/dev/null || brew link --overwrite node@22 </dev/null >/dev/null 2>&1
+			;;
+		windows)
+			# MSYS2/Windows: pacman has recent Node
+			pkg_install nodejs 2>/dev/null
+			;;
+		*)
+			# Linux: install from official binary tarball.
+			# This avoids all apt/dnf repo issues (broken third-party repos,
+			# GPG keys, stale caches) — just download and extract to /usr/local.
+			log_step "Installing Node.js 22 from official binary..."
+			NODE_ARCH="x64"
+			case "$(uname -m)" in
+				aarch64|arm64) NODE_ARCH="arm64" ;;
+				x86_64|amd64)  NODE_ARCH="x64" ;;
+				*)             log_warn "Unknown arch $(uname -m), trying x64" ;;
+			esac
+
+			# Fetch the latest Node 22 version from the official API
+			NODE_LATEST=$(curl -fsSL "https://nodejs.org/dist/index.json" 2>/dev/null \
+				| grep -o '"version":"v22\.[^"]*"' | head -1 | sed 's/"version":"//;s/"//')
+			[ -z "$NODE_LATEST" ] && NODE_LATEST="v22.11.0"
+
+			NODE_TARBALL="/tmp/node22-$$.tar.xz"
+			NODE_URL="https://nodejs.org/dist/$NODE_LATEST/node-$NODE_LATEST-linux-$NODE_ARCH.tar.xz"
+
+			if curl -fsSL "$NODE_URL" -o "$NODE_TARBALL" 2>/dev/null; then
+				if [ -w /usr/local ]; then
+					tar -xJf "$NODE_TARBALL" -C /usr/local --strip-components=1 2>/dev/null
+				else
+					sudo tar -xJf "$NODE_TARBALL" -C /usr/local --strip-components=1 2>/dev/null
+				fi
+				rm -f "$NODE_TARBALL" 2>/dev/null
+			else
+				log_warn "Direct download failed, trying nvm..."
+			fi
+			;;
 	esac
-
-	# Fetch the latest Node 22 LTS version from the official API
-	NODE_LATEST=$(curl -fsSL "https://nodejs.org/dist/index.json" 2>/dev/null \
-		| grep -o '"version":"v22\.[^"]*"' | head -1 | sed 's/"version":"//;s/"//')
-	[ -z "$NODE_LATEST" ] && NODE_LATEST="v22.11.0"
-
-	NODE_TARBALL="/tmp/node22-$$.tar.xz"
-	NODE_URL="https://nodejs.org/dist/$NODE_LATEST/node-$NODE_LATEST-linux-$NODE_ARCH.tar.xz"
-
-	if curl -fsSL "$NODE_URL" -o "$NODE_TARBALL" 2>/dev/null; then
-		# Extract to /usr/local — overwrites any existing node/npm
-		if [ -w /usr/local ]; then
-			tar -xJf "$NODE_TARBALL" -C /usr/local --strip-components=1 2>/dev/null
-		else
-			sudo tar -xJf "$NODE_TARBALL" -C /usr/local --strip-components=1 2>/dev/null
-		fi
-		rm -f "$NODE_TARBALL" 2>/dev/null
-	else
-		log_warn "Direct download failed, trying nvm..."
-	fi
 
 	# Verify
 	NODE_VER_NEW=$(node -v 2>/dev/null | sed 's/v//' | cut -d. -f1 || echo "0")
