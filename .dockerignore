@@ -1,0 +1,8 @@
+node_modules
+.git
+*.md
+!README.md
+dist
+*.log
+/tmp
+pire-test

@@ -103,6 +103,7 @@ for arg in "$@"; do
 		--all)     INSTALL_ALL=1; NONINTERACTIVE=1 ;;
 		--core)    INSTALL_CORE_ONLY=1; NONINTERACTIVE=1 ;;
 		--no-wine) NO_WINE=1 ;;
+		--no-tests) NO_TESTS=1 ;;
 		--yes|-y)  NONINTERACTIVE=1 ;;
 		--debug|-v|--verbose) PIRE_DEBUG=1 ;;
 		--help|-h)
@@ -114,6 +115,7 @@ for arg in "$@"; do
 			echo "  --all       Install everything (no prompts)"
 			echo "  --core      Install only core components (no prompts)"
 			echo "  --no-wine   Skip Wine installation"
+			echo "  --no-tests  Skip test suite during install"
 			echo "  --yes, -y   Non-interactive (accept all defaults)"
 			echo "  --debug, -v Show verbose output (no suppression, full error messages)"
 			echo "  --help, -h  Show this help"
@@ -1248,8 +1250,8 @@ if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/package.json" ]; then
 		fi
 	fi
 
-	# Run tests
-	if [ -f "$SCRIPT_DIR/packages/re-agent/test/test-suite.cjs" ]; then
+	# Run tests (unless --no-tests)
+	if [ -z "$NO_TESTS" ] && [ -f "$SCRIPT_DIR/packages/re-agent/test/test-suite.cjs" ]; then
 		log_step "Running test suite..."
 		if node packages/re-agent/test/test-suite.cjs 2>&1 | tail -3; then
 			log_done "Tests passed"

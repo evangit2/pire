@@ -4,6 +4,11 @@ Reverse-engineering agent. Give it a binary, URL, or directory and it figures ou
 
 ## Quick start
 
+**Docker (one line, no install needed):**
+```bash
+docker run -it --rm -v $(pwd):/workspace ghcr.io/evangit2/pire:latest /workspace/binary.exe
+```
+
 **Linux/macOS/WSL (MacOS needs brew):**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/evangit2/pire/main/install.sh | sh
