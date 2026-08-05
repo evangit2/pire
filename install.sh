@@ -894,26 +894,45 @@ install_ghidra() {
 			;;
 	esac
 	if has ghidra 2>$DN || has ghidraRun 2>$DN; then
-		# Install GhidraMCP extension JAR + bridge script
+		# Build the headless GhidraMCP JAR from pire's bundled source.
+		# This produces the JAR that pire's GhidraBridge uses at runtime —
+		# no GUI plugin, no Python bridge, no external downloads needed.
 		GHIDRA_DIR=$(dirname "$(readlink -f "$(which ghidra 2>$DN || which ghidraRun 2>$DN)" 2>$DN)" 2>$DN)
 		if [ -z "$GHIDRA_DIR" ]; then
 			GHIDRA_DIR=$(ls -d /opt/ghidra_* 2>$DN | head -1)
 		fi
 		if [ -n "$GHIDRA_DIR" ]; then
 			GHIDRA_VERSION=$(basename "$GHIDRA_DIR" | sed 's/ghidra_//;s/_PUBLIC//')
-			GHIDRA_EXT_DIR="$HOME/.config/ghidra_${GHIDRA_VERSION}_PUBLIC/Extensions/GhidraMCP"
-			MCP_RELEASE=$(run_with_timeout_dl curl -sL "https://api.github.com/repos/bethington/ghidra-mcp/releases/latest" 2>$DN | grep -oP '"tag_name":\s*"v\K[^"]+' | head -1)
-			if [ -n "$MCP_RELEASE" ]; then
-				mkdir -p /tmp/ghidra-mcp-install
-				run_with_timeout_dl curl -sL "https://github.com/bethington/ghidra-mcp/releases/download/v${MCP_RELEASE}/GhidraMCP-${MCP_RELEASE}.zip" -o /tmp/ghidra-mcp-install/GhidraMCP.zip 2>$DN
-				if [ -f /tmp/ghidra-mcp-install/GhidraMCP.zip ] && [ -s /tmp/ghidra-mcp-install/GhidraMCP.zip ]; then
-					mkdir -p "$GHIDRA_EXT_DIR"
-					unzip -q -o /tmp/ghidra-mcp-install/GhidraMCP.zip -d "$GHIDRA_EXT_DIR" 2>$DN
+			# Install Maven if not present (needed to build the MCP JAR)
+			if ! has mvn 2>$DN; then
+				case "$OS" in
+					debian|ubuntu) pkg_install maven 2>$DN || true ;;
+					fedora) pkg_install maven 2>$DN || true ;;
+					arch) pkg_install maven 2>$DN || true ;;
+					suse) pkg_install maven 2>$DN || true ;;
+					macos) pkg_install maven 2>$DN || true ;;
+				esac
+			fi
+			# Find pire's bundled ghidra-mcp source (installed alongside pire)
+			PIRE_PREFIX="${PIRE_PREFIX:-/opt/pire}"
+			MCP_SRC=""
+			for candidate in \
+				"$PIRE_PREFIX/packages/ghidra-mcp" \
+				"$(dirname "$(readlink -f "$(which pire 2>$DN)" 2>$DN)")/../lib/node_modules/pire/packages/ghidra-mcp" \
+				"$HOME/.pire/packages/ghidra-mcp" \
+				"$(pwd)/packages/ghidra-mcp"; do
+				if [ -f "$candidate/pom.xml" ]; then
+					MCP_SRC="$candidate"
+					break
 				fi
-				# Install bridge script to /opt/ghidra-mcp
-				sudo mkdir -p /opt/ghidra-mcp 2>$DN
-				run_with_timeout_dl curl -sL "https://github.com/bethington/ghidra-mcp/releases/download/v${MCP_RELEASE}/bridge_mcp_ghidra.py" -o /opt/ghidra-mcp/bridge_mcp_ghidra.py 2>$DN || true
-				rm -rf /tmp/ghidra-mcp-install
+			done
+			if [ -n "$MCP_SRC" ] && has mvn 2>$DN; then
+				# Patch pom.xml with the correct Ghidra version
+				sed -i "s|<ghidra.version>.*</ghidra.version>|<ghidra.version>${GHIDRA_VERSION}</ghidra.version>|" "$MCP_SRC/pom.xml" 2>$DN
+				# Install Ghidra JARs into local Maven repo (idempotent)
+				bash "$MCP_SRC/ghidra-mcp-setup.sh" --setup-deps --ghidra-path "$GHIDRA_DIR" >/dev/null 2>&1 || true
+				# Build the headless JAR
+				( cd "$MCP_SRC" && mvn clean package -DskipTests -q 2>$DN ) || true
 			fi
 		fi
 		echo "$ST_DONE" > "$TMPDIR_PIRE/ghidra.status"

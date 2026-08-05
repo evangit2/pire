@@ -340,7 +340,8 @@ ${systemTemplate
 				try {
 					const result = await tool.execute("reimpl", params);
 					const text = result.content.map((c: { text: string }) => c.text).join("\n");
-					const truncated = text.length > MAX_TOOL_OUTPUT ? text.slice(0, MAX_TOOL_OUTPUT) + "\n... (truncated)" : text;
+					const truncated =
+						text.length > MAX_TOOL_OUTPUT ? text.slice(0, MAX_TOOL_OUTPUT) + "\n... (truncated)" : text;
 					messages.push({ role: "tool", tool_call_id: tc.id, content: truncated });
 
 					const preview = text.slice(0, 200).replace(/\n/g, "\n  ");

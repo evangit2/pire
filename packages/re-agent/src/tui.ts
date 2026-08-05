@@ -54,7 +54,7 @@ const VERSION = "0.89.4";
 function getContextCharLimit(): number {
 	const llm = loadLLMConfig();
 	if (llm?.contextLength && llm.contextLength > 0) {
-		return Math.floor((llm.contextLength * 4) * 0.75);
+		return Math.floor(llm.contextLength * 4 * 0.75);
 	}
 	return 120000;
 }
@@ -437,7 +437,8 @@ Run tools on paths/URLs yourself. Use fetch for URLs. Use write_file for files.`
 					try {
 						const result = await tool.execute("pire", params);
 						const text = result.content.map((c: { text: string }) => c.text).join("\n");
-						const truncated = text.length > MAX_TOOL_OUTPUT ? text.slice(0, MAX_TOOL_OUTPUT) + "\n... (truncated)" : text;
+						const truncated =
+							text.length > MAX_TOOL_OUTPUT ? text.slice(0, MAX_TOOL_OUTPUT) + "\n... (truncated)" : text;
 						messages.push({ role: "tool", tool_call_id: tc.id, content: truncated });
 						// Show tool output (truncated for display)
 						const displayText =
@@ -943,7 +944,8 @@ Run tools on paths/URLs yourself. Use fetch for URLs. Use write_file for files.`
 					try {
 						const result = await tool.execute("pire", params);
 						const text = result.content.map((c: { text: string }) => c.text).join("\n");
-						const truncated = text.length > MAX_TOOL_OUTPUT ? text.slice(0, MAX_TOOL_OUTPUT) + "\n... (truncated)" : text;
+						const truncated =
+							text.length > MAX_TOOL_OUTPUT ? text.slice(0, MAX_TOOL_OUTPUT) + "\n... (truncated)" : text;
 						messages.push({ role: "tool", tool_call_id: tc.id, content: truncated });
 						// Show tool result summary
 						const displayText =

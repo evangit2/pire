@@ -204,7 +204,14 @@ class GhidraBridge {
 		// Check for Maven and JDK
 		const mvnPath = which("mvn");
 		const javacPath = which("javac");
-		if (!mvnPath || !javacPath) return;
+		if (!mvnPath || !javacPath) {
+			console.error(
+				`[ghidra] Cannot auto-build MCP JAR: ${!mvnPath ? "Maven" : ""}${!mvnPath && !javacPath ? " and " : ""}${!javacPath ? "JDK" : ""} not found.\n` +
+				`  Install with: sudo apt install maven default-jdk  (or: brew install maven openjdk)\n` +
+				`  Then re-run pire — the JAR will build automatically on first Ghidra tool use.`,
+			);
+			return;
+		}
 
 		// Detect installed Ghidra version and patch pom.xml if needed
 		const version = basename(this.ghidraHome).replace("_PUBLIC", "").replace("ghidra_", "");
@@ -275,7 +282,9 @@ class GhidraBridge {
 			this.buildMcpJar();
 		}
 		if (!this.mcpJar) {
-			throw new Error("GhidraMCP extension JAR not found and auto-build failed. Ensure Maven and JDK are installed.");
+			throw new Error(
+				"GhidraMCP extension JAR not found and auto-build failed. Ensure Maven and JDK are installed.",
+			);
 		}
 		if (!existsSync(targetPath)) {
 			throw new Error(`Target binary not found: ${targetPath}`);
@@ -517,7 +526,8 @@ const objdumpTool: AgentTool<{
 
 const readelfTool: AgentTool<{ path: string; info?: string }> = {
 	name: "readelf",
-	description: "readelf: ELF headers, sections, symbols, segments. Use info=headers (-h), sections (-S), symbols (-s), segments (-l), dynamic (-d), notes (-n). Default: headers. Avoid 'all' — it produces massive output.",
+	description:
+		"readelf: ELF headers, sections, symbols, segments. Use info=headers (-h), sections (-S), symbols (-s), segments (-l), dynamic (-d), notes (-n). Default: headers. Avoid 'all' — it produces massive output.",
 	parameters: Type.Object({
 		path: Type.String(),
 		info: Type.Optional(Type.String({ default: "headers" })),
@@ -608,7 +618,9 @@ class R2Session {
 				child.stdout?.removeAllListeners("data");
 				// Kill the r2 process on timeout — it's in a broken state
 				// with pending output that would contaminate the next command.
-				try { child.kill("SIGKILL"); } catch {}
+				try {
+					child.kill("SIGKILL");
+				} catch {}
 				this.proc = null;
 				this.currentFile = null;
 				// Don't mark as analyzed if the command timed out
@@ -692,7 +704,7 @@ const r2Tool: AgentTool<{ path: string; command: string }> = {
 			if (errMsg.includes("timeout")) {
 				return textResult(
 					`r2 command timed out (60s limit). The command was: ${params.command}\n` +
-					"This may happen on very large binaries. Try a simpler command, use '~' to filter output, or use 'aa' instead of 'aaa'.",
+						"This may happen on very large binaries. Try a simpler command, use '~' to filter output, or use 'aa' instead of 'aaa'.",
 				);
 			}
 			throw e;
@@ -844,18 +856,25 @@ const ghidraStrings: AgentTool<{ pattern?: string }> = {
 
 const ghidraStatus: AgentTool<Record<string, never>> = {
 	name: "ghidra_status",
-	description: "Check Ghidra server status. If Ghidra is installed but not running, this will attempt to auto-start the headless server with the currently loaded binary.",
+	description:
+		"Check Ghidra server status. If Ghidra is installed but not running, this will attempt to auto-start the headless server with the currently loaded binary.",
 	parameters: Type.Object({}),
 	async execute() {
 		const alive = ghidra.getStatus().alive;
 		if (!alive) {
 			const canStart = ghidra.canAutoStart();
 			if (canStart) {
-				return textResult(`Ghidra: offline at ${ghidra.getStatus().url}. Auto-start is available — call ghidra_functions or ghidra_decompile to automatically start the headless server with the loaded binary.`);
+				return textResult(
+					`Ghidra: offline at ${ghidra.getStatus().url}. Auto-start is available — call ghidra_functions or ghidra_decompile to automatically start the headless server with the loaded binary.`,
+				);
 			}
-			return textResult(`Ghidra: offline at ${ghidra.getStatus().url}. No Ghidra installation found or MCP JAR not built.`);
+			return textResult(
+				`Ghidra: offline at ${ghidra.getStatus().url}. No Ghidra installation found or MCP JAR not built.`,
+			);
 		}
-		return textResult(`Ghidra: connected at ${ghidra.getStatus().url} (restart attempts: ${ghidra.getStatus().restarts})`);
+		return textResult(
+			`Ghidra: connected at ${ghidra.getStatus().url} (restart attempts: ${ghidra.getStatus().restarts})`,
+		);
 	},
 };
 

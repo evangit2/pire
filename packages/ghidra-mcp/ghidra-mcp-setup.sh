@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # GhidraMCP Deployment Script for Linux (Ubuntu/Debian)
 # Automatically builds, installs, and configures the GhidraMCP plugin
-# Target: Ghidra 12.0.3
+# Target: Ghidra 11.1.2+ (auto-detects version from --ghidra-path)
 #
 # Usage:
 #   ./ghidra-mcp-setup.sh --deploy --ghidra-path /opt/ghidra_12.0.3_PUBLIC
