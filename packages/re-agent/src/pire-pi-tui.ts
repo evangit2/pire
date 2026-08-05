@@ -471,8 +471,11 @@ export class PirePiTUI {
 					} else {
 						this.loadedTarget = arg;
 						setGhidraTarget(arg);
+						this.sidebar.refresh();
 						this.statusBar.setTarget(basename(arg));
-						this.transcript.add("system", `Loaded: ${arg}`);
+						const status = probeTools();
+						const avail = Object.values(status).filter(Boolean).length;
+						this.transcript.add("system", `Loaded: ${arg} (${avail}/${RE_TOOLS.length} tools available)`);
 					}
 				}
 				break;
@@ -556,6 +559,8 @@ export class PirePiTUI {
 					this.transcript.add("error", path || "Download failed");
 				} else {
 					this.loadedTarget = path;
+					setGhidraTarget(path);
+					this.sidebar.refresh();
 					this.transcript.add("system", `Downloaded to: ${path}`);
 					this.statusBar.setTarget(basename(path));
 					this.messages.push({ role: "user", content: `I've loaded ${url} (downloaded to ${path}). Please analyze it.` });

@@ -411,13 +411,15 @@ When you have gathered enough information, write your analysis to a file using t
 				return;
 			}
 			this.loadedTarget = path;
-		setGhidraTarget(path);
-			this.push("info", `Loaded: ${path}`);
+			setGhidraTarget(path);
+			this.tools = probeTools();
+			const avail = Object.values(this.tools).filter(Boolean).length;
+			this.push("info", `Loaded: ${path} (${avail}/${RE_TOOLS.length} tools available)`);
 			this.render();
 			return;
-		}
+			}
 
-		if (cmd.startsWith(":save")) {
+			if (cmd.startsWith(":save")) {
 			const savePath = cmd.slice(4).trim() || join(process.cwd(), `pire-session-${Date.now()}.json`);
 			try {
 				const data = JSON.stringify({ version: VERSION, target: this.loadedTarget, messages: this.messages }, null, 2);
@@ -837,13 +839,15 @@ When you have gathered enough information, write your analysis to a file using t
 				return;
 			}
 			this.loadedTarget = path;
-		setGhidraTarget(path);
-			console.log(`Loaded: ${path}`);
+			setGhidraTarget(path);
+			this.tools = probeTools();
+			const avail = Object.values(this.tools).filter(Boolean).length;
+			console.log(`Loaded: ${path} (${avail}/${RE_TOOLS.length} tools available)`);
 			this.rl.prompt();
 			return;
-		}
+			}
 
-		if (cmd.startsWith(":save")) {
+			if (cmd.startsWith(":save")) {
 			const savePath = cmd.slice(4).trim() || join(process.cwd(), `pire-session-${Date.now()}.json`);
 			try {
 				const data = JSON.stringify({ version: VERSION, target: this.loadedTarget, messages: this.messages }, null, 2);
