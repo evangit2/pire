@@ -1,3 +1,27 @@
+# pire v0.88.4 — Ctrl+C Abort, macOS Installer Fixes, TUI Build Fix
+
+Released: 2026-08-04
+
+## Fixed
+
+- **Ctrl+C now aborts the agent immediately.** Previously required double Ctrl+C with a 15s window; first press was invisible because the agent kept rendering. Now: first Ctrl+C aborts the current LLM HTTP request via AbortController, second Ctrl+C within 5s exits pire.
+- **Status bar doubling.** Box(1,0) padding around the status bar rendered an extra blank line. Fixed to Box(0,0).
+- **macOS installer hang during `brew install`.** Three root causes fixed:
+  - 180s timeout too short for `brew install node` (compiles from source) → bumped to 600s
+  - `coreutils` (provides `gtimeout`) installed after core packages that needed it → installed first
+  - `HOMEBREW_NO_AUTO_UPDATE` not set globally → exported at script top
+- **TUI build failure on macOS.** `tsconfig.build.json` targeted ES2022 but TUI uses `/v` regex flag requiring ES2024. Overrode in TUI's tsconfig.
+- **Brew lock contention.** `pkg_install` serialized all package managers with a lock, but macOS lacks `flock` so the `mkdir` fallback caused 5-min hangs when parallel brew installs collided. Lock is now skipped for brew.
+- **Wrapper script quoting bug.** `sudo sh -c "...\"` produced literal `\"` in the generated `/usr/local/bin/pire` wrapper. Replaced with `printf` + `sudo install`.
+- **Unknown subcommands silently launched TUI.** `pire uninstall` would open the TUI instead of erroring. Added explicit unknown-command guard.
+- **Update failures from monorepo-wide `tsc --noEmit`.** `npm install` and TUI build errors are now non-fatal; only `git pull` failures trigger rollback.
+
+## Added
+
+- **`--debug` flag for installer.** `curl -fsSL .../install.sh | sh -s -- --debug` shows full command output, no suppression, inline parallel install logs with component prefix.
+
+---
+
 # pire v0.88.3 — Multi-Toolchain E2E Verification
 
 Released: 2026-08-04
