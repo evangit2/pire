@@ -310,9 +310,10 @@ fi
 # ── Package Manager Abstraction ───────────────────────────────
 pkg_install() {
 	# Serialize package manager calls — apt/dnf/pacman all use lock files
-	# and will fail if invoked in parallel.
+	# and will fail if invoked in parallel. Brew doesn't need this.
 	PKG_LOCKFILE="/tmp/pire-pkg-install.lock"
 	PKG_LOCKHELD=0
+	if [ "$PKG_MGR" != "brew" ]; then
 	if command -v flock >$DN 2>&1; then
 		exec 9>"$PKG_LOCKFILE"
 		if flock -w 300 9; then
@@ -323,7 +324,7 @@ pkg_install() {
 			return 1
 		fi
 	else
-		# No flock (macOS) — retry loop as fallback
+		# No flock (macOS non-brew) — retry loop as fallback
 		PKG_TRIES=0
 		while [ $PKG_TRIES -lt 60 ]; do
 			if mkdir "$PKG_LOCKFILE" 2>$DN; then
@@ -337,6 +338,7 @@ pkg_install() {
 			log_warn "Could not acquire package lock for: $*"
 			return 1
 		fi
+	fi
 	fi
 	case "$PKG_MGR" in
 		apt)
