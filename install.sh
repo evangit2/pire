@@ -34,7 +34,7 @@ log_section() {
 	printf '\033[0;35m\033[1m═════════════════════════════════════════════════════════════\033[0m\n'
 }
 
-has() { command -v "$1" >/dev/null 2>&1; }
+has() { command -v "$1" >$DN 2>&1; }
 
 # Ensure user-local bin dirs are on PATH (pip --user, dotnet tools, etc.)
 for _dir in "$HOME/.local/bin" "$HOME/.dotnet/tools"; do
@@ -75,10 +75,10 @@ prompt_yesno() {
 
 	if [ "$IS_INTERACTIVE" = "true" ]; then
 		printf '%s %s ' "$QUESTION" "$SUFFIX"
-		read REPLY 2>/dev/null || REPLY=""
+		read REPLY 2>$DN || REPLY=""
 	elif [ -r /dev/tty ] && [ -w /dev/tty ]; then
 		printf '%s %s ' "$QUESTION" "$SUFFIX" > /dev/tty
-		IFS= read REPLY < /dev/tty 2>/dev/null || REPLY=""
+		IFS= read REPLY < /dev/tty 2>$DN || REPLY=""
 	else
 		[ "$DEFAULT" = "y" ] && return 0 || return 1
 	fi
@@ -96,6 +96,7 @@ INSTALL_ALL=0
 INSTALL_CORE_ONLY=0
 NO_WINE=0
 NONINTERACTIVE=0
+PIRE_DEBUG=0
 
 for arg in "$@"; do
 	case "$arg" in
@@ -103,6 +104,7 @@ for arg in "$@"; do
 		--core)    INSTALL_CORE_ONLY=1; NONINTERACTIVE=1 ;;
 		--no-wine) NO_WINE=1 ;;
 		--yes|-y)  NONINTERACTIVE=1 ;;
+		--debug|-v|--verbose) PIRE_DEBUG=1 ;;
 		--help|-h)
 			echo "pire install — cross-platform installer"
 			echo ""
@@ -113,15 +115,27 @@ for arg in "$@"; do
 			echo "  --core      Install only core components (no prompts)"
 			echo "  --no-wine   Skip Wine installation"
 			echo "  --yes, -y   Non-interactive (accept all defaults)"
+			echo "  --debug, -v Show verbose output (no suppression, full error messages)"
 			echo "  --help, -h  Show this help"
 			echo ""
 			echo "One-liner:"
 			echo "  curl -fsSL https://raw.githubusercontent.com/evangit2/pire/main/install.sh | sh"
+			echo ""
+			echo "With debug:"
+			echo "  curl -fsSL https://raw.githubusercontent.com/evangit2/pire/main/install.sh | sh -s -- --debug"
 			exit 0
 			;;
 		*) echo "Unknown option: $arg"; exit 1 ;;
 	esac
 done
+
+# When debug mode is on, redirect suppress target to stdout instead of /dev/null
+if [ "$PIRE_DEBUG" = "1" ]; then
+	DN="/dev/stdout"
+	echo "⚠ Debug mode — full output enabled"
+else
+	DN="/dev/null"
+fi
 
 print_banner
 
@@ -139,7 +153,7 @@ case "$UNAME_S" in
 		;;
 esac
 
-if [ -z "$OS" ] && grep -qi microsoft /proc/version 2>/dev/null; then
+if [ -z "$OS" ] && grep -qi microsoft /proc/version 2>$DN; then
 	OS="wsl"
 fi
 
@@ -299,7 +313,7 @@ pkg_install() {
 	# and will fail if invoked in parallel.
 	PKG_LOCKFILE="/tmp/pire-pkg-install.lock"
 	PKG_LOCKHELD=0
-	if command -v flock >/dev/null 2>&1; then
+	if command -v flock >$DN 2>&1; then
 		exec 9>"$PKG_LOCKFILE"
 		if flock -w 300 9; then
 			PKG_LOCKHELD=1
@@ -312,7 +326,7 @@ pkg_install() {
 		# No flock (macOS) — retry loop as fallback
 		PKG_TRIES=0
 		while [ $PKG_TRIES -lt 60 ]; do
-			if mkdir "$PKG_LOCKFILE" 2>/dev/null; then
+			if mkdir "$PKG_LOCKFILE" 2>$DN; then
 				PKG_LOCKHELD=2
 				break
 			fi
@@ -328,32 +342,32 @@ pkg_install() {
 		apt)
 			# Use --fix-broken to handle partial installs, and don't let
 			# broken third-party repos block the entire install.
-			sudo apt-get install -y --no-install-recommends --fix-broken "$@" </dev/null >/dev/null 2>&1
+			sudo apt-get install -y --no-install-recommends --fix-broken "$@" </dev/null >$DN 2>&1
 			;;
-		dnf)    sudo dnf install -y -q "$@" </dev/null >/dev/null 2>&1 ;;
+		dnf)    sudo dnf install -y -q "$@" </dev/null >$DN 2>&1 ;;
 		pacman)
 			if [ "$OS" = "windows" ]; then
 				sudo pacman -S --noconfirm --needed "$@" </dev/null 2>&1 \
 					| grep -v "Command line alias added" >&2 || true
 			else
-				sudo pacman -S --noconfirm --needed "$@" </dev/null >/dev/null 2>&1
+				sudo pacman -S --noconfirm --needed "$@" </dev/null >$DN 2>&1
 			fi
 			;;
-		zypper) sudo zypper install -y -q "$@" </dev/null >/dev/null 2>&1 ;;
-		apk)    sudo apk add -q "$@" </dev/null >/dev/null 2>&1 ;;
+		zypper) sudo zypper install -y -q "$@" </dev/null >$DN 2>&1 ;;
+		apk)    sudo apk add -q "$@" </dev/null >$DN 2>&1 ;;
 		brew)
 			# HOMEBREW_NO_AUTO_UPDATE is exported globally.
 			# sudo credentials are cached in the foreground before parallel phase.
 			# brew gets a longer timeout — it can compile from source on fresh Macs.
 			# Output goes to a temp log — piping breaks the pipe (SIGPIPE).
 			local _brew_log
-			_brew_log=$(mktemp 2>/dev/null || echo /tmp/pire-brew-$$.log)
+			_brew_log=$(mktemp 2>$DN || echo /tmp/pire-brew-$$.log)
 			if ! _run_with_timeout_impl "$BREW_INSTALL_TIMEOUT" brew install "$@" </dev/null >"$_brew_log" 2>&1; then
 				if ! _run_with_timeout_impl "$BREW_INSTALL_TIMEOUT" brew install --cask "$@" </dev/null >"$_brew_log" 2>&1; then
-					tail -3 "$_brew_log" 2>/dev/null >&2
+					if [ "$PIRE_DEBUG" = "1" ]; then cat "$_brew_log" >&2; else tail -3 "$_brew_log" 2>$DN >&2; fi
 				fi
 			fi
-			rm -f "$_brew_log" 2>/dev/null
+			rm -f "$_brew_log" 2>$DN
 			;;
 		*)      log_warn "Unknown package manager for: $*" ;;
 	esac
@@ -362,7 +376,7 @@ pkg_install() {
 		flock -u 9
 		exec 9>&-
 	elif [ "$PKG_LOCKHELD" = "2" ]; then
-		rmdir "$PKG_LOCKFILE" 2>/dev/null
+		rmdir "$PKG_LOCKFILE" 2>$DN
 	fi
 	return $PKG_RC
 }
@@ -384,9 +398,9 @@ run_with_timeout_dl() {
 }
 _run_with_timeout_impl() {
 	local _secs="$1"; shift
-	if command -v timeout >/dev/null 2>&1; then
+	if command -v timeout >$DN 2>&1; then
 		timeout -k 5 "$_secs" "$@"
-	elif command -v gtimeout >/dev/null 2>&1; then
+	elif command -v gtimeout >$DN 2>&1; then
 		gtimeout -k 5 "$_secs" "$@"
 	else
 		# Perl fallback — no GNU timeout available (fresh macOS without coreutils).
@@ -422,7 +436,7 @@ pip_install() {
 		/usr/bin/python3 \
 		python3 python
 	do
-		if command -v "$p" >/dev/null 2>&1 && "$p" -m pip --version >/dev/null 2>&1; then
+		if command -v "$p" >$DN 2>&1 && "$p" -m pip --version >$DN 2>&1; then
 			PIPRE_PY="$p"
 			break
 		fi
@@ -430,7 +444,7 @@ pip_install() {
 
 	if [ -z "$PIPRE_PY" ]; then
 		for p in /opt/homebrew/bin/python3 /usr/local/bin/python3 /usr/bin/python3 python3 python; do
-			if command -v "$p" >/dev/null 2>&1 && "$p" -m ensurepip --user </dev/null >/dev/null 2>&1; then
+			if command -v "$p" >$DN 2>&1 && "$p" -m ensurepip --user </dev/null >$DN 2>&1; then
 				PIPRE_PY="$p"
 				break
 			fi
@@ -448,7 +462,7 @@ pip_install() {
 	# --break-system-packages is a pip flag (not OS-specific).
 	# Only use it if this pip actually supports it (pip >= 23.0).
 	PIPRE_FLAGS="--user"
-	if "$PIPRE_PY" -m pip install --help 2>/dev/null | grep -q -- '--break-system-packages'; then
+	if "$PIPRE_PY" -m pip install --help 2>$DN | grep -q -- '--break-system-packages'; then
 		PIPRE_FLAGS="$PIPRE_FLAGS --break-system-packages"
 	fi
 
@@ -461,32 +475,32 @@ pip_install() {
 		run_with_timeout "$PIPRE_PY" -m pip install --user "$@" </dev/null >"$PIPRE_LOG" 2>&1
 		PIPRE_RC=$?
 		if [ $PIPRE_RC -eq 0 ]; then
-			grep -v "already satisfied" "$PIPRE_LOG" | tail -3
-			rm -f "$PIPRE_LOG" 2>/dev/null
+			if [ "$PIRE_DEBUG" = "1" ]; then cat "$PIPRE_LOG"; else grep -v "already satisfied" "$PIPRE_LOG" | tail -3; fi
+			rm -f "$PIPRE_LOG" 2>$DN
 			return 0
 		fi
-		tail -3 "$PIPRE_LOG"
-		rm -f "$PIPRE_LOG" 2>/dev/null
+		if [ "$PIRE_DEBUG" = "1" ]; then cat "$PIPRE_LOG"; else tail -3 "$PIPRE_LOG"; fi
+		rm -f "$PIPRE_LOG" 2>$DN
 		return 1
 	fi
 
 	run_with_timeout "$PIPRE_PY" -m pip install $PIPRE_FLAGS "$@" </dev/null >"$PIPRE_LOG" 2>&1
 	PIPRE_RC=$?
 	if [ $PIPRE_RC -eq 0 ]; then
-		grep -v "already satisfied" "$PIPRE_LOG" | tail -3
-		rm -f "$PIPRE_LOG" 2>/dev/null
+		if [ "$PIRE_DEBUG" = "1" ]; then cat "$PIPRE_LOG"; else grep -v "already satisfied" "$PIPRE_LOG" | tail -3; fi
+		rm -f "$PIPRE_LOG" 2>$DN
 		return 0
 	fi
 	# Fallback: try system-wide (without --user)
 	run_with_timeout "$PIPRE_PY" -m pip install --break-system-packages "$@" </dev/null >"$PIPRE_LOG" 2>&1
 	PIPRE_RC=$?
 	if [ $PIPRE_RC -eq 0 ]; then
-		grep -v "already satisfied" "$PIPRE_LOG" | tail -3
-		rm -f "$PIPRE_LOG" 2>/dev/null
+		if [ "$PIRE_DEBUG" = "1" ]; then cat "$PIPRE_LOG"; else grep -v "already satisfied" "$PIPRE_LOG" | tail -3; fi
+		rm -f "$PIPRE_LOG" 2>$DN
 		return 0
 	fi
-	tail -3 "$PIPRE_LOG" 2>/dev/null
-	rm -f "$PIPRE_LOG" 2>/dev/null
+	if [ "$PIRE_DEBUG" = "1" ]; then cat "$PIPRE_LOG" 2>&1; else tail -3 "$PIPRE_LOG" 2>$DN; fi
+	rm -f "$PIPRE_LOG" 2>$DN
 	return 1
 }
 
@@ -498,11 +512,11 @@ case "$OS" in
 		log_step "Updating package index..."
 		# Allow apt-get update to fail on broken third-party repos
 		# (e.g. Sonarr missing GPG keys) — we only need the core repos
-		sudo apt-get update -qq </dev/null 2>/dev/null
+		sudo apt-get update -qq </dev/null 2>$DN
 		log_step "Installing core packages..."
 		# Note: nodejs/npm installed separately from official binary below
 		pkg_install git build-essential radare2 binutils file python3-pip python3-venv
-		/usr/bin/python3 -m pip --version >/dev/null 2>&1 || /usr/bin/python3 -m ensurepip --user </dev/null >/dev/null 2>&1
+		/usr/bin/python3 -m pip --version >$DN 2>&1 || /usr/bin/python3 -m ensurepip --user </dev/null >$DN 2>&1
 		;;
 	fedora)
 		log_step "Installing core packages..."
@@ -523,24 +537,24 @@ case "$OS" in
 	macos)
 		if ! has brew; then
 			log_step "Installing Homebrew..."
-			/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" </dev/null >/dev/null 2>&1
+			/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" </dev/null >$DN 2>&1
 		fi
 		log_done "Homebrew ready"
 		# Install coreutils FIRST — provides gtimeout for reliable timeouts
 		# Without gtimeout, the Perl timeout wrapper may not kill brew's child processes
-		brew install coreutils </dev/null >/dev/null 2>&1 || true
+		brew install coreutils </dev/null >$DN 2>&1 || true
 		log_step "Installing core packages..."
 		pkg_install node radare2 binutils git
 		# Ensure Python is available (node formula may pull it in, but not always)
-		pkg_install python@3 2>/dev/null || true
+		pkg_install python@3 2>$DN || true
 		;;
 	wsl)
-		. /etc/os-release 2>/dev/null
+		. /etc/os-release 2>$DN
 		case "$ID" in
 			ubuntu|debian|linuxmint|pop)
 				OS="debian"; PKG_MGR="apt"
 				log_step "Updating package index..."
-				sudo apt-get update -qq </dev/null 2>/dev/null
+				sudo apt-get update -qq </dev/null 2>$DN
 				log_step "Installing core packages..."
 				pkg_install git build-essential radare2 binutils file
 				;;
@@ -552,7 +566,7 @@ case "$OS" in
 			*)
 				OS="debian"; PKG_MGR="apt"
 				log_step "Updating package index..."
-				sudo apt-get update -qq </dev/null 2>/dev/null
+				sudo apt-get update -qq </dev/null 2>$DN
 				log_step "Installing core packages..."
 				pkg_install git build-essential radare2 binutils file
 				;;
@@ -566,19 +580,19 @@ esac
 
 # Ensure Node.js 22+
 log_step "Checking Node.js version..."
-NODE_VER=$(node -v 2>/dev/null | sed 's/v//' | cut -d. -f1 || echo "0")
-if [ "$NODE_VER" -lt 22 ] 2>/dev/null; then
+NODE_VER=$(node -v 2>$DN | sed 's/v//' | cut -d. -f1 || echo "0")
+if [ "$NODE_VER" -lt 22 ] 2>$DN; then
 	log_warn "Node.js is v$NODE_VER, need v22+"
 	log_step "Installing Node.js 22..."
 
 	case "$OS" in
 		macos)
 			# macOS: use Homebrew
-			pkg_install node@22 2>/dev/null || brew link --overwrite node@22 </dev/null >/dev/null 2>&1
+			pkg_install node@22 2>$DN || brew link --overwrite node@22 </dev/null >$DN 2>&1
 			;;
 		windows)
 			# MSYS2/Windows: pacman has recent Node
-			pkg_install nodejs 2>/dev/null
+			pkg_install nodejs 2>$DN
 			;;
 		*)
 			# Linux: install from official binary tarball.
@@ -593,20 +607,20 @@ if [ "$NODE_VER" -lt 22 ] 2>/dev/null; then
 			esac
 
 			# Fetch the latest Node 22 version from the official API
-				NODE_LATEST=$(run_with_timeout_dl curl -fsSL "https://nodejs.org/dist/index.json" 2>/dev/null \
+				NODE_LATEST=$(run_with_timeout_dl curl -fsSL "https://nodejs.org/dist/index.json" 2>$DN \
 					| grep -o '"version":"v22[^"]*"' | head -1 | sed 's/"version":"//;s/"//')
 				[ -z "$NODE_LATEST" ] && NODE_LATEST="v22.11.0"
 
 				NODE_TARBALL="/tmp/node22-$$.tar.xz"
 				NODE_URL="https://nodejs.org/dist/$NODE_LATEST/node-$NODE_LATEST-linux-$NODE_ARCH.tar.xz"
 
-				if run_with_timeout_dl curl -fsSL "$NODE_URL" -o "$NODE_TARBALL" 2>/dev/null; then
+				if run_with_timeout_dl curl -fsSL "$NODE_URL" -o "$NODE_TARBALL" 2>$DN; then
 				if [ -w /usr/local ]; then
-					tar -xJf "$NODE_TARBALL" -C /usr/local --strip-components=1 2>/dev/null
+					tar -xJf "$NODE_TARBALL" -C /usr/local --strip-components=1 2>$DN
 				else
-					sudo tar -xJf "$NODE_TARBALL" -C /usr/local --strip-components=1 2>/dev/null
+					sudo tar -xJf "$NODE_TARBALL" -C /usr/local --strip-components=1 2>$DN
 				fi
-				rm -f "$NODE_TARBALL" 2>/dev/null
+				rm -f "$NODE_TARBALL" 2>$DN
 			else
 				log_warn "Direct download failed, trying nvm..."
 			fi
@@ -614,26 +628,26 @@ if [ "$NODE_VER" -lt 22 ] 2>/dev/null; then
 	esac
 
 	# Verify
-	NODE_VER_NEW=$(node -v 2>/dev/null | sed 's/v//' | cut -d. -f1 || echo "0")
-	if [ "$NODE_VER_NEW" -lt 22 ] 2>/dev/null; then
+	NODE_VER_NEW=$(node -v 2>$DN | sed 's/v//' | cut -d. -f1 || echo "0")
+	if [ "$NODE_VER_NEW" -lt 22 ] 2>$DN; then
 		log_warn "Binary install didn't take, trying nvm fallback..."
 		# nvm fallback — user-space install, no sudo needed
-		run_with_timeout_dl curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | sh >/dev/null 2>&1
+		run_with_timeout_dl curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | sh >$DN 2>&1
 		NVM_DIR="$HOME/.nvm"
 		[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
-		nvm install 22 >/dev/null 2>&1
-		nvm use 22 >/dev/null 2>&1
-		nvm alias default 22 >/dev/null 2>&1
+		nvm install 22 >$DN 2>&1
+		nvm use 22 >$DN 2>&1
+		nvm alias default 22 >$DN 2>&1
 		# Source nvm in shell profile so it persists
 		for PROFILE_FILE in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.profile"; do
 			[ -f "$PROFILE_FILE" ] || continue
-			grep -q 'NVM_DIR' "$PROFILE_FILE" 2>/dev/null && break
+			grep -q 'NVM_DIR' "$PROFILE_FILE" 2>$DN && break
 			printf '\n# nvm\nexport NVM_DIR="$HOME/.nvm"\n[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"\n' >> "$PROFILE_FILE"
 		done
-		NODE_VER_NEW=$(node -v 2>/dev/null | sed 's/v//' | cut -d. -f1 || echo "0")
+		NODE_VER_NEW=$(node -v 2>$DN | sed 's/v//' | cut -d. -f1 || echo "0")
 	fi
 
-	if [ "$NODE_VER_NEW" -ge 22 ] 2>/dev/null; then
+	if [ "$NODE_VER_NEW" -ge 22 ] 2>$DN; then
 		log_done "Node.js $(node -v)"
 	else
 		log_error "Failed to install Node.js 22+ (still v$NODE_VER_NEW)"
@@ -652,7 +666,7 @@ case "$OS" in
 esac
 if [ "$NEEDS_SUDO" = "1" ]; then
 	log_step "Caching sudo credentials for parallel installs..."
-	sudo -v 2>/dev/null && log_done "sudo ready" || log_warn "sudo not cached — may prompt during install"
+	sudo -v 2>$DN && log_done "sudo ready" || log_warn "sudo not cached — may prompt during install"
 fi
 
 # ── Parallel Install Phase ────────────────────────────────────
@@ -707,14 +721,14 @@ install_wine() {
 		fedora)  pkg_install wine ;;
 		arch)    pkg_install wine ;;
 		suse)    pkg_install wine ;;
-		macos)   pkg_install wine-stable 2>/dev/null || true ;;
+		macos)   pkg_install wine-stable 2>$DN || true ;;
 		windows) true ;;  # not needed
 	esac
 	# Init wine prefix
 	if [ "$OS" != "windows" ]; then
 		WINEPREFIX="${WINEPREFIX:-$HOME/.wine}"
 		if [ ! -d "$WINEPREFIX" ] && has wine; then
-			run_with_timeout env WINEPREFIX="$WINEPREFIX" wineboot --init >/dev/null 2>&1 || true
+			run_with_timeout env WINEPREFIX="$WINEPREFIX" wineboot --init >$DN 2>&1 || true
 		fi
 	fi
 	if has wine || has wine64 || [ "$OS" = "windows" ]; then
@@ -731,7 +745,7 @@ install_mingw() {
 		fedora)  pkg_install mingw64-gcc ;;
 		arch)    pkg_install mingw-w64-gcc ;;
 		suse)    pkg_install mingw64-gcc ;;
-		macos)   pkg_install mingw-w64 2>/dev/null ;;
+		macos)   pkg_install mingw-w64 2>$DN ;;
 		windows) pkg_install mingw-w64-x86_64-gcc ;;
 	esac
 	if has x86_64-w64-mingw32-gcc || has gcc; then
@@ -758,11 +772,11 @@ install_binwalk() {
 	echo "$ST_RUNNING" > "$TMPDIR_PIRE/binwalk.status"
 	case "$OS" in
 		debian|fedora|arch|suse) pkg_install binwalk ;;
-		macos) pkg_install binwalk 2>/dev/null ;;
+		macos) pkg_install binwalk 2>$DN ;;
 		windows)
-			if command -v python3 >/dev/null 2>&1; then
+			if command -v python3 >$DN 2>&1; then
 				python3 -m pip install --user binwalk </dev/null 2>&1 | tail -3
-			elif command -v python >/dev/null 2>&1; then
+			elif command -v python >$DN 2>&1; then
 				python -m pip install --user binwalk </dev/null 2>&1 | tail -3
 			fi
 			;;
@@ -779,10 +793,10 @@ install_frida() {
 	echo "$ST_RUNNING" > "$TMPDIR_PIRE/frida.status"
 	pip_install frida-tools
 	case "$OS" in
-		debian) pkg_install python3-frida 2>/dev/null ;;
-		arch)   pkg_install frida-tools 2>/dev/null ;;
+		debian) pkg_install python3-frida 2>$DN ;;
+		arch)   pkg_install frida-tools 2>$DN ;;
 	esac
-	if has frida || has frida-ps || "${PIRE_PYTHON:-python3}" -c "import frida" 2>/dev/null; then
+	if has frida || has frida-ps || "${PIRE_PYTHON:-python3}" -c "import frida" 2>$DN; then
 		echo "$ST_DONE" > "$TMPDIR_PIRE/frida.status"
 	else
 		echo "$ST_FAILED" > "$TMPDIR_PIRE/frida.status"
@@ -793,18 +807,18 @@ install_jadx() {
 	echo "$ST_RUNNING" > "$TMPDIR_PIRE/jadx.status"
 	case "$OS" in
 		debian|fedora|arch|suse)
-			pkg_install default-jre 2>/dev/null || true
-			if ! has jadx 2>/dev/null; then
+			pkg_install default-jre 2>$DN || true
+			if ! has jadx 2>$DN; then
 				JADX_VER="1.5.0"
-				run_with_timeout_dl curl -fsSL "https://github.com/skylot/jadx/releases/download/v${JADX_VER}/jadx-${JADX_VER}.zip" -o /tmp/jadx.zip 2>/dev/null
-				sudo mkdir -p /opt/jadx && sudo unzip -q -o /tmp/jadx.zip -d /opt/jadx </dev/null 2>/dev/null
-				sudo ln -sf /opt/jadx/bin/jadx /usr/local/bin/jadx 2>/dev/null
-				sudo ln -sf /opt/jadx/bin/jadx-gui /usr/local/bin/jadx-gui 2>/dev/null
+				run_with_timeout_dl curl -fsSL "https://github.com/skylot/jadx/releases/download/v${JADX_VER}/jadx-${JADX_VER}.zip" -o /tmp/jadx.zip 2>$DN
+				sudo mkdir -p /opt/jadx && sudo unzip -q -o /tmp/jadx.zip -d /opt/jadx </dev/null 2>$DN
+				sudo ln -sf /opt/jadx/bin/jadx /usr/local/bin/jadx 2>$DN
+				sudo ln -sf /opt/jadx/bin/jadx-gui /usr/local/bin/jadx-gui 2>$DN
 				rm -f /tmp/jadx.zip
 			fi
 			;;
 		macos)
-			pkg_install jadx 2>/dev/null
+			pkg_install jadx 2>$DN
 			;;
 	esac
 	if has jadx; then
@@ -818,23 +832,23 @@ install_ilspy() {
 	echo "$ST_RUNNING" > "$TMPDIR_PIRE/ilspy.status"
 	case "$OS" in
 		debian|fedora|arch|suse)
-			pkg_install dotnet-sdk-8.0 2>/dev/null || pkg_install dotnet-sdk 2>/dev/null || true
-			if has dotnet 2>/dev/null; then
-				run_with_timeout dotnet tool install -g ilspycmd </dev/null 2>/dev/null
+			pkg_install dotnet-sdk-8.0 2>$DN || pkg_install dotnet-sdk 2>$DN || true
+			if has dotnet 2>$DN; then
+				run_with_timeout dotnet tool install -g ilspycmd </dev/null 2>$DN
 			fi
 			# Fallback: mono-utils provides monodis
-			if ! has ilspycmd 2>/dev/null && ! has monodis 2>/dev/null; then
-				pkg_install mono-devel 2>/dev/null || true
+			if ! has ilspycmd 2>$DN && ! has monodis 2>$DN; then
+				pkg_install mono-devel 2>$DN || true
 			fi
 			;;
 		macos)
-			pkg_install dotnet-sdk 2>/dev/null || true
-			if has dotnet 2>/dev/null; then
-				run_with_timeout dotnet tool install -g ilspycmd </dev/null 2>/dev/null
+			pkg_install dotnet-sdk 2>$DN || true
+			if has dotnet 2>$DN; then
+				run_with_timeout dotnet tool install -g ilspycmd </dev/null 2>$DN
 			fi
 			;;
 	esac
-	if has ilspycmd 2>/dev/null || has monodis 2>/dev/null || has dotnet 2>/dev/null; then
+	if has ilspycmd 2>$DN || has monodis 2>$DN || has dotnet 2>$DN; then
 		echo "$ST_DONE" > "$TMPDIR_PIRE/ilspy.status"
 	else
 		echo "$ST_FAILED" > "$TMPDIR_PIRE/ilspy.status"
@@ -845,58 +859,58 @@ install_ghidra() {
 	echo "$ST_RUNNING" > "$TMPDIR_PIRE/ghidra.status"
 	case "$OS" in
 		debian|fedora|arch|suse|wsl)
-			pkg_install default-jdk 2>/dev/null || true
-			if has java 2>/dev/null; then
+			pkg_install default-jdk 2>$DN || true
+			if has java 2>$DN; then
 				GHIDRA_VER="11.1.2"
 				GHIDRA_DATE="20240709"
-				run_with_timeout_dl curl -fsSL "https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_${GHIDRA_VER}_build/ghidra_${GHIDRA_VER}_PUBLIC_${GHIDRA_DATE}.zip" -o /tmp/ghidra.zip 2>/dev/null
+				run_with_timeout_dl curl -fsSL "https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_${GHIDRA_VER}_build/ghidra_${GHIDRA_VER}_PUBLIC_${GHIDRA_DATE}.zip" -o /tmp/ghidra.zip 2>$DN
 				if [ -f /tmp/ghidra.zip ] && [ -s /tmp/ghidra.zip ]; then
-					sudo unzip -q -o /tmp/ghidra.zip -d /opt/ </dev/null 2>/dev/null
-					sudo ln -sf /opt/ghidra_${GHIDRA_VER}_PUBLIC/ghidraRun /usr/local/bin/ghidra 2>/dev/null
+					sudo unzip -q -o /tmp/ghidra.zip -d /opt/ </dev/null 2>$DN
+					sudo ln -sf /opt/ghidra_${GHIDRA_VER}_PUBLIC/ghidraRun /usr/local/bin/ghidra 2>$DN
 					rm -f /tmp/ghidra.zip
 				fi
 			fi
 			;;
 		macos)
 			# Install JDK first (Ghidra requires Java 17+)
-			pkg_install temurin 2>/dev/null || pkg_install openjdk 2>/dev/null || true
+			pkg_install temurin 2>$DN || pkg_install openjdk 2>$DN || true
 			GHIDRA_VER="11.1.2"
 			GHIDRA_DATE="20240709"
 			GHIDRA_URL="https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_${GHIDRA_VER}_build/ghidra_${GHIDRA_VER}_PUBLIC_${GHIDRA_DATE}.zip"
 			GHIDRA_DIR="$HOME/.local/share/ghidra"
-			run_with_timeout_dl curl -fsSL "$GHIDRA_URL" -o /tmp/ghidra.zip 2>/dev/null
+			run_with_timeout_dl curl -fsSL "$GHIDRA_URL" -o /tmp/ghidra.zip 2>$DN
 			if [ -f /tmp/ghidra.zip ] && [ -s /tmp/ghidra.zip ]; then
-				mkdir -p "$GHIDRA_DIR" 2>/dev/null
-				unzip -q -o /tmp/ghidra.zip -d "$GHIDRA_DIR" 2>/dev/null
-				GHIDRA_BIN=$(find "$GHIDRA_DIR" -name ghidraRun -type f 2>/dev/null | head -1)
+				mkdir -p "$GHIDRA_DIR" 2>$DN
+				unzip -q -o /tmp/ghidra.zip -d "$GHIDRA_DIR" 2>$DN
+				GHIDRA_BIN=$(find "$GHIDRA_DIR" -name ghidraRun -type f 2>$DN | head -1)
 				if [ -n "$GHIDRA_BIN" ]; then
-					mkdir -p "$HOME/.local/bin" 2>/dev/null
-					ln -sf "$GHIDRA_BIN" "$HOME/.local/bin/ghidra" 2>/dev/null
+					mkdir -p "$HOME/.local/bin" 2>$DN
+					ln -sf "$GHIDRA_BIN" "$HOME/.local/bin/ghidra" 2>$DN
 				fi
 				rm -f /tmp/ghidra.zip
 			fi
 			;;
 	esac
-	if has ghidra 2>/dev/null || has ghidraRun 2>/dev/null; then
+	if has ghidra 2>$DN || has ghidraRun 2>$DN; then
 		# Install GhidraMCP extension JAR + bridge script
-		GHIDRA_DIR=$(dirname "$(readlink -f "$(which ghidra 2>/dev/null || which ghidraRun 2>/dev/null)" 2>/dev/null)" 2>/dev/null)
+		GHIDRA_DIR=$(dirname "$(readlink -f "$(which ghidra 2>$DN || which ghidraRun 2>$DN)" 2>$DN)" 2>$DN)
 		if [ -z "$GHIDRA_DIR" ]; then
-			GHIDRA_DIR=$(ls -d /opt/ghidra_* 2>/dev/null | head -1)
+			GHIDRA_DIR=$(ls -d /opt/ghidra_* 2>$DN | head -1)
 		fi
 		if [ -n "$GHIDRA_DIR" ]; then
 			GHIDRA_VERSION=$(basename "$GHIDRA_DIR" | sed 's/ghidra_//;s/_PUBLIC//')
 			GHIDRA_EXT_DIR="$HOME/.config/ghidra_${GHIDRA_VERSION}_PUBLIC/Extensions/GhidraMCP"
-			MCP_RELEASE=$(run_with_timeout_dl curl -sL "https://api.github.com/repos/bethington/ghidra-mcp/releases/latest" 2>/dev/null | grep -oP '"tag_name":\s*"v\K[^"]+' | head -1)
+			MCP_RELEASE=$(run_with_timeout_dl curl -sL "https://api.github.com/repos/bethington/ghidra-mcp/releases/latest" 2>$DN | grep -oP '"tag_name":\s*"v\K[^"]+' | head -1)
 			if [ -n "$MCP_RELEASE" ]; then
 				mkdir -p /tmp/ghidra-mcp-install
-				run_with_timeout_dl curl -sL "https://github.com/bethington/ghidra-mcp/releases/download/v${MCP_RELEASE}/GhidraMCP-${MCP_RELEASE}.zip" -o /tmp/ghidra-mcp-install/GhidraMCP.zip 2>/dev/null
+				run_with_timeout_dl curl -sL "https://github.com/bethington/ghidra-mcp/releases/download/v${MCP_RELEASE}/GhidraMCP-${MCP_RELEASE}.zip" -o /tmp/ghidra-mcp-install/GhidraMCP.zip 2>$DN
 				if [ -f /tmp/ghidra-mcp-install/GhidraMCP.zip ] && [ -s /tmp/ghidra-mcp-install/GhidraMCP.zip ]; then
 					mkdir -p "$GHIDRA_EXT_DIR"
-					unzip -q -o /tmp/ghidra-mcp-install/GhidraMCP.zip -d "$GHIDRA_EXT_DIR" 2>/dev/null
+					unzip -q -o /tmp/ghidra-mcp-install/GhidraMCP.zip -d "$GHIDRA_EXT_DIR" 2>$DN
 				fi
 				# Install bridge script to /opt/ghidra-mcp
-				sudo mkdir -p /opt/ghidra-mcp 2>/dev/null
-				run_with_timeout_dl curl -sL "https://github.com/bethington/ghidra-mcp/releases/download/v${MCP_RELEASE}/bridge_mcp_ghidra.py" -o /opt/ghidra-mcp/bridge_mcp_ghidra.py 2>/dev/null || true
+				sudo mkdir -p /opt/ghidra-mcp 2>$DN
+				run_with_timeout_dl curl -sL "https://github.com/bethington/ghidra-mcp/releases/download/v${MCP_RELEASE}/bridge_mcp_ghidra.py" -o /opt/ghidra-mcp/bridge_mcp_ghidra.py 2>$DN || true
 				rm -rf /tmp/ghidra-mcp-install
 			fi
 		fi
@@ -910,12 +924,12 @@ install_yara() {
 	echo "$ST_RUNNING" > "$TMPDIR_PIRE/yara.status"
 	case "$OS" in
 		debian|fedora|arch|suse) pkg_install yara ;;
-		macos) pkg_install yara 2>/dev/null ;;
+		macos) pkg_install yara 2>$DN ;;
 		*) pip_install yara-python ;;
 	esac
 	# Always install yara-python — pire uses the Python module, not the CLI
-	pip_install yara-python 2>/dev/null
-	if has yara || python3 -c "import yara" 2>/dev/null; then
+	pip_install yara-python 2>$DN
+	if has yara || python3 -c "import yara" 2>$DN; then
 		echo "$ST_DONE" > "$TMPDIR_PIRE/yara.status"
 	else
 		echo "$ST_FAILED" > "$TMPDIR_PIRE/yara.status"
@@ -925,7 +939,7 @@ install_yara() {
 install_volatility() {
 	echo "$ST_RUNNING" > "$TMPDIR_PIRE/volatility.status"
 	pip_install volatility3
-	if command -v vol 2>/dev/null || command -v vol3 2>/dev/null || "${PIRE_PYTHON:-python3}" -c "import volatility3" 2>/dev/null; then
+	if command -v vol 2>$DN || command -v vol3 2>$DN || "${PIRE_PYTHON:-python3}" -c "import volatility3" 2>$DN; then
 		echo "$ST_DONE" > "$TMPDIR_PIRE/volatility.status"
 	else
 		echo "$ST_FAILED" > "$TMPDIR_PIRE/volatility.status"
@@ -936,35 +950,35 @@ install_python_tools() {
 	echo "$ST_RUNNING" > "$TMPDIR_PIRE/python_tools.status"
 	case "$OS" in
 		debian)
-			pkg_install python3-pip python3-venv 2>/dev/null
-			pkg_install python3-capstone python3-lief 2>/dev/null
+			pkg_install python3-pip python3-venv 2>$DN
+			pkg_install python3-capstone python3-lief 2>$DN
 			;;
-		fedora) pkg_install python3-pip python3-capstone python3-lief 2>/dev/null ;;
-		arch)   pkg_install python-pip python-capstone python-lief 2>/dev/null ;;
+		fedora) pkg_install python3-pip python3-capstone python3-lief 2>$DN ;;
+		arch)   pkg_install python-pip python-capstone python-lief 2>$DN ;;
 	esac
 	# Install packages individually — angr is slow to compile and
 	# shouldn't block capstone/keystone/unicorn/lief.
 	# Use --only-binary when available to avoid source compilation.
 	for pkg in capstone unicorn lief; do
-		pip_install "$pkg" 2>/dev/null || true
+		pip_install "$pkg" 2>$DN || true
 	done
 	# keystone-engine has no arm64 wheel on PyPI — use our pre-built one
 	if [ "$OS" = "macos" ] && [ "$(uname -m)" = "arm64" ]; then
 		KS_WHEEL="/tmp/keystone_engine-arm64.whl"
-		run_with_timeout_dl curl -fsSL "https://raw.githubusercontent.com/evangit2/pire/main/wheels/macos-arm64/keystone_engine-0.9.2-py2.py3-none-macosx_14_0_arm64.whl" -o "$KS_WHEEL" 2>/dev/null
+		run_with_timeout_dl curl -fsSL "https://raw.githubusercontent.com/evangit2/pire/main/wheels/macos-arm64/keystone_engine-0.9.2-py2.py3-none-macosx_14_0_arm64.whl" -o "$KS_WHEEL" 2>$DN
 		if [ -f "$KS_WHEEL" ]; then
-			pip_install "$KS_WHEEL" 2>/dev/null || pip_install keystone-engine 2>/dev/null || true
+			pip_install "$KS_WHEEL" 2>$DN || pip_install keystone-engine 2>$DN || true
 		else
-			pip_install keystone-engine 2>/dev/null || true
+			pip_install keystone-engine 2>$DN || true
 		fi
 	else
-		pip_install keystone-engine 2>/dev/null || true
+		pip_install keystone-engine 2>$DN || true
 	fi
 	# angr is heavy — try binary wheel first, fall back to source
-	pip_install "angr" 2>/dev/null || true
+	pip_install "angr" 2>$DN || true
 	# Verify using the same Python that pip_install selected
 	VERIFY_PY="${PIRE_PYTHON:-python3}"
-	if "$VERIFY_PY" -c "import capstone" 2>/dev/null; then
+	if "$VERIFY_PY" -c "import capstone" 2>$DN; then
 		echo "$ST_DONE" > "$TMPDIR_PIRE/python_tools.status"
 	else
 		echo "$ST_FAILED" > "$TMPDIR_PIRE/python_tools.status"
@@ -979,7 +993,12 @@ if [ -n "$COMPONENTS" ]; then
 
 	# Launch each component in background
 	for comp in $COMPONENTS; do
-		eval "install_${comp}" </dev/null >"$TMPDIR_PIRE/$comp.log" 2>&1 &
+		if [ "$PIRE_DEBUG" = "1" ]; then
+			# In debug mode, show output inline with component prefix
+			( echo "=== $comp ==="; eval "install_${comp}" ) </dev/null 2>&1 | sed "s/^/[$comp] /" &
+		else
+			eval "install_${comp}" </dev/null >"$TMPDIR_PIRE/$comp.log" 2>&1 &
+		fi
 	done
 
 	# ── Live spinner dashboard ───────────────────────────────
@@ -991,13 +1010,18 @@ if [ -n "$COMPONENTS" ]; then
 	# Count components
 	N_COMPS=$(echo $COMPONENTS | wc -w | tr -d ' ')
 
-	# Print initial lines (one per component) so we can overwrite them
-	i=0
-	while [ $i -lt $N_COMPS ]; do
-		i=$((i + 1))
-		label=$(get_label $i)
-		printf '  %s %s\n' " " "$label"
-	done
+	# In debug mode, skip the spinner and just wait for completion
+	if [ "$PIRE_DEBUG" = "1" ]; then
+		wait
+		echo ""
+	else
+		# Print initial lines (one per component) so we can overwrite them
+		i=0
+		while [ $i -lt $N_COMPS ]; do
+			i=$((i + 1))
+			label=$(get_label $i)
+			printf '  %s %s\n' " " "$label"
+		done
 
 	# Move cursor up to first line
 	printf '\033[%dA' "$N_COMPS"
@@ -1011,7 +1035,7 @@ if [ -n "$COMPONENTS" ]; then
 		if [ $((SECONDS - LOOP_START)) -gt $MAX_INSTALL_SECS ]; then
 			log_warn "Global timeout reached ($MAX_INSTALL_SECS s) — killing stalled installs"
 			for comp in $COMPONENTS; do
-				status=$(cat "$TMPDIR_PIRE/$comp.status" 2>/dev/null || echo "")
+				status=$(cat "$TMPDIR_PIRE/$comp.status" 2>$DN || echo "")
 				if [ "$status" = "$ST_RUNNING" ] || [ "$status" = "$ST_PENDING" ]; then
 					echo "$ST_FAILED" > "$TMPDIR_PIRE/$comp.status"
 				fi
@@ -1028,7 +1052,7 @@ if [ -n "$COMPONENTS" ]; then
 		for comp in $COMPONENTS; do
 			idx=$((idx + 1))
 			label=$(get_label $idx)
-			status=$(cat "$TMPDIR_PIRE/$comp.status" 2>/dev/null || echo "$ST_PENDING")
+			status=$(cat "$TMPDIR_PIRE/$comp.status" 2>$DN || echo "$ST_PENDING")
 
 			case "$status" in
 				$ST_PENDING)
@@ -1069,17 +1093,18 @@ if [ -n "$COMPONENTS" ]; then
 		printf '\033[%dA' "$N_COMPS"
 
 		if [ $ALL_DONE -eq 0 ]; then
-			sleep 0.3 2>/dev/null || sleep 1
+			sleep 0.3 2>$DN || sleep 1
 		fi
 	done
 
 	# Move cursor down past all lines
 	printf '\n\033[%dB' "$((N_COMPS - 1))"
+	fi  # end of non-debug spinner branch
 
 	echo ""
 	echo "  Results:"
 	for comp in $COMPONENTS; do
-		status=$(cat "$TMPDIR_PIRE/$comp.status" 2>/dev/null || echo "$ST_FAILED")
+		status=$(cat "$TMPDIR_PIRE/$comp.status" 2>$DN || echo "$ST_FAILED")
 		label=$(printf '%-20s' "$comp")
 		case "$status" in
 			$ST_DONE)   log_done "$comp" ;;
@@ -1090,7 +1115,7 @@ if [ -n "$COMPONENTS" ]; then
 	# Clean up temp files (keep logs if failures)
 	HAD_FAILURE=0
 	for comp in $COMPONENTS; do
-		status=$(cat "$TMPDIR_PIRE/$comp.status" 2>/dev/null || echo "")
+		status=$(cat "$TMPDIR_PIRE/$comp.status" 2>$DN || echo "")
 		if [ "$status" = "$ST_FAILED" ]; then
 			HAD_FAILURE=1
 		fi
@@ -1118,15 +1143,15 @@ has file    && log_done "file"                         || log_warn "file not ins
 [ "$INSTALL_MINGW" = "1" ]  && { has x86_64-w64-mingw32-gcc                     && log_done "MinGW-w64"                  || log_error "MinGW-w64 not installed"; }
 [ "$INSTALL_GDB" = "1" ]    && { has gdb                                        && log_done "gdb"                        || log_error "gdb not installed"; }
 [ "$INSTALL_BINWALK" = "1" ] && { has binwalk                                   && log_done "binwalk"                    || log_error "binwalk not installed"; }
-[ "$INSTALL_FRIDA" = "1" ]  && { (has frida || has frida-ps || "${PIRE_PYTHON:-python3}" -c "import frida" 2>/dev/null) && log_done "frida" || log_error "frida not installed"; }
+[ "$INSTALL_FRIDA" = "1" ]  && { (has frida || has frida-ps || "${PIRE_PYTHON:-python3}" -c "import frida" 2>$DN) && log_done "frida" || log_error "frida not installed"; }
 [ "$INSTALL_JADX" = "1" ]   && { (has jadx || has jadx-cli)                     && log_done "jadx"                       || log_error "jadx not installed"; }
-[ "$INSTALL_YARA" = "1" ]   && { (has yara || "${PIRE_PYTHON:-python3}" -c "import yara" 2>/dev/null) && log_done "yara" || log_error "yara not installed"; }
+[ "$INSTALL_YARA" = "1" ]   && { (has yara || "${PIRE_PYTHON:-python3}" -c "import yara" 2>$DN) && log_done "yara" || log_error "yara not installed"; }
 [ "$INSTALL_GHIDRA" = "1" ] && { (has ghidra || has ghidraRun)                  && log_done "ghidra"                     || log_error "ghidra not installed"; }
 [ "$INSTALL_ILSPY" = "1" ]  && { (has ilspycmd || has monodis)                  && log_done "ilspy"                      || log_error "ilspy not installed"; }
-[ "$INSTALL_VOLATILITY" = "1" ] && { (has vol || "${PIRE_PYTHON:-python3}" -c "import volatility3" 2>/dev/null) && log_done "volatility" || log_error "volatility not installed"; }
+[ "$INSTALL_VOLATILITY" = "1" ] && { (has vol || "${PIRE_PYTHON:-python3}" -c "import volatility3" 2>$DN) && log_done "volatility" || log_error "volatility not installed"; }
 [ "$INSTALL_PYTHON_TOOLS" = "1" ] && {
-	"${PIRE_PYTHON:-python3}" -c "import capstone" 2>/dev/null && log_done "capstone" || log_error "capstone not installed"
-	"${PIRE_PYTHON:-python3}" -c "import lief" 2>/dev/null     && log_done "lief"     || log_error "lief not installed"
+	"${PIRE_PYTHON:-python3}" -c "import capstone" 2>$DN && log_done "capstone" || log_error "capstone not installed"
+	"${PIRE_PYTHON:-python3}" -c "import lief" 2>$DN     && log_done "lief"     || log_error "lief not installed"
 }
 
 # ── Install npm dependencies & link CLI ────────────────────────
@@ -1142,10 +1167,10 @@ if [ -z "$SCRIPT_DIR" ] || [ ! -f "$SCRIPT_DIR/package.json" ]; then
 	PIRE_INSTALL_DIR="$HOME/.pire"
 	if [ -d "$PIRE_INSTALL_DIR/.git" ]; then
 		log_step "Updating pire repo..."
-		git -C "$PIRE_INSTALL_DIR" pull --ff-only -q 2>/dev/null
+		git -C "$PIRE_INSTALL_DIR" pull --ff-only -q 2>$DN
 	else
 		log_step "Cloning pire repo..."
-		git clone -q https://github.com/evangit2/pire.git "$PIRE_INSTALL_DIR" 2>/dev/null
+		git clone -q https://github.com/evangit2/pire.git "$PIRE_INSTALL_DIR" 2>$DN
 	fi
 	SCRIPT_DIR="$PIRE_INSTALL_DIR"
 fi
@@ -1154,12 +1179,12 @@ if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/package.json" ]; then
 	log_section "Node.js Dependencies"
 	log_step "Installing npm dependencies..."
 	cd "$SCRIPT_DIR"
-	npm install --ignore-scripts </dev/null >/dev/null 2>&1 || npm install </dev/null >/dev/null 2>&1 || log_warn "npm install had issues"
+	npm install --ignore-scripts </dev/null >$DN 2>&1 || npm install </dev/null >$DN 2>&1 || log_warn "npm install had issues"
 	log_done "npm dependencies installed"
 
 	# Build pi-tui (dist/ is gitignored, must be built locally)
 	log_step "Building TUI framework..."
-	( cd "$SCRIPT_DIR/packages/tui" && npx tsc -p tsconfig.build.json >/dev/null 2>&1 || npx tsgo -p tsconfig.build.json >/dev/null 2>&1 || log_warn "TUI build had issues" )
+	( cd "$SCRIPT_DIR/packages/tui" && npx tsc -p tsconfig.build.json >$DN 2>&1 || npx tsgo -p tsconfig.build.json >$DN 2>&1 || log_warn "TUI build had issues" )
 	if [ -f "$SCRIPT_DIR/packages/tui/dist/index.js" ]; then
 		log_done "TUI framework built"
 	else
@@ -1173,15 +1198,15 @@ if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/package.json" ]; then
 		# Prefer local tsx from node_modules, fall back to global tsx, then npx
 		if [ -x "$SCRIPT_DIR/node_modules/.bin/tsx" ]; then
 			TSX_BIN="$SCRIPT_DIR/node_modules/.bin/tsx"
-		elif has tsx 2>/dev/null; then
+		elif has tsx 2>$DN; then
 			TSX_BIN="tsx"
 		else
 			# Install tsx globally as last resort
 			log_step "Installing tsx..."
 			if [ -w /usr/local/bin ]; then
-				npm install -g tsx </dev/null >/dev/null 2>&1
+				npm install -g tsx </dev/null >$DN 2>&1
 			else
-				sudo npm install -g tsx </dev/null >/dev/null 2>&1
+				sudo npm install -g tsx </dev/null >$DN 2>&1
 			fi
 			TSX_BIN="tsx"
 		fi
@@ -1192,10 +1217,10 @@ if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/package.json" ]; then
 			# Write to temp file then sudo mv — avoids fragile quote escaping in sudo sh -c
 			_TMP_WRAPPER=$(mktemp)
 			printf '#!/bin/sh\nexec %s "%s/packages/re-agent/src/cli.ts" "$@"\n' "$TSX_BIN" "$SCRIPT_DIR" > "$_TMP_WRAPPER"
-			sudo install -m 755 "$_TMP_WRAPPER" "$PIRE_WRAPPER" 2>/dev/null
+			sudo install -m 755 "$_TMP_WRAPPER" "$PIRE_WRAPPER" 2>$DN
 			rm -f "$_TMP_WRAPPER"
 		fi
-		if has pire 2>/dev/null; then
+		if has pire 2>$DN; then
 			log_done "pire command available"
 		else
 			log_warn "Could not create /usr/local/bin/pire"
@@ -1221,7 +1246,7 @@ for _dir in "$HOME/.local/bin" "$HOME/.dotnet/tools"; do
 	[ -d "$_dir" ] || continue
 	for _profile in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.profile"; do
 		[ -f "$_profile" ] || continue
-		if ! grep -q "$_dir" "$_profile" 2>/dev/null; then
+		if ! grep -q "$_dir" "$_profile" 2>$DN; then
 			printf '\n# Added by pire installer\nexport PATH="%s:$PATH"\n' "$_dir" >> "$_profile"
 			NEEDS_PROFILE_UPDATE=1
 		fi
