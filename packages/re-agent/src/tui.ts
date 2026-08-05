@@ -45,7 +45,7 @@ import { type ChatMessage, callLLM, loadLLMConfig, toolToFunction } from "./llm.
 import { loadSettings } from "./pire-config.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const VERSION = "0.89.1";
+const VERSION = "0.89.2";
 
 // ─── Context Window Management ─────────────────────────────────
 // Aggressive multi-stage compression: truncate → stub → drop.
@@ -794,9 +794,18 @@ export class PireCLI {
 			this.processQueue();
 		});
 		this.rl.on("close", () => {
-			// When stdin is piped (not a TTY), exit after processing completes.
+			// When stdin is piped (not a TTY), wait for processing to complete then exit.
 			if (!process.stdin.isTTY) {
-				process.exit(0);
+				if (!this.processing) {
+					process.exit(0);
+				}
+				// Poll until processing finishes
+				const check = setInterval(() => {
+					if (!this.processing) {
+						clearInterval(check);
+						process.exit(0);
+					}
+				}, 500);
 			}
 		});
 

@@ -395,21 +395,22 @@ const objdumpTool: AgentTool<{
 
 const readelfTool: AgentTool<{ path: string; info?: string }> = {
 	name: "readelf",
-	description: "readelf: ELF headers, sections, symbols.",
+	description: "readelf: ELF headers, sections, symbols, segments. Use info=headers (-h), sections (-S), symbols (-s), segments (-l), dynamic (-d), notes (-n). Default: headers. Avoid 'all' — it produces massive output.",
 	parameters: Type.Object({
 		path: Type.String(),
-		info: Type.Optional(Type.String({ default: "all" })),
+		info: Type.Optional(Type.String({ default: "headers" })),
 	}),
 	async execute(_id, params) {
 		const flagMap: Record<string, string> = {
 			headers: "-h",
 			sections: "-S",
 			symbols: "-s",
+			segments: "-l",
 			dynamic: "-d",
 			notes: "-n",
 			all: "-a",
 		};
-		const flag = flagMap[params.info ?? "all"] ?? "-a";
+		const flag = flagMap[params.info ?? "headers"] ?? "-h";
 		return textResult(run(`readelf ${flag} ${shellEscape(params.path)}`));
 	},
 };
@@ -1248,7 +1249,7 @@ else:
     print(f"file entropy: {e:.4f} bits/byte (max=8.0)")
     print(f"file size: {n} bytes")
     if e > 7.5: print("WARNING: very high entropy — likely compressed or encrypted")
-    elif e > 6.0: print("NOTE: high entropy — possibly packed")
+    elif e > 6.5: print("NOTE: elevated entropy — may be packed or contain compressed sections")
     elif e < 3.0: print("NOTE: low entropy — mostly text/structured data")
 `;
 		try {
@@ -1556,7 +1557,9 @@ while True:
     ctx_start = max(0, idx - 8)
     ctx_end = min(len(data), idx + len(pattern) + 8)
     ctx = data[ctx_start:ctx_end]
-    matches.append(f"0x{idx:x}: {ctx.hex(' ')}")
+    # Show both hex and ASCII representation for readability
+    ascii_repr = ''.join(chr(b) if 32 <= b < 127 else '.' for b in ctx)
+    matches.append(f"0x{idx:x}: {ctx.hex(' ')}  |{ascii_repr}|")
     start = idx + 1
     if len(matches) >= 100: break
 if matches:
