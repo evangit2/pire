@@ -31,7 +31,7 @@ import {
 	wrapTextWithAnsi,
 	type Component,
 } from "@earendil-works/pi-tui";
-import { RE_TOOLS, RE_SYSTEM_PROMPT, probeTools } from "./index.js";
+import { RE_TOOLS, RE_SYSTEM_PROMPT, probeTools, setGhidraTarget } from "./index.js";
 import { callLLM, toolToFunction, loadLLMConfig, type ChatMessage, type ToolCall, type LLMConfig } from "./llm.js";
 import { readFileSync, writeFileSync, existsSync, readdirSync } from "node:fs";
 import { join, dirname, basename } from "node:path";
@@ -470,6 +470,7 @@ export class PirePiTUI {
 						this.transcript.add("error", `File not found: ${arg}`);
 					} else {
 						this.loadedTarget = arg;
+						setGhidraTarget(arg);
 						this.statusBar.setTarget(basename(arg));
 						this.transcript.add("system", `Loaded: ${arg}`);
 					}

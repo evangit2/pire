@@ -12,7 +12,7 @@
 import { Type } from "typebox";
 import { execSync, execFileSync, spawn } from "node:child_process";
 import { writeFileSync, existsSync, openSync, readSync, closeSync, mkdirSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { join, dirname, basename } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -123,6 +123,9 @@ class GhidraBridge {
 	private restartCount = 0;
 	private maxRestarts = 3;
 	private bridgePath: string | null = null;
+	private ghidraHome: string | null = null;
+	private mcpJar: string | null = null;
+	private currentTarget: string | null = null;
 
 	constructor(url = "http://127.0.0.1:8089/") {
 		this.ghidraUrl = url;
@@ -130,9 +133,31 @@ class GhidraBridge {
 		const candidates = [
 			join(__dirname, "..", "..", "ghidra-mcp", "bridge_mcp_ghidra.py"),
 			join(__dirname, "..", "..", "..", "ghidra-mcp", "bridge_mcp_ghidra.py"),
+			join(__dirname, "..", "..", "..", "packages", "ghidra-mcp", "bridge_mcp_ghidra.py"),
+			"/opt/ghidra-mcp/bridge_mcp_ghidra.py",
 		];
 		for (const c of candidates) {
 			if (existsSync(c)) { this.bridgePath = c; break; }
+		}
+		// Find Ghidra installation
+		try {
+			const ghidraDirs = execSync("ls -d /opt/ghidra_* 2>/dev/null", { encoding: "utf-8" }).trim().split("\n").filter(Boolean);
+			if (ghidraDirs.length > 0) this.ghidraHome = ghidraDirs[0];
+		} catch {}
+		// Find MCP extension JAR
+		if (this.ghidraHome) {
+			const version = basename(this.ghidraHome).replace("_PUBLIC", "").replace("ghidra_", "");
+			const jarCandidates = [
+				join(process.env.HOME || "", ".config", `ghidra_${version}_PUBLIC`, "Extensions", "GhidraMCP", "lib"),
+				join(this.ghidraHome, "Extensions", "GhidraMCP", "lib"),
+				"/opt/ghidra-mcp/target",
+			];
+			for (const dir of jarCandidates) {
+				try {
+					const jars = execSync(`ls ${dir}/GhidraMCP-*.jar 2>/dev/null`, { encoding: "utf-8" }).trim().split("\n").filter(Boolean);
+					if (jars.length > 0) { this.mcpJar = jars[0]; break; }
+				} catch {}
+			}
 		}
 	}
 
@@ -145,19 +170,74 @@ class GhidraBridge {
 		}
 	}
 
+	/** Start the Ghidra headless MCP server with a target binary loaded. */
+	startHeadless(targetPath: string): boolean {
+		if (this.isAlive()) return true;
+		if (!this.ghidraHome) {
+			throw new Error("Ghidra installation not found. Install Ghidra or set GHIDRA_HOME.");
+		}
+		if (!this.mcpJar) {
+			throw new Error("GhidraMCP extension JAR not found. Run: pire diagnose");
+		}
+		if (!existsSync(targetPath)) {
+			throw new Error(`Target binary not found: ${targetPath}`);
+		}
+
+		this.currentTarget = targetPath;
+		const projectDir = join(process.env.HOME || "/tmp", ".pire", "ghidra-projects");
+		mkdirSync(projectDir, { recursive: true });
+		const projectName = "pire_analysis";
+		const programName = basename(targetPath);
+		const classpath = this.buildClasspath();
+		const logFile = "/tmp/pire-ghidra-mcp.log";
+
+		// Write startup script to avoid shell mangling
+		const script = `#!/bin/bash
+export GHIDRA_HOME=${this.ghidraHome}
+java -Xmx4g -XX:+UseG1GC \\
+    -Dghidra.home=${this.ghidraHome} -Dapplication.name=GhidraMCP \\
+    -classpath "${classpath}" \\
+    com.xebyte.headless.GhidraMCPHeadlessServer \\
+    --port 8089 --bind 127.0.0.1 \\
+    --project ${join(projectDir, projectName + ".gpr")} \\
+    --program ${shellEscape(programName)} \\
+    > ${logFile} 2>&1
+`;
+		const scriptPath = "/tmp/pire-start-ghidra.sh";
+		writeFileSync(scriptPath, script, { mode: 0o755 });
+
+		spawn("bash", [scriptPath], {
+			detached: true, stdio: "ignore",
+		}).unref();
+
+		// Wait for startup (Ghidra JVM takes ~15-20s)
+		for (let i = 0; i < 30; i++) {
+			run("sleep 1", { timeout: 5000 });
+			if (this.isAlive()) return true;
+		}
+		return false;
+	}
+
+	private buildClasspath(): string {
+		if (!this.ghidraHome || !this.mcpJar) return "";
+		const jars: string[] = [this.mcpJar];
+		try {
+			const frameworkJars = execSync(`ls ${this.ghidraHome}/Ghidra/Framework/*/lib/*.jar 2>/dev/null`, { encoding: "utf-8" }).trim().split("\n").filter(Boolean);
+			const featureJars = execSync(`ls ${this.ghidraHome}/Ghidra/Features/*/lib/*.jar 2>/dev/null`, { encoding: "utf-8" }).trim().split("\n").filter(Boolean);
+			const processorJars = execSync(`ls ${this.ghidraHome}/Ghidra/Processors/*/lib/*.jar 2>/dev/null`, { encoding: "utf-8" }).trim().split("\n").filter(Boolean);
+			jars.push(...frameworkJars, ...featureJars, ...processorJars);
+		} catch {}
+		return jars.join(":");
+	}
+
 	private ensureAlive(): boolean {
 		if (this.isAlive()) return true;
 		if (this.restartCount >= this.maxRestarts) return false;
 		this.restartCount++;
-		// Try to auto-start the bridge if we found it
-		if (this.bridgePath) {
+		// If we have a target loaded, try starting the headless server
+		if (this.currentTarget) {
 			try {
-				spawn(PYTHON, [this.bridgePath, "--no-lazy"], {
-					detached: true, stdio: "ignore",
-				}).unref();
-				// Wait briefly for startup
-				run("sleep 2", { timeout: 5000 });
-				if (this.isAlive()) return true;
+				if (this.startHeadless(this.currentTarget)) return true;
 			} catch {}
 		}
 		return false;
@@ -199,12 +279,22 @@ class GhidraBridge {
 		return this.api(`disassemble/${address}`);
 	}
 
+	/** Set the target binary path for auto-start. */
+	setTarget(path: string): void {
+		this.currentTarget = path;
+	}
+
 	getStatus(): { alive: boolean; url: string; restarts: number } {
 		return { alive: this.isAlive(), url: this.ghidraUrl, restarts: this.restartCount };
 	}
 }
 
 const ghidra = new GhidraBridge(process.env.GHIDRA_SERVER_URL ?? "http://127.0.0.1:8089/");
+
+/** Set the target binary for Ghidra auto-start. Called when :load is used. */
+export function setGhidraTarget(path: string): void {
+	ghidra.setTarget(path);
+}
 
 // ─── Core Binary Analysis Tools ────────────────────────────────
 

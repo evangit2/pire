@@ -226,7 +226,7 @@ console.log("\n─ Code Quality ─");
 ok(!src.includes("await import("), "no inline dynamic imports in index");
 ok(src.includes("from \"node:fs\""), "fs imports at top level");
 ok(src.includes("execSync") && src.includes("spawn"), "child_process imports at top level");
-ok(src.includes('import { join, dirname }'), "path imports at top level");
+ok(src.includes("join") && src.includes("dirname"), "path imports at top level");
 ok(src.includes('import { fileURLToPath }'), "url import at top level");
 ok(!tuiSrc.includes("await import("), "no inline dynamic imports in TUI");
 

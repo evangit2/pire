@@ -849,6 +849,28 @@ install_ghidra() {
 			;;
 	esac
 	if has ghidra 2>/dev/null || has ghidraRun 2>/dev/null; then
+		# Install GhidraMCP extension JAR + bridge script
+		GHIDRA_DIR=$(dirname "$(readlink -f "$(which ghidra 2>/dev/null || which ghidraRun 2>/dev/null)" 2>/dev/null)" 2>/dev/null)
+		if [ -z "$GHIDRA_DIR" ]; then
+			GHIDRA_DIR=$(ls -d /opt/ghidra_* 2>/dev/null | head -1)
+		fi
+		if [ -n "$GHIDRA_DIR" ]; then
+			GHIDRA_VERSION=$(basename "$GHIDRA_DIR" | sed 's/ghidra_//;s/_PUBLIC//')
+			GHIDRA_EXT_DIR="$HOME/.config/ghidra_${GHIDRA_VERSION}_PUBLIC/Extensions/GhidraMCP"
+			MCP_RELEASE=$(curl -sL "https://api.github.com/repos/bethington/ghidra-mcp/releases/latest" 2>/dev/null | grep -oP '"tag_name":\s*"v\K[^"]+' | head -1)
+			if [ -n "$MCP_RELEASE" ]; then
+				mkdir -p /tmp/ghidra-mcp-install
+				curl -sL "https://github.com/bethington/ghidra-mcp/releases/download/v${MCP_RELEASE}/GhidraMCP-${MCP_RELEASE}.zip" -o /tmp/ghidra-mcp-install/GhidraMCP.zip 2>/dev/null
+				if [ -f /tmp/ghidra-mcp-install/GhidraMCP.zip ] && [ -s /tmp/ghidra-mcp-install/GhidraMCP.zip ]; then
+					mkdir -p "$GHIDRA_EXT_DIR"
+					unzip -q -o /tmp/ghidra-mcp-install/GhidraMCP.zip -d "$GHIDRA_EXT_DIR" 2>/dev/null
+				fi
+				# Install bridge script to /opt/ghidra-mcp
+				sudo mkdir -p /opt/ghidra-mcp 2>/dev/null
+				curl -sL "https://github.com/bethington/ghidra-mcp/releases/download/v${MCP_RELEASE}/bridge_mcp_ghidra.py" -o /opt/ghidra-mcp/bridge_mcp_ghidra.py 2>/dev/null || true
+				rm -rf /tmp/ghidra-mcp-install
+			fi
+		fi
 		echo "$ST_DONE" > "$TMPDIR_PIRE/ghidra.status"
 	else
 		echo "$ST_FAILED" > "$TMPDIR_PIRE/ghidra.status"

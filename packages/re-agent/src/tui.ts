@@ -32,7 +32,7 @@ import * as readline from "node:readline";
 import { readdirSync, readFileSync, existsSync, writeFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { RE_TOOLS, RE_SYSTEM_PROMPT, probeTools, fetchTool, validateToolParams, type AgentTool } from "./index.js";
+import { RE_TOOLS, RE_SYSTEM_PROMPT, probeTools, fetchTool, validateToolParams, setGhidraTarget, type AgentTool } from "./index.js";
 import { loadLLMConfig, toolToFunction, callLLM, type ChatMessage } from "./llm.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -411,6 +411,7 @@ When you have gathered enough information, write your analysis to a file using t
 				return;
 			}
 			this.loadedTarget = path;
+		setGhidraTarget(path);
 			this.push("info", `Loaded: ${path}`);
 			this.render();
 			return;
@@ -836,6 +837,7 @@ When you have gathered enough information, write your analysis to a file using t
 				return;
 			}
 			this.loadedTarget = path;
+		setGhidraTarget(path);
 			console.log(`Loaded: ${path}`);
 			this.rl.prompt();
 			return;
