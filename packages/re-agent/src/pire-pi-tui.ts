@@ -39,7 +39,7 @@ import { probeTools, RE_SYSTEM_PROMPT, RE_TOOLS, setGhidraTarget, validateToolPa
 import { type ChatMessage, callLLM, type LLMConfig, loadLLMConfig, type ToolCall, toolToFunction } from "./llm.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const VERSION = "0.88.9";
+const VERSION = "0.89.1";
 
 // Use chalk for proper Pi-style colors
 import chalk from "chalk";
@@ -64,7 +64,7 @@ function setupGracefulQuit(onQuit: () => void): void {
 }
 
 const MAX_TURNS = parseInt(process.env.PIRE_MAX_TURNS || "70", 10) || 70;
-const MAX_OUTPUT = parseInt(process.env.PIRE_MAX_OUTPUT || "16000", 10) || 16000;
+const MAX_OUTPUT = parseInt(process.env.PIRE_MAX_OUTPUT || "100000", 10) || 100000;
 
 // ─── Context Window Management ─────────────────────────────────
 //

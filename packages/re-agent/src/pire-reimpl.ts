@@ -18,6 +18,11 @@ import { dirname, join } from "node:path";
 import { Type } from "typebox";
 import { type AgentTool, probeTools, RE_SYSTEM_PROMPT, RE_TOOLS } from "./index.js";
 import { type ChatMessage, callLLM, loadLLMConfig, toolToFunction } from "./llm.js";
+import { loadSettings } from "./pire-config.js";
+
+// Tool output truncation: use settings.max_output (default 100000)
+const _settings = loadSettings();
+const MAX_TOOL_OUTPUT = _settings.max_output || 100000;
 
 // ─── Write file tool (lets agent save files) ──────────────────
 
@@ -335,7 +340,7 @@ ${systemTemplate
 				try {
 					const result = await tool.execute("reimpl", params);
 					const text = result.content.map((c: { text: string }) => c.text).join("\n");
-					const truncated = text.length > 16000 ? text.slice(0, 16000) + "\n... (truncated)" : text;
+					const truncated = text.length > MAX_TOOL_OUTPUT ? text.slice(0, MAX_TOOL_OUTPUT) + "\n... (truncated)" : text;
 					messages.push({ role: "tool", tool_call_id: tc.id, content: truncated });
 
 					const preview = text.slice(0, 200).replace(/\n/g, "\n  ");

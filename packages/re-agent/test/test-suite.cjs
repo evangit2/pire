@@ -159,7 +159,7 @@ ok(piTuiSrc.includes("agentLoop"), "Pi TUI has agentLoop method");
 ok(piTuiSrc.includes("onContent"), "Pi TUI streams content via onContent callback");
 ok(piTuiSrc.includes("tool_call"), "Pi TUI displays tool calls");
 ok(piTuiSrc.includes("tool_result"), "Pi TUI displays tool results");
-ok(piTuiSrc.includes("0.88.9"), "Pi TUI version is 0.88.9");
+ok(piTuiSrc.includes("0.89.1"), "Pi TUI version is 0.89.1");
 ok(piTuiSrc.includes("MAX_TURNS"), "Pi TUI has turn limit");
 ok(piTuiSrc.includes("MAX_OUTPUT"), "Pi TUI has output truncation");
 ok(tuiSrc.includes("agentLoop"), "TUI has agentLoop for autonomous tool calling");
@@ -283,7 +283,7 @@ if (fs.existsSync(pireConfig)) {
 console.log("\n─ Package Config ─");
 
 const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf-8"));
-ok(pkg.version === "0.88.9", `version is 0.88.9 (got ${pkg.version})`);
+ok(pkg.version === "0.89.1", `version is 0.89.1 (got ${pkg.version})`);
 ok(pkg.bin && pkg.bin.pire, "has pire bin entry");
 ok(pkg.scripts.test.includes("test-suite.cjs"), "test script runs test-suite");
 ok(pkg.scripts.test.includes("test-models.cjs"), "test script runs test-models");
@@ -516,16 +516,16 @@ ok(tuiSrc.includes("loadedTarget"), "TUI tracks loaded target");
 ok(tuiSrc.includes("PIRE_MAX_TURNS"), "TUI reads max turns from env/config");
 ok(tuiSrc.includes("onContent"), "TUI streams content to stdout");
 ok(tuiSrc.includes("VERSION"), "TUI has version constant");
-ok(tuiSrc.includes("0.88.9"), "TUI version is 0.88.9");
+ok(tuiSrc.includes("0.89.1"), "TUI version is 0.89.1");
 
 // ─── 25. Version Alignment ────────────────────────────────────
 
 console.log("\n─ Version Alignment ─");
 
 const rootPkg = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "..", "..", "package.json"), "utf-8"));
-ok(rootPkg.version === "0.88.9", `root package.json version is 0.88.9 (got ${rootPkg.version})`);
-ok(pkg.version === "0.88.9", `re-agent package.json version is 0.88.9 (got ${pkg.version})`);
-ok(tuiSrc.includes("0.88.9"), `tui.ts VERSION is 0.88.9`);
+ok(rootPkg.version === "0.89.1", `root package.json version is 0.88.9 (got ${rootPkg.version})`);
+ok(pkg.version === "0.89.1", `re-agent package.json version is 0.88.9 (got ${pkg.version})`);
+ok(tuiSrc.includes("0.89.1"), `tui.ts VERSION is 0.89.1`);
 
 // ─── 26. Skills Not Gitignored ────────────────────────────────
 
@@ -545,8 +545,8 @@ ok(typeof src === "string" && src.includes("isPEBinary"), "isPEBinary function e
 ok(src.includes("BLOCKED_PATTERNS") && src.includes("isCommandBlocked"), "shell sandbox is wired up");
 
 // Verify tool output truncation limits are reasonable
-ok(tuiSrc.includes("16000"), "TUI truncates at 16000 chars");
-ok(reimplSrc.includes("16000"), "reimpl truncates at 16000 chars");
+ok(tuiSrc.includes("MAX_TOOL_OUTPUT") || tuiSrc.includes("100000"), "TUI truncates using MAX_TOOL_OUTPUT (100000)");
+ok(reimplSrc.includes("MAX_TOOL_OUTPUT") || reimplSrc.includes("100000"), "reimpl truncates using MAX_TOOL_OUTPUT (100000)");
 
 // ─── 28. New Tools & URL Support ───────────────────────────────
 

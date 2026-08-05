@@ -42,16 +42,30 @@ import {
 	validateToolParams,
 } from "./index.js";
 import { type ChatMessage, callLLM, loadLLMConfig, toolToFunction } from "./llm.js";
+import { loadSettings } from "./pire-config.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const VERSION = "0.89.0";
+const VERSION = "0.89.1";
 
 // ─── Context Window Management ─────────────────────────────────
 // Aggressive multi-stage compression: truncate → stub → drop.
-const CONTEXT_CHAR_LIMIT = parseInt(process.env.PIRE_CONTEXT_LIMIT || "120000", 10) || 120000;
+// Context limit is 75% of the model's context_length (chars ≈ tokens * 4).
+// Falls back to 120000 if context_length is unknown.
+function getContextCharLimit(): number {
+	const llm = loadLLMConfig();
+	if (llm?.contextLength && llm.contextLength > 0) {
+		return Math.floor((llm.contextLength * 4) * 0.75);
+	}
+	return 120000;
+}
+const CONTEXT_CHAR_LIMIT = parseInt(process.env.PIRE_CONTEXT_LIMIT || "0", 10) || getContextCharLimit();
 const TOOL_RESULT_HEAD = 600;
 const TOOL_RESULT_TAIL = 600;
 const PRESERVE_RECENT = 8;
+
+// Tool result truncation: use settings.max_output (default 100000)
+const _settings = loadSettings();
+const MAX_TOOL_OUTPUT = _settings.max_output || 100000;
 
 function estimateMessageChars(messages: ChatMessage[]): number {
 	let total = 0;
@@ -422,7 +436,7 @@ Run tools on paths/URLs yourself. Use fetch for URLs. Use write_file for files.`
 					try {
 						const result = await tool.execute("pire", params);
 						const text = result.content.map((c: { text: string }) => c.text).join("\n");
-						const truncated = text.length > 16000 ? text.slice(0, 16000) + "\n... (truncated)" : text;
+						const truncated = text.length > MAX_TOOL_OUTPUT ? text.slice(0, MAX_TOOL_OUTPUT) + "\n... (truncated)" : text;
 						messages.push({ role: "tool", tool_call_id: tc.id, content: truncated });
 						// Show tool output (truncated for display)
 						const displayText =
@@ -780,7 +794,10 @@ export class PireCLI {
 			this.processQueue();
 		});
 		this.rl.on("close", () => {
-			/* don't exit while processing */
+			// When stdin is piped (not a TTY), exit after processing completes.
+			if (!process.stdin.isTTY) {
+				process.exit(0);
+			}
 		});
 
 		// Double Ctrl+C to quit
@@ -915,7 +932,7 @@ Run tools on paths/URLs yourself. Use fetch for URLs. Use write_file for files.`
 					try {
 						const result = await tool.execute("pire", params);
 						const text = result.content.map((c: { text: string }) => c.text).join("\n");
-						const truncated = text.length > 16000 ? text.slice(0, 16000) + "\n... (truncated)" : text;
+						const truncated = text.length > MAX_TOOL_OUTPUT ? text.slice(0, MAX_TOOL_OUTPUT) + "\n... (truncated)" : text;
 						messages.push({ role: "tool", tool_call_id: tc.id, content: truncated });
 						// Show tool result summary
 						const displayText =

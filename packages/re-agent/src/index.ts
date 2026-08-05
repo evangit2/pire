@@ -532,7 +532,7 @@ const r2Session = new R2Session();
 const r2Tool: AgentTool<{ path: string; command: string }> = {
 	name: "r2",
 	description:
-		"Run a radare2 command. e.g. 'aaa; afl', 'pdf @ main', 'iz'. Use 'aflj' instead of 'afl' for JSON output (machine-parseable). Use 'afl' address column for decompile tool.",
+		"Run a radare2 command. e.g. 'aaa; afl', 'pdf @ main', 'iz'. Use 'aflj' instead of 'afl' for JSON output (machine-parseable). Use 'afl' address column for decompile tool. For large binaries, use '~' (tilde) to filter output, e.g. 'afl~main' or 'aflj~[0]' to avoid flooding context with hundreds of functions.",
 	parameters: Type.Object({
 		path: Type.String(),
 		command: Type.String(),

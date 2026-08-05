@@ -10,7 +10,7 @@
  * Settings:
  *   max_turns       — Max agent turns per conversation (default: 70)
  *   sandbox         — Shell command sandbox (default: true)
- *   max_output      — Max tool output chars (default: 16000)
+ *   max_output      — Max tool output chars (default: 100000)
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -30,7 +30,7 @@ export interface PireSettings {
 const DEFAULTS: PireSettings = {
 	max_turns: 70,
 	sandbox: true,
-	max_output: 16000,
+	max_output: 100000,
 };
 
 // ─── I/O ───────────────────────────────────────────────────────
