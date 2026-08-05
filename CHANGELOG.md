@@ -1,3 +1,15 @@
+# pire v0.88.6 — Fix transient screen doubling during streaming
+
+Released: 2026-08-04
+
+## Fixed
+
+- **Transient screen doubling** (sidebar, banner, status bar appearing twice during rapid streaming). Root cause: when the TUI framework's screen buffer length didn't match the terminal height, the differential renderer left stale rows from the previous frame. Fixed by:
+  - Padding/clipping the screen array to exactly `height` lines before differential rendering
+  - Clearing stale rows from previous taller screens that fall outside the current viewport
+
+---
+
 # pire v0.88.5 — Ctrl+C raw mode fix, status bar layout
 
 Released: 2026-08-04

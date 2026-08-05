@@ -758,6 +758,8 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		const nextLayout = renderLayoutFrame(root, width, height, () => this.requestRender());
 		let screen = nextLayout.lines.map((line) => line.replace(OSC133_ZONE_PREFIX, ""));
 		screen = this.compositeOverlays(screen, width, height);
+		// Ensure screen is exactly `height` lines — pad or clip (keep bottom)
+		while (screen.length < height) screen.push("");
 		if (screen.length > height) screen = screen.slice(screen.length - height);
 		screen = this.applySelection(screen, nextLayout);
 		screen = this.compositeFlashes(screen, width, height);
@@ -786,6 +788,12 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		for (let row = 0; row < height; row++) {
 			if (!fullRedraw && !imagesNeedRedraw && screen[row] === this.previousScreen[row]) continue;
 			buffer += `\x1b[${row + 1};1H\x1b[2K${screen[row] ?? ""}`;
+		}
+		// Clear stale rows from a previous taller screen
+		if (!fullRedraw && this.previousScreen.length > height) {
+			for (let row = height; row < this.previousScreen.length; row++) {
+				buffer += `\x1b[${row + 1};1H\x1b[2K`;
+			}
 		}
 
 		if (cursorPos) {

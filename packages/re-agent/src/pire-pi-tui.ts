@@ -38,7 +38,7 @@ import { join, dirname, basename } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const VERSION = "0.88.5";
+const VERSION = "0.88.6";
 
 // Use chalk for proper Pi-style colors
 import chalk from "chalk";
