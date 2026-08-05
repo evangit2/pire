@@ -63,8 +63,8 @@ function setupGracefulQuit(onQuit: () => void): void {
 	});
 }
 
-const MAX_TURNS = 70;
-const MAX_OUTPUT = 16000;
+const MAX_TURNS = parseInt(process.env.PIRE_MAX_TURNS || "70", 10) || 70;
+const MAX_OUTPUT = parseInt(process.env.PIRE_MAX_OUTPUT || "16000", 10) || 16000;
 
 // ─── DynamicBorder ─────────────────────────────────────────────
 class DynamicBorder implements Component {

@@ -260,7 +260,7 @@ When you have gathered enough information, write your analysis to a file using t
 		this.messages.push({ role: "user", content: userMessage });
 
 		const toolSchemas = RE_TOOLS.map(toolToFunction);
-		const MAX_TURNS = 70;
+		const MAX_TURNS = parseInt(process.env.PIRE_MAX_TURNS || "70", 10) || 70;
 		const seenCalls = new Set<string>();
 
 		for (let turn = 0; turn < MAX_TURNS; turn++) {
@@ -762,7 +762,7 @@ When you have gathered enough information, write your analysis to a file using t
 		this.messages.push({ role: "user", content: userMessage });
 
 		const toolSchemas = RE_TOOLS.map(toolToFunction);
-		const MAX_TURNS = 70;
+		const MAX_TURNS = parseInt(process.env.PIRE_MAX_TURNS || "70", 10) || 70;
 		const seenCalls = new Set<string>();
 
 		for (let turn = 0; turn < MAX_TURNS; turn++) {

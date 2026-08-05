@@ -7,11 +7,15 @@
  *   pire                      — Start Pi-framework TUI (default)
  *   pire -ansi                — Start hand-rolled ANSI TUI
  *   pire -cli                 — Start CLI-only mode (plain readline)
+ *   pire -loose               — Start with sandbox disabled (no command restrictions)
  *   pire <path|URL>           — Start with a target loaded
  *   pire -cli <path|URL>      — CLI mode with a target loaded
  *   pire update               — Update to latest from GitHub main
  *   pire update reverse       — Roll back to previous version
  *   pire model                — Interactive model/provider configurator
+ *   pire config               — Interactive settings editor (turn limit, sandbox, etc.)
+ *   pire config show          — Print current settings
+ *   pire config reset         — Reset settings to defaults
  *   pire --tools              — List available RE tools
  *   pire --skills             — List available RE skills
  *   pire --probe              — Probe system for installed tools
@@ -22,8 +26,9 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { probeTools, RE_SYSTEM_PROMPT, RE_TOOLS } from "./index.js";
+import { probeTools, RE_SYSTEM_PROMPT, RE_TOOLS, setSandboxEnabled } from "./index.js";
 import { PirePiTUI } from "./pire-pi-tui.js";
+import { loadSettings } from "./pire-config.js";
 import { PireCLI, PireTUI } from "./tui.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -246,11 +251,15 @@ Usage:
   pire                      Start Pi-framework TUI (default)
   pire -ansi                Start hand-rolled ANSI TUI
   pire -cli                 Start CLI-only mode (plain readline)
+  pire -loose               Start with sandbox disabled (no command restrictions)
   pire <path|URL>           Start with a target loaded
   pire -cli <path|URL>      CLI mode with a target loaded
   pire update               Update to latest version from GitHub
   pire update reverse       Roll back to previous version
   pire model                Interactive model/provider configurator
+  pire config               Interactive settings editor (turn limit, sandbox, etc.)
+  pire config show          Print current settings
+  pire config reset         Reset settings to defaults
   pire uninstall            Completely uninstall pire and optionally all RE packages
   pire --tools              List available RE tools
   pire --skills             List available RE skills
@@ -278,16 +287,26 @@ Chat Commands:
 // Parse flags
 let mode: "pi" | "ansi" | "cli" = "pi";
 const positionalArgs: string[] = [];
+let looseMode = false;
 
 for (const arg of args) {
 	if (arg === "-cli" || arg === "--cli") {
 		mode = "cli";
 	} else if (arg === "-ansi" || arg === "--ansi") {
 		mode = "ansi";
+	} else if (arg === "-loose" || arg === "--loose") {
+		looseMode = true;
 	} else if (!arg.startsWith("-")) {
 		positionalArgs.push(arg);
 	}
 }
+
+// Load settings and apply runtime overrides
+const settings = loadSettings();
+if (looseMode) settings.sandbox = false;
+setSandboxEnabled(settings.sandbox);
+process.env.PIRE_MAX_TURNS = String(settings.max_turns);
+process.env.PIRE_MAX_OUTPUT = String(settings.max_output);
 
 switch (args[0]) {
 	case "--tools":
@@ -314,6 +333,10 @@ switch (args[0]) {
 	case "model":
 		// Hand off to pire-model.ts
 		await import("./pire-model.js");
+		break;
+	case "config":
+		// Hand off to pire-config.ts
+		await import("./pire-config.js");
 		break;
 	case "uninstall":
 		// Hand off to pire-uninstall.ts

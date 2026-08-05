@@ -1075,6 +1075,14 @@ const disasmFuncTool: AgentTool<{ path: string; startAddress: string; maxBytes?:
 
 // ─── Shell tool (sandboxed: restricted cwd, network blocked) ───
 
+/** Runtime toggle for sandbox mode. When false, all commands are allowed. */
+let sandboxEnabled = true;
+
+/** Disable or enable the shell sandbox at runtime. */
+export function setSandboxEnabled(enabled: boolean): void {
+	sandboxEnabled = enabled;
+}
+
 /** Commands that could exfiltrate data or make network connections. */
 const BLOCKED_PATTERNS = [
 	/\bcurl\s/,
@@ -1107,8 +1115,9 @@ const BLOCKED_PATTERNS = [
 	/\b:()\{\s*:\|:&\s*\};:/, // fork bomb
 ];
 
-/** Check if a command matches any blocked pattern. */
+/** Check if a command matches any blocked pattern. Returns null if allowed. */
 function isCommandBlocked(command: string): string | null {
+	if (!sandboxEnabled) return null;
 	for (const pattern of BLOCKED_PATTERNS) {
 		if (pattern.test(command)) {
 			return `Command blocked by sandbox: matches pattern "${pattern.source}". The shell tool restricts network access, package management, and privileged commands. Use specific RE tools instead.`;
@@ -1120,7 +1129,7 @@ function isCommandBlocked(command: string): string | null {
 const shellTool: AgentTool<{ command: string; cwd?: string }> = {
 	name: "shell",
 	description:
-		"Run a shell command in the workspace sandbox (ls, find, file, gcc, diff, etc.). Network access, package management, and privileged commands are blocked. Optional cwd to set working directory.",
+		"Run a shell command (ls, find, file, gcc, diff, etc.). Optional cwd to set working directory. In sandbox mode, network access, package management, and privileged commands are blocked. Use -loose flag or 'pire config' to disable sandbox.",
 	parameters: Type.Object({
 		command: Type.String({ description: "Shell command to execute" }),
 		cwd: Type.Optional(Type.String({ description: "Working directory (default: workspace root)" })),
