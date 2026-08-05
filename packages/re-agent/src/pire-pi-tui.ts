@@ -726,9 +726,23 @@ export class PirePiTUI {
 
 					let args: any;
 					try {
-						args = JSON.parse(tc.function.arguments);
+						const raw = tc.function.arguments;
+						if (!raw || raw.trim() === "") {
+							args = {};
+						} else {
+							args = JSON.parse(raw);
+						}
 					} catch {
 						args = {};
+					}
+
+					// Validate that required string args aren't undefined/null.
+					// LLMs sometimes send {"command": undefined} or {"command": null}
+					// which causes execSync to throw with a confusing type error.
+					for (const key of Object.keys(args)) {
+						if (args[key] === undefined || args[key] === null) {
+							delete args[key];
+						}
 					}
 
 					// Auto-detect target from tool calls

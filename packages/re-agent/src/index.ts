@@ -1084,8 +1084,8 @@ const BLOCKED_PATTERNS = [
 	/\bssh\s/,
 	/\bscp\s/,
 	/\brsync\s/,
-	/\bapt-get\s/,
-	/\bapt\s/,
+	/\bapt-get\s/,    // apt-get is the package manager — block it
+	// \bapt\s removed — too many false positives (e.g. "adapt ", "apt " in source code heredocs)
 	/\bdpkg\s/,
 	/\byum\s/,
 	/\bdnf\s/,
