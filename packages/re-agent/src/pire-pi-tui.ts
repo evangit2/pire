@@ -39,7 +39,7 @@ import { probeTools, RE_SYSTEM_PROMPT, RE_TOOLS, setGhidraTarget } from "./index
 import { type ChatMessage, callLLM, type LLMConfig, loadLLMConfig, type ToolCall, toolToFunction } from "./llm.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const VERSION = "0.88.8";
+const VERSION = "0.88.9";
 
 // Use chalk for proper Pi-style colors
 import chalk from "chalk";
@@ -374,9 +374,11 @@ export class PirePiTUI {
 		this.statusBar = new StatusBar();
 
 		// Render throttle — coalesce rapid renders into one per frame.
-		// Use forced render (true) to ensure every render does a full screen
-		// clear + repaint, eliminating stale content from previous frames.
-		this.throttle = new RenderThrottle(() => this.ui.requestRender(true), 16);
+		// Uses differential rendering (no full clear) for smooth streaming
+		// without flicker. Transition points (turn boundaries, status changes)
+		// call flushRender() which does a forced full redraw to clear stale
+		// content.
+		this.throttle = new RenderThrottle(() => this.ui.requestRender(), 16);
 
 		this.input = new Input();
 		this.input.onSubmit = (value: string) => {

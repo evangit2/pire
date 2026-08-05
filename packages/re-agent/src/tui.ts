@@ -3,7 +3,7 @@
  *
  * Layout:
  *  ┌──────────────────────────────────────────────────┐
- *  │ pire v0.88.8  │  target: /bin/ls  │  22 tools  │
+ *  │ pire v0.88.9  │  target: /bin/ls  │  22 tools  │
  *  ├──────────────┬───────────────────────────────────┤
  *  │ Tools        │  Chat / Output                    │
  *  │ ✓ strings    │                                   │
@@ -44,7 +44,7 @@ import {
 import { type ChatMessage, callLLM, loadLLMConfig, toolToFunction } from "./llm.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const VERSION = "0.88.8";
+const VERSION = "0.88.9";
 
 // ANSI
 const C = {
