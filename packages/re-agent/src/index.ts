@@ -1380,15 +1380,16 @@ const hashTool: AgentTool<{ path: string; algo?: string }> = {
 		const results: string[] = [];
 		for (const a of algos) {
 			const bin = which(a);
+			const label = a.replace("sum", "");
 			if (bin) {
 				try {
 					const out = run(`${bin} ${shellEscape(params.path)}`, { timeout: 30000 });
-					results.push(out.trim());
+					results.push(`${label}: ${out.trim()}`);
 				} catch {
-					results.push(`${a}: error`);
+					results.push(`${label}: error`);
 				}
 			} else {
-				results.push(`${a}: not installed`);
+				results.push(`${label}: not installed`);
 			}
 		}
 		return textResult(results.join("\n"));

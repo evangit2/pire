@@ -18,11 +18,15 @@ import { dirname, join } from "node:path";
 import { Type } from "typebox";
 import { type AgentTool, probeTools, RE_SYSTEM_PROMPT, RE_TOOLS } from "./index.js";
 import { type ChatMessage, callLLM, loadLLMConfig, toolToFunction } from "./llm.js";
-import { loadSettings } from "./pire-config.js";
 
-// Tool output truncation: use settings.max_output (default 100000)
-const _settings = loadSettings();
-const MAX_TOOL_OUTPUT = _settings.max_output || 100000;
+function getContextCharLimit(): number {
+	const llm = loadLLMConfig();
+	const ctxLen = llm?.contextLength && llm.contextLength > 0 ? llm.contextLength : 32000;
+	return Math.floor(ctxLen * 4 * 0.75);
+}
+
+// Tool output truncation: 5% of context budget, min 2000, max 20000
+const MAX_TOOL_OUTPUT = Math.min(20000, Math.max(2000, Math.floor(getContextCharLimit() * 0.05)));
 
 // ─── Write file tool (lets agent save files) ──────────────────
 

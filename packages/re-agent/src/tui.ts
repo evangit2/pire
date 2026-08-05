@@ -42,10 +42,9 @@ import {
 	validateToolParams,
 } from "./index.js";
 import { type ChatMessage, callLLM, loadLLMConfig, toolToFunction } from "./llm.js";
-import { loadSettings } from "./pire-config.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const VERSION = "0.89.7";
+const VERSION = "0.89.8";
 
 // ─── Context Window Management ─────────────────────────────────
 // Aggressive multi-stage compression: truncate → stub → drop.
@@ -63,9 +62,8 @@ const TOOL_RESULT_HEAD = 600;
 const TOOL_RESULT_TAIL = 600;
 const PRESERVE_RECENT = 8;
 
-// Tool result truncation: use settings.max_output (default 100000)
-const _settings = loadSettings();
-const MAX_TOOL_OUTPUT = _settings.max_output || 100000;
+// Tool output truncation: 5% of context budget, min 2000, max 20000
+const MAX_TOOL_OUTPUT = Math.min(20000, Math.max(2000, Math.floor(getContextCharLimit() * 0.05)));
 
 function estimateMessageChars(messages: ChatMessage[]): number {
 	let total = 0;
@@ -81,12 +79,13 @@ function estimateMessageChars(messages: ChatMessage[]): number {
 function trimContext(messages: ChatMessage[]): ChatMessage[] {
 	if (messages.length <= PRESERVE_RECENT) return messages;
 	let totalChars = estimateMessageChars(messages);
-	if (totalChars <= CONTEXT_CHAR_LIMIT) return messages;
+	const triggerLimit = Math.floor(CONTEXT_CHAR_LIMIT * 0.6);
+	if (totalChars <= triggerLimit) return messages;
 	const result = messages.map((m) => ({ ...m }));
 	const cutoff = result.length - PRESERVE_RECENT;
 
 	// Stage 1: Truncate old tool results to head+tail
-	for (let i = 0; i < cutoff && totalChars > CONTEXT_CHAR_LIMIT; i++) {
+	for (let i = 0; i < cutoff && totalChars > triggerLimit; i++) {
 		const msg = result[i];
 		if (
 			msg.role === "tool" &&
@@ -103,7 +102,7 @@ function trimContext(messages: ChatMessage[]): ChatMessage[] {
 	}
 
 	// Stage 2: Replace old tool results with 1-line stubs
-	for (let i = 0; i < cutoff && totalChars > CONTEXT_CHAR_LIMIT; i++) {
+	for (let i = 0; i < cutoff && totalChars > triggerLimit; i++) {
 		const msg = result[i];
 		if (msg.role === "tool" && typeof msg.content === "string" && msg.content.length > 100) {
 			const originalLen = msg.content.length;
@@ -114,7 +113,7 @@ function trimContext(messages: ChatMessage[]): ChatMessage[] {
 	}
 
 	// Stage 3: Compress old assistant messages
-	for (let i = 0; i < cutoff && totalChars > CONTEXT_CHAR_LIMIT; i++) {
+	for (let i = 0; i < cutoff && totalChars > triggerLimit; i++) {
 		const msg = result[i];
 		if (msg.role === "assistant" && typeof msg.content === "string" && msg.content.length > 200) {
 			const originalLen = msg.content.length;
@@ -128,7 +127,7 @@ function trimContext(messages: ChatMessage[]): ChatMessage[] {
 	}
 
 	// Stage 4: Compress old user messages
-	for (let i = 0; i < cutoff && totalChars > CONTEXT_CHAR_LIMIT; i++) {
+	for (let i = 0; i < cutoff && totalChars > triggerLimit; i++) {
 		const msg = result[i];
 		if (msg.role === "user" && typeof msg.content === "string" && msg.content.length > 200) {
 			const originalLen = msg.content.length;

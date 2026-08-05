@@ -39,7 +39,7 @@ import { probeTools, RE_SYSTEM_PROMPT, RE_TOOLS, setGhidraTarget, validateToolPa
 import { type ChatMessage, callLLM, type LLMConfig, loadLLMConfig, type ToolCall, toolToFunction } from "./llm.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const VERSION = "0.89.7";
+const VERSION = "0.89.8";
 
 // Use chalk for proper Pi-style colors
 import chalk from "chalk";
@@ -64,7 +64,6 @@ function setupGracefulQuit(onQuit: () => void): void {
 }
 
 const MAX_TURNS = parseInt(process.env.PIRE_MAX_TURNS || "70", 10) || 70;
-const MAX_OUTPUT = parseInt(process.env.PIRE_MAX_OUTPUT || "100000", 10) || 100000;
 
 // ─── Context Window Management ─────────────────────────────────
 //
@@ -77,7 +76,15 @@ const MAX_OUTPUT = parseInt(process.env.PIRE_MAX_OUTPUT || "100000", 10) || 1000
 // Always preserves the most recent N messages untouched.
 // Threshold is conservative — we compress well before the context window fills.
 
-const CONTEXT_CHAR_LIMIT = parseInt(process.env.PIRE_CONTEXT_LIMIT || "120000", 10) || 120000;
+function getContextCharLimit(): number {
+	const llm = loadLLMConfig();
+	const ctxLen = llm?.contextLength && llm.contextLength > 0 ? llm.contextLength : 32000;
+	return Math.floor(ctxLen * 4 * 0.75);
+}
+
+const CONTEXT_CHAR_LIMIT = parseInt(process.env.PIRE_CONTEXT_LIMIT || "0", 10) || getContextCharLimit();
+const MAX_TOOL_OUTPUT = Math.min(20000, Math.max(2000, Math.floor(CONTEXT_CHAR_LIMIT * 0.05)));
+const MAX_OUTPUT = MAX_TOOL_OUTPUT; // Alias for tool result truncation
 const TOOL_RESULT_HEAD = 600; // Keep first N chars of old tool results
 const TOOL_RESULT_TAIL = 600; // Keep last N chars of old tool results
 const PRESERVE_RECENT = 8; // Never touch the most recent N messages
@@ -102,14 +109,15 @@ function trimContext(messages: ChatMessage[]): ChatMessage[] {
 	if (messages.length <= PRESERVE_RECENT) return messages;
 
 	let totalChars = estimateMessageChars(messages);
-	if (totalChars <= CONTEXT_CHAR_LIMIT) return messages;
+	const triggerLimit = Math.floor(CONTEXT_CHAR_LIMIT * 0.6);
+	if (totalChars <= triggerLimit) return messages;
 
 	// Work on a copy
 	const result = messages.map((m) => ({ ...m }));
 	const cutoff = result.length - PRESERVE_RECENT;
 
 	// Stage 1: Truncate old tool results to head+tail
-	for (let i = 0; i < cutoff && totalChars > CONTEXT_CHAR_LIMIT; i++) {
+	for (let i = 0; i < cutoff && totalChars > triggerLimit; i++) {
 		const msg = result[i];
 		if (
 			msg.role === "tool" &&
@@ -126,7 +134,7 @@ function trimContext(messages: ChatMessage[]): ChatMessage[] {
 	}
 
 	// Stage 2: Replace old tool results with 1-line stubs
-	for (let i = 0; i < cutoff && totalChars > CONTEXT_CHAR_LIMIT; i++) {
+	for (let i = 0; i < cutoff && totalChars > triggerLimit; i++) {
 		const msg = result[i];
 		if (msg.role === "tool" && typeof msg.content === "string" && msg.content.length > 100) {
 			const originalLen = msg.content.length;
@@ -138,7 +146,7 @@ function trimContext(messages: ChatMessage[]): ChatMessage[] {
 	}
 
 	// Stage 3: Compress old assistant messages — keep only first line
-	for (let i = 0; i < cutoff && totalChars > CONTEXT_CHAR_LIMIT; i++) {
+	for (let i = 0; i < cutoff && totalChars > triggerLimit; i++) {
 		const msg = result[i];
 		if (msg.role === "assistant" && typeof msg.content === "string" && msg.content.length > 200) {
 			const originalLen = msg.content.length;
@@ -154,7 +162,7 @@ function trimContext(messages: ChatMessage[]): ChatMessage[] {
 	}
 
 	// Stage 4: Compress old user messages — keep only first line
-	for (let i = 0; i < cutoff && totalChars > CONTEXT_CHAR_LIMIT; i++) {
+	for (let i = 0; i < cutoff && totalChars > triggerLimit; i++) {
 		const msg = result[i];
 		if (msg.role === "user" && typeof msg.content === "string" && msg.content.length > 200) {
 			const originalLen = msg.content.length;
