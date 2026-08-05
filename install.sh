@@ -526,48 +526,63 @@ log_step "Checking Node.js version..."
 NODE_VER=$(node -v 2>/dev/null | sed 's/v//' | cut -d. -f1 || echo "0")
 if [ "$NODE_VER" -lt 22 ] 2>/dev/null; then
 	log_warn "Node.js is v$NODE_VER, need v22+"
-	log_step "Upgrading Node.js..."
-	case "$OS" in
-		debian)
-			# Remove the distro nodejs first so apt doesn't see it as "already installed"
-			sudo apt-get remove -y -qq nodejs </dev/null >/dev/null 2>&1
-			# Add NodeSource repo for Node 22
-			if curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - 2>&1; then
-				sudo apt-get update -qq </dev/null >/dev/null 2>&1
-				sudo apt-get install -y -qq nodejs </dev/null >/dev/null 2>&1
-			else
-				log_warn "NodeSource setup failed, trying nvm fallback..."
-			fi
-			;;
-		fedora)
-			curl -fsSL https://rpm.nodesource.com/setup_22.x | sudo bash - >/dev/null 2>&1
-			sudo dnf install -y -q nodejs </dev/null >/dev/null 2>&1
-			;;
-		arch|windows)
-			pkg_install nodejs 2>/dev/null
-			;;
-		macos)
-			pkg_install node@22 2>/dev/null || brew link --overwrite node@22 </dev/null >/dev/null 2>&1
-			;;
+	log_step "Installing Node.js 22 from official binary..."
+
+	# Detect arch and install Node.js 22 from the official binary tarball.
+	# This avoids all apt/dnf repo issues (broken third-party repos, GPG keys,
+	# stale caches) — just download and extract to /usr/local.
+	NODE_ARCH="x64"
+	case "$(uname -m)" in
+		aarch64|arm64) NODE_ARCH="arm64" ;;
+		x86_64|amd64)  NODE_ARCH="x64" ;;
+		*)             log_warn "Unknown arch $(uname -m), trying x64" ;;
 	esac
-	# Verify the upgrade actually worked
+
+	# Fetch the latest Node 22 LTS version from the official API
+	NODE_LATEST=$(curl -fsSL "https://nodejs.org/dist/index.json" 2>/dev/null \
+		| grep -o '"version":"v22\.[^"]*"' | head -1 | sed 's/"version":"//;s/"//')
+	[ -z "$NODE_LATEST" ] && NODE_LATEST="v22.11.0"
+
+	NODE_TARBALL="/tmp/node22-$$.tar.xz"
+	NODE_URL="https://nodejs.org/dist/$NODE_LATEST/node-$NODE_LATEST-linux-$NODE_ARCH.tar.xz"
+
+	if curl -fsSL "$NODE_URL" -o "$NODE_TARBALL" 2>/dev/null; then
+		# Extract to /usr/local — overwrites any existing node/npm
+		if [ -w /usr/local ]; then
+			tar -xJf "$NODE_TARBALL" -C /usr/local --strip-components=1 2>/dev/null
+		else
+			sudo tar -xJf "$NODE_TARBALL" -C /usr/local --strip-components=1 2>/dev/null
+		fi
+		rm -f "$NODE_TARBALL" 2>/dev/null
+	else
+		log_warn "Direct download failed, trying nvm..."
+	fi
+
+	# Verify
 	NODE_VER_NEW=$(node -v 2>/dev/null | sed 's/v//' | cut -d. -f1 || echo "0")
 	if [ "$NODE_VER_NEW" -lt 22 ] 2>/dev/null; then
-		log_warn "Node.js still at v$NODE_VER_NEW after upgrade attempt, trying nvm fallback..."
-		# nvm fallback — always works, user-space install
+		log_warn "Binary install didn't take, trying nvm fallback..."
+		# nvm fallback — user-space install, no sudo needed
 		curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | sh >/dev/null 2>&1
 		NVM_DIR="$HOME/.nvm"
 		[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
 		nvm install 22 >/dev/null 2>&1
 		nvm use 22 >/dev/null 2>&1
 		nvm alias default 22 >/dev/null 2>&1
+		# Source nvm in shell profile so it persists
+		for PROFILE_FILE in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.profile"; do
+			[ -f "$PROFILE_FILE" ] || continue
+			grep -q 'NVM_DIR' "$PROFILE_FILE" 2>/dev/null && break
+			printf '\n# nvm\nexport NVM_DIR="$HOME/.nvm"\n[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"\n' >> "$PROFILE_FILE"
+		done
 		NODE_VER_NEW=$(node -v 2>/dev/null | sed 's/v//' | cut -d. -f1 || echo "0")
 	fi
+
 	if [ "$NODE_VER_NEW" -ge 22 ] 2>/dev/null; then
-		log_done "Node.js upgraded to $(node -v)"
+		log_done "Node.js $(node -v)"
 	else
-		log_error "Failed to upgrade Node.js to v22+ (still v$NODE_VER_NEW)"
-		log_error "Please install Node.js 22+ manually: https://nodejs.org/"
+		log_error "Failed to install Node.js 22+ (still v$NODE_VER_NEW)"
+		log_error "Please install manually: https://nodejs.org/en/download"
 		exit 1
 	fi
 else
