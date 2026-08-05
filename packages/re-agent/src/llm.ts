@@ -119,6 +119,8 @@ export interface CallOptions {
 	timeoutMs?: number;
 	/** Called with content chunks as they arrive (for TUI streaming display). */
 	onContent?: (chunk: string) => void;
+	/** Abort signal — when aborted, the HTTP request is destroyed. */
+	signal?: AbortSignal;
 }
 
 export async function callLLM(
@@ -156,6 +158,11 @@ export async function callLLM(
 			const toolCalls: ToolCall[] = [];
 			let buffer = "";
 			let usage: { prompt_tokens: number; completion_tokens: number } | undefined;
+
+			// If aborted, destroy the response stream
+			options?.signal?.addEventListener("abort", () => {
+				res.destroy();
+			});
 
 			res.on("data", (chunk: Buffer) => {
 				buffer += chunk.toString();
@@ -222,6 +229,12 @@ export async function callLLM(
 		});
 		req.on("error", reject);
 		req.setTimeout(options?.timeoutMs ?? 180000, () => req.destroy(new Error("Timeout")));
+
+		// If aborted before response arrives, destroy the request
+		options?.signal?.addEventListener("abort", () => {
+			req.destroy(new Error("Aborted"));
+		});
+
 		req.write(body);
 		req.end();
 	});

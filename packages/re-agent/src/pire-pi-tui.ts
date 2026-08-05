@@ -52,20 +52,24 @@ const BANNER = `
 '--'                     
 `;
 
-// ─── Double Ctrl+C to quit ─────────────────────────────────────
-function setupGracefulQuit(onQuit: () => void, onFirstPress?: () => void): void {
+// ─── Ctrl+C handling ──────────────────────────────────────────
+// First Ctrl+C: abort the current agent loop immediately.
+// Second Ctrl+C (within 5s): exit pire entirely.
+function setupGracefulQuit(onQuit: () => void, onAbort?: () => void): void {
 	let pressed = false;
 	let timer: NodeJS.Timeout | undefined;
 
 	process.on("SIGINT", () => {
 		if (pressed) {
+			// Double press — exit immediately
 			if (timer) clearTimeout(timer);
 			onQuit();
 			process.exit(0);
 		}
 		pressed = true;
-		onFirstPress?.();
-		timer = setTimeout(() => { pressed = false; }, 15000);
+		// First press — abort current operation
+		onAbort?.();
+		timer = setTimeout(() => { pressed = false; }, 5000);
 	});
 
 	process.on("SIGTERM", () => {
@@ -321,6 +325,7 @@ export class PirePiTUI {
 	private systemPrompt = RE_SYSTEM_PROMPT;
 	private llm: LLMConfig | null;
 	private processing = false;
+	private abortController: AbortController | null = null;
 
 	constructor(target?: string) {
 		this.terminal = new ProcessTerminal();
@@ -369,7 +374,7 @@ export class PirePiTUI {
 		});
 
 		// Chat column: scrollview (grows) + border + status + input
-		const statusBox = new Box(1, 0);
+		const statusBox = new Box(0, 0);
 		statusBox.addChild(this.statusBar);
 		const chatVStack = new VStack([
 			{ component: this.scrollView, basis: 0, grow: 1, shrink: 1, minSize: 3 },
@@ -545,6 +550,7 @@ export class PirePiTUI {
 		this.processing = true;
 		this.statusBar.setProcessing(true);
 		this.statusBar.resetTokens();
+		this.abortController = new AbortController();
 		this.flushRender();
 
 		try {
@@ -582,6 +588,7 @@ export class PirePiTUI {
 				let assistantContent = "";
 
 				const resp = await callLLM(this.llm, [{ role: "system", content: systemPrompt }, ...this.messages], toolSchemas, {
+					signal: this.abortController?.signal,
 					onContent: (chunk: string) => {
 						assistantContent += chunk;
 						const last = this.transcript["entries"][this.transcript["entries"].length - 1];
@@ -693,9 +700,14 @@ export class PirePiTUI {
 				}
 			}
 		} catch (e: any) {
-			this.transcript.add("error", e.message);
+			if (e?.message === "Aborted" || e?.code === "ERR_ABORTED" || e?.name === "AbortError") {
+				// Expected when user presses Ctrl+C
+			} else {
+				this.transcript.add("error", e.message);
+			}
 		} finally {
 			this.processing = false;
+			this.abortController = null;
 			this.statusBar.setProcessing(false);
 			this.flushRender();
 		}
@@ -706,8 +718,12 @@ export class PirePiTUI {
 		setupGracefulQuit(
 			() => { this.stop(); },
 			() => {
-				this.transcript.add("system", chalk.bold.yellow("Press Ctrl+C again to quit."));
-				this.flushRender();
+				// First Ctrl+C — abort current operation
+				if (this.processing && this.abortController) {
+					this.abortController.abort();
+					this.transcript.add("system", chalk.bold.yellow("⏹ Aborted."));
+					this.flushRender();
+				}
 			},
 		);
 	}
