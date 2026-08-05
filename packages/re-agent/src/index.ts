@@ -9,11 +9,11 @@
  * Tools degrade gracefully — only available if the underlying binary/module exists.
  */
 
-import { Type } from "typebox";
-import { execSync, execFileSync, spawn } from "node:child_process";
-import { writeFileSync, existsSync, openSync, readSync, closeSync, mkdirSync } from "node:fs";
-import { join, dirname, basename } from "node:path";
+import { execFileSync, execSync, spawn } from "node:child_process";
+import { closeSync, existsSync, mkdirSync, openSync, readSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { Type } from "typebox";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -26,9 +26,10 @@ const DEVNULL = IS_WIN ? "2>nul" : "2>/dev/null";
 // installs packages like yara-python, capstone, etc.
 function findPython(): string {
 	if (IS_WIN) return "python";
-	const candidates = process.platform === "darwin"
-		? ["/opt/homebrew/bin/python3", "/usr/local/bin/python3", "python3"]
-		: ["/usr/bin/python3", "python3"];
+	const candidates =
+		process.platform === "darwin"
+			? ["/opt/homebrew/bin/python3", "/usr/local/bin/python3", "python3"]
+			: ["/usr/bin/python3", "python3"];
 	for (const p of candidates) {
 		try {
 			execFileSync(p, ["--version"], { stdio: "ignore" });
@@ -95,7 +96,12 @@ function textResult(text: string, details?: Record<string, unknown>): ToolResult
 	const limit = 200000;
 	const truncated = text.length > limit;
 	const out = truncated
-		? text.slice(0, limit) + "\n\n[... output truncated: showing first " + limit + " of " + text.length + " chars ...]"
+		? text.slice(0, limit) +
+			"\n\n[... output truncated: showing first " +
+			limit +
+			" of " +
+			text.length +
+			" chars ...]"
 		: text;
 	return {
 		content: [{ type: "text" as const, text: out }],
@@ -137,11 +143,17 @@ class GhidraBridge {
 			"/opt/ghidra-mcp/bridge_mcp_ghidra.py",
 		];
 		for (const c of candidates) {
-			if (existsSync(c)) { this.bridgePath = c; break; }
+			if (existsSync(c)) {
+				this.bridgePath = c;
+				break;
+			}
 		}
 		// Find Ghidra installation
 		try {
-			const ghidraDirs = execSync("ls -d /opt/ghidra_* 2>/dev/null", { encoding: "utf-8" }).trim().split("\n").filter(Boolean);
+			const ghidraDirs = execSync("ls -d /opt/ghidra_* 2>/dev/null", { encoding: "utf-8" })
+				.trim()
+				.split("\n")
+				.filter(Boolean);
 			if (ghidraDirs.length > 0) this.ghidraHome = ghidraDirs[0];
 		} catch {}
 		// Find MCP extension JAR
@@ -154,8 +166,14 @@ class GhidraBridge {
 			];
 			for (const dir of jarCandidates) {
 				try {
-					const jars = execSync(`ls ${dir}/GhidraMCP-*.jar 2>/dev/null`, { encoding: "utf-8" }).trim().split("\n").filter(Boolean);
-					if (jars.length > 0) { this.mcpJar = jars[0]; break; }
+					const jars = execSync(`ls ${dir}/GhidraMCP-*.jar 2>/dev/null`, { encoding: "utf-8" })
+						.trim()
+						.split("\n")
+						.filter(Boolean);
+					if (jars.length > 0) {
+						this.mcpJar = jars[0];
+						break;
+					}
 				} catch {}
 			}
 		}
@@ -207,7 +225,8 @@ java -Xmx4g -XX:+UseG1GC \\
 		writeFileSync(scriptPath, script, { mode: 0o755 });
 
 		spawn("bash", [scriptPath], {
-			detached: true, stdio: "ignore",
+			detached: true,
+			stdio: "ignore",
 		}).unref();
 
 		// Wait for startup (Ghidra JVM takes ~15-20s)
@@ -222,9 +241,24 @@ java -Xmx4g -XX:+UseG1GC \\
 		if (!this.ghidraHome || !this.mcpJar) return "";
 		const jars: string[] = [this.mcpJar];
 		try {
-			const frameworkJars = execSync(`ls ${this.ghidraHome}/Ghidra/Framework/*/lib/*.jar 2>/dev/null`, { encoding: "utf-8" }).trim().split("\n").filter(Boolean);
-			const featureJars = execSync(`ls ${this.ghidraHome}/Ghidra/Features/*/lib/*.jar 2>/dev/null`, { encoding: "utf-8" }).trim().split("\n").filter(Boolean);
-			const processorJars = execSync(`ls ${this.ghidraHome}/Ghidra/Processors/*/lib/*.jar 2>/dev/null`, { encoding: "utf-8" }).trim().split("\n").filter(Boolean);
+			const frameworkJars = execSync(`ls ${this.ghidraHome}/Ghidra/Framework/*/lib/*.jar 2>/dev/null`, {
+				encoding: "utf-8",
+			})
+				.trim()
+				.split("\n")
+				.filter(Boolean);
+			const featureJars = execSync(`ls ${this.ghidraHome}/Ghidra/Features/*/lib/*.jar 2>/dev/null`, {
+				encoding: "utf-8",
+			})
+				.trim()
+				.split("\n")
+				.filter(Boolean);
+			const processorJars = execSync(`ls ${this.ghidraHome}/Ghidra/Processors/*/lib/*.jar 2>/dev/null`, {
+				encoding: "utf-8",
+			})
+				.trim()
+				.split("\n")
+				.filter(Boolean);
 			jars.push(...frameworkJars, ...featureJars, ...processorJars);
 		} catch {}
 		return jars.join(":");
@@ -309,7 +343,9 @@ const stringsTool: AgentTool<{ path: string; minLength?: number; encoding?: stri
 	parameters: Type.Object({
 		path: Type.String({ description: "Path to the binary file" }),
 		minLength: Type.Optional(Type.Number({ description: "Minimum string length (default: 4)", default: 4 })),
-		encoding: Type.Optional(Type.String({ description: "Encoding: s=7bit, S=8bit, b=16bit (default: s)", default: "s" })),
+		encoding: Type.Optional(
+			Type.String({ description: "Encoding: s=7bit, S=8bit, b=16bit (default: s)", default: "s" }),
+		),
 	}),
 	async execute(_id, params) {
 		const minLen = params.minLength ?? 4;
@@ -327,7 +363,13 @@ const fileTool: AgentTool<{ path: string }> = {
 	},
 };
 
-const objdumpTool: AgentTool<{ path: string; section?: string; disassemble?: boolean; startAddress?: string; stopAddress?: string }> = {
+const objdumpTool: AgentTool<{
+	path: string;
+	section?: string;
+	disassemble?: boolean;
+	startAddress?: string;
+	stopAddress?: string;
+}> = {
 	name: "objdump",
 	description: "Dump sections or disassemble ELF/PE binaries.",
 	parameters: Type.Object({
@@ -358,10 +400,19 @@ const readelfTool: AgentTool<{ path: string; info?: string }> = {
 	description: "Read ELF headers, sections, symbols, relocations.",
 	parameters: Type.Object({
 		path: Type.String({ description: "Path to the ELF binary" }),
-		info: Type.Optional(Type.String({ description: "headers, sections, symbols, dynamic, notes, all", default: "all" })),
+		info: Type.Optional(
+			Type.String({ description: "headers, sections, symbols, dynamic, notes, all", default: "all" }),
+		),
 	}),
 	async execute(_id, params) {
-		const flagMap: Record<string, string> = { headers: "-h", sections: "-S", symbols: "-s", dynamic: "-d", notes: "-n", all: "-a" };
+		const flagMap: Record<string, string> = {
+			headers: "-h",
+			sections: "-S",
+			symbols: "-s",
+			dynamic: "-d",
+			notes: "-n",
+			all: "-a",
+		};
 		const flag = flagMap[params.info ?? "all"] ?? "-a";
 		return textResult(run(`readelf ${flag} ${shellEscape(params.path)}`));
 	},
@@ -378,7 +429,10 @@ const hexdumpTool: AgentTool<{ path: string; offset?: number; length?: number }>
 	async execute(_id, params) {
 		const offset = params.offset ?? 0;
 		const length = params.length ?? 256;
-		return textResult(run(`dd if=${shellEscape(params.path)} bs=1 skip=${offset} count=${length} ${DEVNULL} | hexdump -C`), { offset, length });
+		return textResult(
+			run(`dd if=${shellEscape(params.path)} bs=1 skip=${offset} count=${length} ${DEVNULL} | hexdump -C`),
+			{ offset, length },
+		);
 	},
 };
 
@@ -404,7 +458,9 @@ class R2Session {
 		if (this.proc && this.currentFile === path) return;
 		// Kill old process if switching files
 		if (this.proc) {
-			try { this.proc.child.kill(); } catch {}
+			try {
+				this.proc.child.kill();
+			} catch {}
 			this.proc = null;
 		}
 		// -q0: quiet mode + emit null byte on startup (so we know it's ready)
@@ -461,11 +517,15 @@ class R2Session {
 		});
 	}
 
-	getCurrentFile() { return this.currentFile; }
+	getCurrentFile() {
+		return this.currentFile;
+	}
 
 	dispose() {
 		if (this.proc) {
-			try { this.proc.child.kill(); } catch {}
+			try {
+				this.proc.child.kill();
+			} catch {}
 			this.proc = null;
 		}
 	}
@@ -475,16 +535,18 @@ const r2Session = new R2Session();
 
 const r2Tool: AgentTool<{ path: string; command: string }> = {
 	name: "r2",
-	description: "Run a radare2 command on a binary. e.g. 'aaa; afl' (analyze+list functions), 'pdf @ main' (disassemble), 'iz' (strings).",
+	description:
+		"Run a radare2 command on a binary. e.g. 'aaa; afl' (analyze+list functions), 'pdf @ main' (disassemble), 'iz' (strings).",
 	parameters: Type.Object({
 		path: Type.String({ description: "Path to the binary" }),
 		command: Type.String({ description: "Radare2 command string" }),
 	}),
 	async execute(_id, params) {
 		// Auto-run 'aaa' on first call per file, prepend to subsequent commands only if not already analyzed
-		const cmd = params.command.startsWith("aaa") || r2Session.isAnalyzed(params.path)
-			? params.command
-			: `aaa; ${params.command}`;
+		const cmd =
+			params.command.startsWith("aaa") || r2Session.isAnalyzed(params.path)
+				? params.command
+				: `aaa; ${params.command}`;
 		try {
 			return textResult(await r2Session.run(params.path, cmd));
 		} catch (e) {
@@ -494,9 +556,14 @@ const r2Tool: AgentTool<{ path: string; command: string }> = {
 				const fallbackCmd = cmd.replace(/^aaa/, "aa");
 				try {
 					const result = await r2Session.run(params.path, fallbackCmd);
-					return textResult(result + "\n\n[Note: 'aaa' analysis timed out, used 'aa' (lighter analysis) instead. Some functions may not be fully analyzed.]");
+					return textResult(
+						result +
+							"\n\n[Note: 'aaa' analysis timed out, used 'aa' (lighter analysis) instead. Some functions may not be fully analyzed.]",
+					);
 				} catch (e2) {
-					return textResult(`Error: r2 analysis timed out even with 'aa'. The binary may be too large or complex for radare2's analysis. Try running specific r2 commands manually.\n\nOriginal error: ${(e2 as Error).message}`);
+					return textResult(
+						`Error: r2 analysis timed out even with 'aa'. The binary may be too large or complex for radare2's analysis. Try running specific r2 commands manually.\n\nOriginal error: ${(e2 as Error).message}`,
+					);
 				}
 			}
 			throw e;
@@ -508,11 +575,14 @@ const r2Tool: AgentTool<{ path: string; command: string }> = {
 
 const decompileTool: AgentTool<{ path: string; address: string; format?: string }> = {
 	name: "decompile",
-	description: "Decompile a function using radare2. Accepts hex addresses (e.g. 0x1140) or symbol names (e.g. main, entry0). Auto-runs aaa analysis on first call per file. Format: 'pdc' (pseudo-C, default) or 'pdf' (annotated disassembly with types/vars).",
+	description:
+		"Decompile a function using radare2. Accepts hex addresses (e.g. 0x1140) or symbol names (e.g. main, entry0). Auto-runs aaa analysis on first call per file. Format: 'pdc' (pseudo-C, default) or 'pdf' (annotated disassembly with types/vars).",
 	parameters: Type.Object({
 		path: Type.String({ description: "Path to the binary" }),
 		address: Type.String({ description: "Function address (hex, e.g. 0x1400016b0) or symbol name (e.g. main)" }),
-		format: Type.Optional(Type.String({ description: "Output format: 'pdc' (pseudo-C, default) or 'pdf' (annotated disassembly)" })),
+		format: Type.Optional(
+			Type.String({ description: "Output format: 'pdc' (pseudo-C, default) or 'pdf' (annotated disassembly)" }),
+		),
 	}),
 	async execute(_id, params) {
 		const fmt = params.format === "pdf" ? "pdf" : "pdc";
@@ -521,9 +591,7 @@ const decompileTool: AgentTool<{ path: string; address: string; format?: string 
 		if (!/^0x[0-9a-fA-F]+$/.test(params.address) && !/^[0-9a-fA-F]+$/.test(params.address)) {
 			// It's a symbol name — r2's `s` command can handle it directly
 			// but we use `?v` to validate it resolves
-			const checkCmd = r2Session.isAnalyzed(params.path)
-				? `?v ${params.address}`
-				: `aa; ?v ${params.address}`;
+			const checkCmd = r2Session.isAnalyzed(params.path) ? `?v ${params.address}` : `aa; ?v ${params.address}`;
 			let resolved: string;
 			try {
 				resolved = await r2Session.run(params.path, checkCmd);
@@ -532,13 +600,13 @@ const decompileTool: AgentTool<{ path: string; address: string; format?: string 
 			}
 			const cleaned = resolved.replace(/\x00/g, "").trim();
 			if (!cleaned || cleaned === "0x0" || cleaned === "0") {
-				return textResult(`Symbol "${params.address}" not found in binary. Use 'r2' with 'afl' to list valid function addresses.`);
+				return textResult(
+					`Symbol "${params.address}" not found in binary. Use 'r2' with 'afl' to list valid function addresses.`,
+				);
 			}
 			seekTarget = params.address; // r2's `s` handles symbol names natively
 		}
-		const cmd = r2Session.isAnalyzed(params.path)
-			? `s ${seekTarget}; ${fmt}`
-			: `aaa; s ${seekTarget}; ${fmt}`;
+		const cmd = r2Session.isAnalyzed(params.path) ? `s ${seekTarget}; ${fmt}` : `aaa; s ${seekTarget}; ${fmt}`;
 		let result: string;
 		try {
 			result = await r2Session.run(params.path, cmd);
@@ -561,10 +629,14 @@ const decompileTool: AgentTool<{ path: string; address: string; format?: string 
 				const fallback = await r2Session.run(params.path, fallbackCmd);
 				cleaned = fallback.replace(/\x00/g, "").trim();
 				if (!cleaned) {
-					return textResult(`No decompilable function found at ${params.address}. The address may be in a data section, alignment padding, or not a function entry point. Use 'r2' with 'afl' to list valid function addresses.`);
+					return textResult(
+						`No decompilable function found at ${params.address}. The address may be in a data section, alignment padding, or not a function entry point. Use 'r2' with 'afl' to list valid function addresses.`,
+					);
 				}
 			} else {
-				return textResult(`No disassembly found at ${params.address}. The address may be invalid or in a data section.`);
+				return textResult(
+					`No disassembly found at ${params.address}. The address may be invalid or in a data section.`,
+				);
 			}
 		}
 		// Post-process: clean up r2 pdc noise
@@ -659,7 +731,8 @@ const binwalkTool: AgentTool<{ path: string; extract?: boolean }> = {
 
 const liefTool: AgentTool<{ path: string; action: string }> = {
 	name: "lief",
-	description: "Parse binary formats (ELF, PE, Mach-O) with LIEF. Actions: info, imports, exports, sections, headers, dos.",
+	description:
+		"Parse binary formats (ELF, PE, Mach-O) with LIEF. Actions: info, imports, exports, sections, headers, dos.",
 	parameters: Type.Object({
 		path: Type.String({ description: "Path to the binary" }),
 		action: Type.String({ description: "info|imports|exports|sections|headers|dos" }),
@@ -671,7 +744,7 @@ const liefTool: AgentTool<{ path: string; action: string }> = {
 			imports: 'print("\\n".join(f"{i.name}@{i.address:#x}" for i in b.imported_functions))',
 			exports: 'print("\\n".join(f"{e.name}@{e.address:#x}" for e in b.exported_functions))',
 			sections: 'print("\\n".join(f"{s.name} offset={s.offset:#x} size={s.size}" for s in b.sections))',
-			headers: 'print(json.dumps({k:str(v) for k,v in b.header.__dict__.items()}, indent=2))',
+			headers: "print(json.dumps({k:str(v) for k,v in b.header.__dict__.items()}, indent=2))",
 			dos: 'print(b.dos_header.__dict__) if hasattr(b,"dos_header") else print("No DOS header")',
 		};
 		const action = actions[params.action] ?? 'print("Unknown action")';
@@ -682,7 +755,8 @@ const liefTool: AgentTool<{ path: string; action: string }> = {
 
 const angrTool: AgentTool<{ path: string; action: string; target?: string }> = {
 	name: "angr",
-	description: "Symbolic execution with angr. Actions: cfg (build CFG), find (find path to address), properties (binary properties).",
+	description:
+		"Symbolic execution with angr. Actions: cfg (build CFG), find (find path to address), properties (binary properties).",
 	parameters: Type.Object({
 		path: Type.String({ description: "Path to the binary" }),
 		action: Type.String({ description: "cfg|find|properties" }),
@@ -698,7 +772,12 @@ const angrTool: AgentTool<{ path: string; action: string; target?: string }> = {
 		} else {
 			script = `import angr; p=angr.Project("${params.path}", auto_load_libs=False); print(f"Arch: {p.arch} Entry: {p.entry:#x} PIE: {p.loader.main_object.pic}")`;
 		}
-		return textResult(run(`${PYTHON} -c '${script.replace(/'/g, "'\\''")}' ${DEVNULL}`, { timeout: 120000, maxBuffer: 20 * 1024 * 1024 }));
+		return textResult(
+			run(`${PYTHON} -c '${script.replace(/'/g, "'\\''")}' ${DEVNULL}`, {
+				timeout: 120000,
+				maxBuffer: 20 * 1024 * 1024,
+			}),
+		);
 	},
 };
 
@@ -709,7 +788,9 @@ const capstoneTool: AgentTool<{ path: string; offset?: number; count?: number; a
 		path: Type.String({ description: "Path to the binary" }),
 		offset: Type.Optional(Type.Number({ description: "Byte offset to start (default: 0)", default: 0 })),
 		count: Type.Optional(Type.Number({ description: "Number of instructions (default: 50)", default: 50 })),
-		arch: Type.Optional(Type.String({ description: "Architecture: x86, arm, arm64, mips (default: x86)", default: "x86" })),
+		arch: Type.Optional(
+			Type.String({ description: "Architecture: x86, arm, arm64, mips (default: x86)", default: "x86" }),
+		),
 		mode: Type.Optional(Type.String({ description: "Mode: 32, 64, arm (default: 64)", default: "64" })),
 	}),
 	async execute(_id, params) {
@@ -718,7 +799,7 @@ const capstoneTool: AgentTool<{ path: string; offset?: number; count?: number; a
 		const count = params.count ?? 50;
 		const arch = params.arch ?? "x86";
 		const mode = params.mode ?? "64";
-		const script = `from capstone import *; import struct; data=open("${params.path}","rb").read()[${offset}:${offset}+${count*15}]; md=Cs(CS_ARCH_${arch.toUpperCase()},CS_MODE_${mode=="64"?"64":mode=="32"?"32":"ARM"}); [print(f"0x{i.address:x}: {i.mnemonic} {i.op_str}") for i in md.disasm(data,${offset})][:${count}]`;
+		const script = `from capstone import *; import struct; data=open("${params.path}","rb").read()[${offset}:${offset}+${count * 15}]; md=Cs(CS_ARCH_${arch.toUpperCase()},CS_MODE_${mode == "64" ? "64" : mode == "32" ? "32" : "ARM"}); [print(f"0x{i.address:x}: {i.mnemonic} {i.op_str}") for i in md.disasm(data,${offset})][:${count}]`;
 		return textResult(run(`${PYTHON} -c '${script.replace(/'/g, "'\\''")}' ${DEVNULL}`, { timeout: 15000 }));
 	},
 };
@@ -728,14 +809,16 @@ const keystoneTool: AgentTool<{ assembly: string; arch?: string; mode?: string }
 	description: "Assemble instructions to bytes with Keystone. Provide assembly text.",
 	parameters: Type.Object({
 		assembly: Type.String({ description: "Assembly instructions (e.g. 'xor eax, eax; ret')" }),
-		arch: Type.Optional(Type.String({ description: "Architecture: x86, arm, arm64, mips (default: x86)", default: "x86" })),
+		arch: Type.Optional(
+			Type.String({ description: "Architecture: x86, arm, arm64, mips (default: x86)", default: "x86" }),
+		),
 		mode: Type.Optional(Type.String({ description: "Mode: 32, 64, arm (default: 64)", default: "64" })),
 	}),
 	async execute(_id, params) {
 		if (!pythonModule("keystone")) return textResult("keystone not installed. Install: pip install keystone-engine");
 		const arch = params.arch ?? "x86";
 		const mode = params.mode ?? "64";
-		const script = `from keystone import *; ks=Ks(KS_ARCH_${arch.toUpperCase()},KS_MODE_${mode=="64"?"64":mode=="32"?"32":"ARM"}); encoding,count=ks.asm("${params.assembly.replace(/"/g, '\\"')}"); print(" ".join(f"{b:02x}" for b in encoding))`;
+		const script = `from keystone import *; ks=Ks(KS_ARCH_${arch.toUpperCase()},KS_MODE_${mode == "64" ? "64" : mode == "32" ? "32" : "ARM"}); encoding,count=ks.asm("${params.assembly.replace(/"/g, '\\"')}"); print(" ".join(f"{b:02x}" for b in encoding))`;
 		return textResult(run(`${PYTHON} -c '${script.replace(/'/g, "'\\''")}' ${DEVNULL}`, { timeout: 10000 }));
 	},
 };
@@ -746,9 +829,13 @@ const unicornTool: AgentTool<{ path: string; entry?: string; arch?: string; mode
 	parameters: Type.Object({
 		path: Type.String({ description: "Path to the binary" }),
 		entry: Type.Optional(Type.String({ description: "Entry point hex address (default: auto-detect)" })),
-		arch: Type.Optional(Type.String({ description: "Architecture: x86, arm, arm64, mips (default: x86)", default: "x86" })),
+		arch: Type.Optional(
+			Type.String({ description: "Architecture: x86, arm, arm64, mips (default: x86)", default: "x86" }),
+		),
 		mode: Type.Optional(Type.String({ description: "Mode: 32, 64, arm (default: 64)", default: "64" })),
-		steps: Type.Optional(Type.Number({ description: "Number of instructions to emulate (default: 1000)", default: 1000 })),
+		steps: Type.Optional(
+			Type.Number({ description: "Number of instructions to emulate (default: 1000)", default: 1000 }),
+		),
 	}),
 	async execute(_id, params) {
 		if (!pythonModule("unicorn")) return textResult("unicorn not installed. Install: pip install unicorn");
@@ -756,12 +843,13 @@ const unicornTool: AgentTool<{ path: string; entry?: string; arch?: string; mode
 		const mode = params.mode ?? "64";
 		const steps = params.steps ?? 1000;
 		const entry = params.entry ?? "0";
-		const script = `from unicorn import *; from unicorn.x86_const import *; import struct; data=open("${params.path}","rb").read(); uc=Uc(UC_ARCH_${arch.toUpperCase()},UC_MODE_${mode=="64"?"64":mode=="32"?"32":"ARM"}); uc.mem_map(0x10000, 2*1024*1024); uc.mem_write(0x10000, data); uc.emu_start(0x10000+int("${entry}",16) if "${entry}" else 0x10000, 0x10000+len(data), count=${steps}); rax=uc.reg_read(UC_X86_REG_RAX); print(f"Emulated ${steps} steps. RAX={rax:#x}")`;
+		const script = `from unicorn import *; from unicorn.x86_const import *; import struct; data=open("${params.path}","rb").read(); uc=Uc(UC_ARCH_${arch.toUpperCase()},UC_MODE_${mode == "64" ? "64" : mode == "32" ? "32" : "ARM"}); uc.mem_map(0x10000, 2*1024*1024); uc.mem_write(0x10000, data); uc.emu_start(0x10000+int("${entry}",16) if "${entry}" else 0x10000, 0x10000+len(data), count=${steps}); rax=uc.reg_read(UC_X86_REG_RAX); print(f"Emulated ${steps} steps. RAX={rax:#x}")`;
 		try {
 			return textResult(run(`${PYTHON} -c '${script.replace(/'/g, "'\\''")}' ${DEVNULL}`, { timeout: 30000 }));
 		} catch (e: any) {
 			const stderr = e.stderr ? e.stderr.toString() : "";
-			const errLine = stderr.split("\n").find((l: string) => l.includes("Error:") || l.includes("error:")) || e.message;
+			const errLine =
+				stderr.split("\n").find((l: string) => l.includes("Error:") || l.includes("error:")) || e.message;
 			return textResult(`Unicorn emulation failed: ${errLine.trim()}`);
 		}
 	},
@@ -779,17 +867,23 @@ const yaraTool: AgentTool<{ path: string; rule: string }> = {
 		const tmpRule = `/tmp/pire_yara_${Date.now()}.yar`;
 		writeFileSync(tmpRule, params.rule);
 		try {
-			const result = run(`${PYTHON} -c "import yara; r=yara.compile('${tmpRule}'); m=r.match('${params.path}'); print('\\\\n'.join(f'{s}: {t}' for m2 in m for s,t in [(m2.rule, 'matched')]) if m else print('No matches'))" ${DEVNULL}`, { timeout: 15000 });
+			const result = run(
+				`${PYTHON} -c "import yara; r=yara.compile('${tmpRule}'); m=r.match('${params.path}'); print('\\\\n'.join(f'{s}: {t}' for m2 in m for s,t in [(m2.rule, 'matched')]) if m else print('No matches'))" ${DEVNULL}`,
+				{ timeout: 15000 },
+			);
 			return textResult(result);
 		} finally {
-			try { run(`rm -f ${tmpRule}`); } catch {}
+			try {
+				run(`rm -f ${tmpRule}`);
+			} catch {}
 		}
 	},
 };
 
 const fridaTool: AgentTool<{ target: string; script: string; action: string }> = {
 	name: "frida",
-	description: "Dynamic instrumentation with Frida. Actions: spawn (spawn+inject), attach (attach to PID/name), list (list processes).",
+	description:
+		"Dynamic instrumentation with Frida. Actions: spawn (spawn+inject), attach (attach to PID/name), list (list processes).",
 	parameters: Type.Object({
 		target: Type.String({ description: "Binary path or PID (for spawn/attach) or empty (for list)" }),
 		script: Type.Optional(Type.String({ description: "Frida JS script" })),
@@ -797,17 +891,27 @@ const fridaTool: AgentTool<{ target: string; script: string; action: string }> =
 	}),
 	async execute(_id, params) {
 		const fridaBin = which("frida") ?? which("frida-trace");
-		if (!fridaBin && !pythonModule("frida")) return textResult("frida not installed. Install: pip install frida-tools");
+		if (!fridaBin && !pythonModule("frida"))
+			return textResult("frida not installed. Install: pip install frida-tools");
 		if (params.action === "list") {
-			return textResult(run(`frida-ps -a ${DEVNULL} || ${PYTHON} -c "import frida; [print(f'{p.pid}: {p.name}') for p in frida.enumerate_devices()[0].enumerate_processes()]"`, { timeout: 10000 }));
+			return textResult(
+				run(
+					`frida-ps -a ${DEVNULL} || ${PYTHON} -c "import frida; [print(f'{p.pid}: {p.name}') for p in frida.enumerate_devices()[0].enumerate_processes()]"`,
+					{ timeout: 10000 },
+				),
+			);
 		}
 		const tmpScript = `/tmp/pire_frida_${Date.now()}.js`;
 		writeFileSync(tmpScript, params.script ?? "");
 		try {
 			const flag = params.action === "spawn" ? "-f" : "-p";
-			return textResult(run(`frida ${flag} ${shellEscape(params.target)} -l ${tmpScript} --no-pause -q 2>&1`, { timeout: 30000 }));
+			return textResult(
+				run(`frida ${flag} ${shellEscape(params.target)} -l ${tmpScript} --no-pause -q 2>&1`, { timeout: 30000 }),
+			);
 		} finally {
-			try { run(`rm -f ${tmpScript}`); } catch {}
+			try {
+				run(`rm -f ${tmpScript}`);
+			} catch {}
 		}
 	},
 };
@@ -822,7 +926,11 @@ const gdbTool: AgentTool<{ path: string; commands: string }> = {
 	async execute(_id, params) {
 		const bin = which("gdb");
 		if (!bin) return textResult("gdb not installed");
-		return textResult(run(`${bin} -batch -ex "${params.commands.replace(/"/g, '\\"')}" ${shellEscape(params.path)}`, { timeout: 30000 }));
+		return textResult(
+			run(`${bin} -batch -ex "${params.commands.replace(/"/g, '\\"')}" ${shellEscape(params.path)}`, {
+				timeout: 30000,
+			}),
+		);
 	},
 };
 
@@ -836,13 +944,19 @@ const volatilityTool: AgentTool<{ memdump: string; plugin: string; extraArgs?: s
 	}),
 	async execute(_id, params) {
 		const vol = which("vol") ?? which("volatility3");
-		if (!vol && !pythonModule("volatility3")) return textResult("volatility3 not installed. Install: pip install volatility3");
+		if (!vol && !pythonModule("volatility3"))
+			return textResult("volatility3 not installed. Install: pip install volatility3");
 		const cmd = vol ?? `${PYTHON} -m volatility3`;
 		try {
-			return textResult(run(`${cmd} -f ${shellEscape(params.memdump)} ${params.plugin} ${params.extraArgs ?? ""} ${DEVNULL}`, { timeout: 60000 }));
+			return textResult(
+				run(`${cmd} -f ${shellEscape(params.memdump)} ${params.plugin} ${params.extraArgs ?? ""} ${DEVNULL}`, {
+					timeout: 60000,
+				}),
+			);
 		} catch (e: any) {
 			const stderr = e.stderr ? e.stderr.toString() : "";
-			const errLine = stderr.split("\n").find((l: string) => l.includes("Error") || l.includes("error")) || e.message;
+			const errLine =
+				stderr.split("\n").find((l: string) => l.includes("Error") || l.includes("error")) || e.message;
 			return textResult(`Volatility failed: ${errLine.trim()}`);
 		}
 	},
@@ -860,7 +974,8 @@ const volatilityTool: AgentTool<{ memdump: string; plugin: string; extraArgs?: s
  */
 const disasmFuncTool: AgentTool<{ path: string; startAddress: string; maxBytes?: number }> = {
 	name: "disasm_func",
-	description: "Extract a single function's disassembly from a stripped binary. More reliable than raw objdump — collects the full function body past early-exit rets until the next function boundary. Provide a hex start address. Works on both ELF and PE binaries.",
+	description:
+		"Extract a single function's disassembly from a stripped binary. More reliable than raw objdump — collects the full function body past early-exit rets until the next function boundary. Provide a hex start address. Works on both ELF and PE binaries.",
 	parameters: Type.Object({
 		path: Type.String({ description: "Path to the binary" }),
 		startAddress: Type.String({ description: "Hex start address of the function (e.g. '0x1140')" }),
@@ -870,36 +985,38 @@ const disasmFuncTool: AgentTool<{ path: string; startAddress: string; maxBytes?:
 		let addr = params.startAddress.replace(/^0x/, "");
 		const maxBytes = params.maxBytes ?? 8192;
 
-	// Resolve symbolic addresses (e.g. "main", "entry0") to hex via r2
-	if (!/^[0-9a-fA-F]+$/.test(addr)) {
-		const r2path = which("r2") ?? which("radare2");
-		if (r2path) {
-			const resolved = run(
-				`${r2path} -qc "?v ${params.startAddress}" ${shellEscape(params.path)} ${DEVNULL}`,
-				{ timeout: 15000 },
-			).trim();
-			// r2 ?v prints the resolved address as a hex number
-			if (/^0x[0-9a-fA-F]+$/.test(resolved) || /^[0-9a-fA-F]+$/.test(resolved)) {
-				addr = resolved.replace(/^0x/, "");
+		// Resolve symbolic addresses (e.g. "main", "entry0") to hex via r2
+		if (!/^[0-9a-fA-F]+$/.test(addr)) {
+			const r2path = which("r2") ?? which("radare2");
+			if (r2path) {
+				const resolved = run(`${r2path} -qc "?v ${params.startAddress}" ${shellEscape(params.path)} ${DEVNULL}`, {
+					timeout: 15000,
+				}).trim();
+				// r2 ?v prints the resolved address as a hex number
+				if (/^0x[0-9a-fA-F]+$/.test(resolved) || /^[0-9a-fA-F]+$/.test(resolved)) {
+					addr = resolved.replace(/^0x/, "");
+				} else {
+					return textResult(
+						`Could not resolve symbol "${params.startAddress}" to an address. Use a hex address like 0x1140. r2 output: ${resolved}`,
+					);
+				}
 			} else {
-				return textResult(`Could not resolve symbol "${params.startAddress}" to an address. Use a hex address like 0x1140. r2 output: ${resolved}`);
+				return textResult(
+					`Cannot resolve symbol "${params.startAddress}" without radare2. Provide a hex address like 0x1140.`,
+				);
 			}
-		} else {
-			return textResult(`Cannot resolve symbol "${params.startAddress}" without radare2. Provide a hex address like 0x1140.`);
 		}
-	}
 
-	// Detect PE binary by reading the first 2 bytes (MZ header)
-	const isPE = isPEBinary(params.path);
+		// Detect PE binary by reading the first 2 bytes (MZ header)
+		const isPE = isPEBinary(params.path);
 
 		if (isPE) {
 			// Use r2 for PE binaries — objdump is unreliable on PE
 			const r2path = which("r2") ?? which("radare2");
 			if (r2path) {
-				const result = run(
-					`${r2path} -qc "aaa; s 0x${addr}; pdf" ${shellEscape(params.path)} ${DEVNULL}`,
-					{ timeout: 60000 },
-				);
+				const result = run(`${r2path} -qc "aaa; s 0x${addr}; pdf" ${shellEscape(params.path)} ${DEVNULL}`, {
+					timeout: 60000,
+				});
 				if (result.trim()) {
 					return textResult(result, { startAddress: `0x${addr}`, format: "r2-pdf" });
 				}
@@ -911,7 +1028,8 @@ const disasmFuncTool: AgentTool<{ path: string; startAddress: string; maxBytes?:
 				{ timeout: 15000 },
 			);
 			return textResult(raw || `No disassembly found at 0x${addr} (PE binary, r2 not available).`, {
-				startAddress: `0x${addr}`, format: "objdump-pe",
+				startAddress: `0x${addr}`,
+				format: "objdump-pe",
 			});
 		}
 
@@ -946,7 +1064,7 @@ const disasmFuncTool: AgentTool<{ path: string; startAddress: string; maxBytes?:
 			}
 		}
 		if (funcLines.length === 0) return textResult(`No disassembly found at 0x${addr}. Check the address is correct.`);
-		const retCount = funcLines.filter(l => /	ret/.test(l)).length;
+		const retCount = funcLines.filter((l) => /	ret/.test(l)).length;
 		return textResult(funcLines.join("\n"), {
 			startAddress: `0x${addr}`,
 			instructions: instrCount,
@@ -959,12 +1077,34 @@ const disasmFuncTool: AgentTool<{ path: string; startAddress: string; maxBytes?:
 
 /** Commands that could exfiltrate data or make network connections. */
 const BLOCKED_PATTERNS = [
-	/\bcurl\s/, /\bwget\s/, /\bnc\s/, /\bnetcat\s/, /\bssh\s/, /\bscp\s/, /\brsync\s/,
-	/\bapt-get\s/, /\bapt\s/, /\bdpkg\s/, /\byum\s/, /\bdnf\s/, /\bpip\s/, /\bpip3\s/,
-	/\bnpm\s/, /\bnpx\s/, /\byarn\s/, /\bpnpm\s/, /\bbrew\s/,
-	/\bsudo\s/, /\bsu\s/, /\bdoas\s/,
-	/\bshutdown\b/, /\breboot\b/, /\bpoweroff\b/,
-	/\bmkfs\b/, /\bdd\s+.*of=/, /\b:()\{\s*:\|:&\s*\};:/, // fork bomb
+	/\bcurl\s/,
+	/\bwget\s/,
+	/\bnc\s/,
+	/\bnetcat\s/,
+	/\bssh\s/,
+	/\bscp\s/,
+	/\brsync\s/,
+	/\bapt-get\s/,
+	/\bapt\s/,
+	/\bdpkg\s/,
+	/\byum\s/,
+	/\bdnf\s/,
+	/\bpip\s/,
+	/\bpip3\s/,
+	/\bnpm\s/,
+	/\bnpx\s/,
+	/\byarn\s/,
+	/\bpnpm\s/,
+	/\bbrew\s/,
+	/\bsudo\s/,
+	/\bsu\s/,
+	/\bdoas\s/,
+	/\bshutdown\b/,
+	/\breboot\b/,
+	/\bpoweroff\b/,
+	/\bmkfs\b/,
+	/\bdd\s+.*of=/,
+	/\b:()\{\s*:\|:&\s*\};:/, // fork bomb
 ];
 
 /** Check if a command matches any blocked pattern. */
@@ -979,7 +1119,8 @@ function isCommandBlocked(command: string): string | null {
 
 const shellTool: AgentTool<{ command: string; cwd?: string }> = {
 	name: "shell",
-	description: "Run a shell command in the workspace sandbox (ls, find, file, gcc, diff, etc.). Network access, package management, and privileged commands are blocked. Optional cwd to set working directory.",
+	description:
+		"Run a shell command in the workspace sandbox (ls, find, file, gcc, diff, etc.). Network access, package management, and privileged commands are blocked. Optional cwd to set working directory.",
 	parameters: Type.Object({
 		command: Type.String({ description: "Shell command to execute" }),
 		cwd: Type.Optional(Type.String({ description: "Working directory (default: workspace root)" })),
@@ -1009,14 +1150,17 @@ const shellTool: AgentTool<{ command: string; cwd?: string }> = {
 
 const fetchTool: AgentTool<{ url: string; outputDir?: string }> = {
 	name: "fetch",
-	description: "Download a file from a URL (HTTP/HTTPS). Use when the user provides a link to a binary, archive, or file to analyze. Saves to /tmp/pire-downloads/ or specified dir.",
+	description:
+		"Download a file from a URL (HTTP/HTTPS). Use when the user provides a link to a binary, archive, or file to analyze. Saves to /tmp/pire-downloads/ or specified dir.",
 	parameters: Type.Object({
 		url: Type.String({ description: "URL to download" }),
 		outputDir: Type.Optional(Type.String({ description: "Output directory (default: /tmp/pire-downloads)" })),
 	}),
 	async execute(_id, params) {
 		const outDir = params.outputDir || "/tmp/pire-downloads";
-		try { mkdirSync(outDir, { recursive: true }); } catch {}
+		try {
+			mkdirSync(outDir, { recursive: true });
+		} catch {}
 		// Derive filename from URL, fallback to timestamp
 		const urlPath = params.url.split("?")[0].split("/").pop() || `file_${Date.now()}`;
 		const outPath = join(outDir, urlPath);
@@ -1039,10 +1183,13 @@ const fetchTool: AgentTool<{ url: string; outputDir?: string }> = {
 					? String(require("node:fs").statSync(outPath).size)
 					: run(`stat -c %s ${shellEscape(outPath)} ${DEVNULL} || stat -f %z ${shellEscape(outPath)} ${DEVNULL}`);
 				const fileType = IS_WIN ? "unknown" : run(`file ${shellEscape(outPath)}`);
-				return textResult(`Downloaded to: ${outPath}\nSize: ${statResult.trim()} bytes\nType: ${fileType.split(":")[1]?.trim() ?? "unknown"}`, {
-					path: outPath,
-					url: params.url,
-				});
+				return textResult(
+					`Downloaded to: ${outPath}\nSize: ${statResult.trim()} bytes\nType: ${fileType.split(":")[1]?.trim() ?? "unknown"}`,
+					{
+						path: outPath,
+						url: params.url,
+					},
+				);
 			}
 			return textResult("Download failed: no file created");
 		} catch (e: any) {
@@ -1055,7 +1202,8 @@ const fetchTool: AgentTool<{ url: string; outputDir?: string }> = {
 
 const hashTool: AgentTool<{ path: string; algo?: string }> = {
 	name: "hash",
-	description: "Compute file hashes (md5, sha1, sha256, or all). Useful for identifying known malware or comparing files.",
+	description:
+		"Compute file hashes (md5, sha1, sha256, or all). Useful for identifying known malware or comparing files.",
 	parameters: Type.Object({
 		path: Type.String({ description: "Path to file" }),
 		algo: Type.Optional(Type.String({ description: "Algorithm: md5, sha1, sha256, or all (default: all)" })),
@@ -1070,7 +1218,9 @@ const hashTool: AgentTool<{ path: string; algo?: string }> = {
 				try {
 					const out = run(`${bin} ${shellEscape(params.path)}`, { timeout: 30000 });
 					results.push(out.trim());
-				} catch { results.push(`${a}: error`); }
+				} catch {
+					results.push(`${a}: error`);
+				}
 			} else {
 				results.push(`${a}: not installed`);
 			}
@@ -1083,7 +1233,8 @@ const hashTool: AgentTool<{ path: string; algo?: string }> = {
 
 const entropyTool: AgentTool<{ path: string; blockSize?: number }> = {
 	name: "entropy",
-	description: "Calculate Shannon entropy of a file (or per-block). High entropy = compressed/encrypted. Useful for detecting packed sections or encrypted data.",
+	description:
+		"Calculate Shannon entropy of a file (or per-block). High entropy = compressed/encrypted. Useful for detecting packed sections or encrypted data.",
 	parameters: Type.Object({
 		path: Type.String({ description: "Path to file" }),
 		blockSize: Type.Optional(Type.Number({ description: "Block size in bytes (default: whole file)" })),
@@ -1126,15 +1277,20 @@ else:
 
 const extractTool: AgentTool<{ path: string; outputDir?: string }> = {
 	name: "extract",
-	description: "Extract archives (zip, tar.gz, tar.bz2, 7z, rar, deb, rpm). Auto-detects format. Use when analyzing packaged software or firmware.",
+	description:
+		"Extract archives (zip, tar.gz, tar.bz2, 7z, rar, deb, rpm). Auto-detects format. Use when analyzing packaged software or firmware.",
 	parameters: Type.Object({
 		path: Type.String({ description: "Path to archive" }),
-		outputDir: Type.Optional(Type.String({ description: "Output directory (default: /tmp/pire-extracted/<filename>)" })),
+		outputDir: Type.Optional(
+			Type.String({ description: "Output directory (default: /tmp/pire-extracted/<filename>)" }),
+		),
 	}),
 	async execute(_id, params) {
 		const baseName = params.path.split("/").pop() || "extracted";
 		const outDir = params.outputDir || join("/tmp/pire-extracted", baseName);
-		try { mkdirSync(outDir, { recursive: true }); } catch {}
+		try {
+			mkdirSync(outDir, { recursive: true });
+		} catch {}
 
 		const ext = params.path.toLowerCase();
 		let cmd = "";
@@ -1176,7 +1332,9 @@ const extractTool: AgentTool<{ path: string; outputDir?: string }> = {
 			const out = run(cmd, { timeout: 60000 });
 			// List extracted files
 			let listing = "";
-			try { listing = run(`find ${shellEscape(outDir)} -type f | head -50`, { timeout: 10000 }); } catch {}
+			try {
+				listing = run(`find ${shellEscape(outDir)} -type f | head -50`, { timeout: 10000 });
+			} catch {}
 			return textResult(`Extracted to: ${outDir}\n${out}\n\nFiles:\n${listing}`, { outputDir: outDir });
 		} catch (e: any) {
 			return textResult(`Extraction failed: ${e.message}`);
@@ -1188,7 +1346,8 @@ const extractTool: AgentTool<{ path: string; outputDir?: string }> = {
 
 const nmTool: AgentTool<{ path: string; demangle?: boolean }> = {
 	name: "nm",
-	description: "List symbols from a binary's symbol table (functions, variables, etc.). Use --demangle for C++ names. Useful for non-stripped binaries.",
+	description:
+		"List symbols from a binary's symbol table (functions, variables, etc.). Use --demangle for C++ names. Useful for non-stripped binaries.",
 	parameters: Type.Object({
 		path: Type.String({ description: "Path to binary" }),
 		demangle: Type.Optional(Type.Boolean({ description: "Demangle C++ symbols (default: true)" })),
@@ -1198,7 +1357,10 @@ const nmTool: AgentTool<{ path: string; demangle?: boolean }> = {
 		if (!bin) return textResult("nm not installed (part of binutils)");
 		const flag = params.demangle !== false ? "--demangle" : "";
 		try {
-			const out = run(`${bin} ${flag} ${shellEscape(params.path)} 2>&1`, { timeout: 30000, maxBuffer: 5 * 1024 * 1024 });
+			const out = run(`${bin} ${flag} ${shellEscape(params.path)} 2>&1`, {
+				timeout: 30000,
+				maxBuffer: 5 * 1024 * 1024,
+			});
 			return textResult(out);
 		} catch (e: any) {
 			const stdout = e.stdout?.toString() || "";
@@ -1259,7 +1421,8 @@ const diffTool: AgentTool<{ a: string; b: string; context?: number }> = {
 
 const jadxTool: AgentTool<{ path: string; outputDir?: string }> = {
 	name: "jadx",
-	description: "Decompile APK, DEX, JAR, or AAR files to Java source. Requires jadx installed. Use for Android apps and Java applications.",
+	description:
+		"Decompile APK, DEX, JAR, or AAR files to Java source. Requires jadx installed. Use for Android apps and Java applications.",
 	parameters: Type.Object({
 		path: Type.String({ description: "Path to APK/DEX/JAR file" }),
 		outputDir: Type.Optional(Type.String({ description: "Output directory (default: /tmp/pire-jadx/<filename>)" })),
@@ -1269,11 +1432,15 @@ const jadxTool: AgentTool<{ path: string; outputDir?: string }> = {
 		if (!bin) return textResult("jadx not installed. Install from https://github.com/skylot/jadx");
 		const baseName = params.path.split("/").pop() || "decompiled";
 		const outDir = params.outputDir || join("/tmp/pire-jadx", baseName);
-		try { mkdirSync(outDir, { recursive: true }); } catch {}
+		try {
+			mkdirSync(outDir, { recursive: true });
+		} catch {}
 		try {
 			const out = run(`${bin} -d ${shellEscape(outDir)} ${shellEscape(params.path)} 2>&1`, { timeout: 120000 });
 			let listing = "";
-			try { listing = run(`find ${shellEscape(outDir)} -name "*.java" | head -50`, { timeout: 10000 }); } catch {}
+			try {
+				listing = run(`find ${shellEscape(outDir)} -name "*.java" | head -50`, { timeout: 10000 });
+			} catch {}
 			return textResult(`Decompiled to: ${outDir}\n${out}\n\nJava files:\n${listing}`, { outputDir: outDir });
 		} catch (e: any) {
 			return textResult(`jadx failed: ${e.message}`);
@@ -1285,7 +1452,8 @@ const jadxTool: AgentTool<{ path: string; outputDir?: string }> = {
 
 const ilspyTool: AgentTool<{ path: string; outputDir?: string }> = {
 	name: "ilspy",
-	description: "Decompile .NET assemblies (DLL/EXE) to C# source. Requires ilspycmd or monodis installed. Use for .NET applications.",
+	description:
+		"Decompile .NET assemblies (DLL/EXE) to C# source. Requires ilspycmd or monodis installed. Use for .NET applications.",
 	parameters: Type.Object({
 		path: Type.String({ description: "Path to .NET assembly" }),
 		outputDir: Type.Optional(Type.String({ description: "Output directory" })),
@@ -1293,14 +1461,21 @@ const ilspyTool: AgentTool<{ path: string; outputDir?: string }> = {
 	async execute(_id, params) {
 		const ilspy = which("ilspycmd");
 		const monodis = which("monodis");
-		if (!ilspy && !monodis) return textResult("Neither ilspycmd nor monodis installed. Install ilspycmd (dotnet tool install -g ilspycmd) or mono-utils.");
+		if (!ilspy && !monodis)
+			return textResult(
+				"Neither ilspycmd nor monodis installed. Install ilspycmd (dotnet tool install -g ilspycmd) or mono-utils.",
+			);
 		const baseName = params.path.split("/").pop() || "decompiled";
 		const outDir = params.outputDir || join("/tmp/pire-ilspy", baseName);
-		try { mkdirSync(outDir, { recursive: true }); } catch {}
+		try {
+			mkdirSync(outDir, { recursive: true });
+		} catch {}
 
 		if (ilspy) {
 			try {
-				const out = run(`${ilspy} ${shellEscape(params.path)} -p -o ${shellEscape(outDir)} 2>&1`, { timeout: 120000 });
+				const out = run(`${ilspy} ${shellEscape(params.path)} -p -o ${shellEscape(outDir)} 2>&1`, {
+					timeout: 120000,
+				});
 				return textResult(`Decompiled to: ${outDir}\n${out}`, { outputDir: outDir });
 			} catch (e: any) {
 				return textResult(`ilspycmd failed: ${e.message}`);
@@ -1309,7 +1484,10 @@ const ilspyTool: AgentTool<{ path: string; outputDir?: string }> = {
 
 		// Fallback: monodis (IL only, not C#)
 		try {
-			const out = run(`${monodis} --output=${shellEscape(join(outDir, "output.il"))} ${shellEscape(params.path)} 2>&1`, { timeout: 60000 });
+			const out = run(
+				`${monodis} --output=${shellEscape(join(outDir, "output.il"))} ${shellEscape(params.path)} 2>&1`,
+				{ timeout: 60000 },
+			);
 			return textResult(`Disassembled (IL) to: ${outDir}/output.il\n${out}`, { outputDir: outDir });
 		} catch (e: any) {
 			return textResult(`monodis failed: ${e.message}`);
@@ -1321,7 +1499,8 @@ const ilspyTool: AgentTool<{ path: string; outputDir?: string }> = {
 
 const patchTool: AgentTool<{ path: string; offset: string; bytes: string; backup?: boolean }> = {
 	name: "patch",
-	description: "Patch bytes at a hex offset in a binary. Takes hex offset and hex byte string. Creates backup by default. Use for binary patching / crackme solving.",
+	description:
+		"Patch bytes at a hex offset in a binary. Takes hex offset and hex byte string. Creates backup by default. Use for binary patching / crackme solving.",
 	parameters: Type.Object({
 		path: Type.String({ description: "Path to binary" }),
 		offset: Type.String({ description: "Hex offset (e.g. 0x1234)" }),
@@ -1334,8 +1513,11 @@ const patchTool: AgentTool<{ path: string; offset: string; bytes: string; backup
 
 		if (backup && !existsSync(backupPath)) {
 			try {
-				if (IS_WIN) { run(`copy ${shellEscape(params.path)} ${shellEscape(backupPath)}`); }
-				else { run(`cp ${shellEscape(params.path)} ${shellEscape(backupPath)} ${DEVNULL}`); }
+				if (IS_WIN) {
+					run(`copy ${shellEscape(params.path)} ${shellEscape(backupPath)}`);
+				} else {
+					run(`cp ${shellEscape(params.path)} ${shellEscape(backupPath)} ${DEVNULL}`);
+				}
 			} catch {}
 		}
 
@@ -1362,7 +1544,8 @@ with open(path, "r+b") as f:
 		} catch (e: any) {
 			// Extract just the error line, not the full traceback
 			const stderr = e.stderr ? e.stderr.toString() : "";
-			const errLine = stderr.split("\n").find((l: string) => l.includes("Error:") || l.includes("error:")) || e.message;
+			const errLine =
+				stderr.split("\n").find((l: string) => l.includes("Error:") || l.includes("error:")) || e.message;
 			return textResult(`Patch failed: ${errLine.trim()}`);
 		}
 	},
@@ -1372,7 +1555,8 @@ with open(path, "r+b") as f:
 
 const searchTool: AgentTool<{ path: string; pattern: string; isHex?: boolean }> = {
 	name: "search",
-	description: "Search for a pattern in a binary file. Supports text and hex patterns. Returns offset + context for each match.",
+	description:
+		"Search for a pattern in a binary file. Supports text and hex patterns. Returns offset + context for each match.",
 	parameters: Type.Object({
 		path: Type.String({ description: "Path to file" }),
 		pattern: Type.String({ description: "Pattern to search (text or hex)" }),
@@ -1537,11 +1721,39 @@ Rules: Never execute target binaries outside sandboxes. Work on copies (patch to
 
 export {
 	shellTool,
-	fetchTool, extractTool,
-	stringsTool, fileTool, objdumpTool, readelfTool, hexdumpTool, disasmFuncTool, r2Tool, decompileTool,
-	nmTool, sizeTool, searchTool, patchTool,
-	hashTool, entropyTool, diffTool,
-	ghidraStatus, ghidraDecompile, ghidraListFunctions, ghidraRename, ghidraXrefs, ghidraStrings,
-	binwalkTool, liefTool, angrTool, capstoneTool, keystoneTool, unicornTool, yaraTool, fridaTool, gdbTool, volatilityTool,
-	jadxTool, ilspyTool,
+	fetchTool,
+	extractTool,
+	stringsTool,
+	fileTool,
+	objdumpTool,
+	readelfTool,
+	hexdumpTool,
+	disasmFuncTool,
+	r2Tool,
+	decompileTool,
+	nmTool,
+	sizeTool,
+	searchTool,
+	patchTool,
+	hashTool,
+	entropyTool,
+	diffTool,
+	ghidraStatus,
+	ghidraDecompile,
+	ghidraListFunctions,
+	ghidraRename,
+	ghidraXrefs,
+	ghidraStrings,
+	binwalkTool,
+	liefTool,
+	angrTool,
+	capstoneTool,
+	keystoneTool,
+	unicornTool,
+	yaraTool,
+	fridaTool,
+	gdbTool,
+	volatilityTool,
+	jadxTool,
+	ilspyTool,
 };

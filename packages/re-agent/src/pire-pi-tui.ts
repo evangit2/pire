@@ -17,29 +17,29 @@
  *   └──────────────────────────────────────────┘
  */
 
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
-	ProcessTerminal,
-	TuiAltScreen,
-	Container,
 	Box,
-	ScrollView,
-	VStack,
+	type Component,
+	Container,
 	HStack,
 	Input,
-	visibleWidth,
-	truncateToWidth,
-	wrapTextWithAnsi,
 	matchesKey,
-	type Component,
+	ProcessTerminal,
+	ScrollView,
+	TuiAltScreen,
+	truncateToWidth,
+	VStack,
+	visibleWidth,
+	wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
-import { RE_TOOLS, RE_SYSTEM_PROMPT, probeTools, setGhidraTarget } from "./index.js";
-import { callLLM, toolToFunction, loadLLMConfig, type ChatMessage, type ToolCall, type LLMConfig } from "./llm.js";
-import { readFileSync, writeFileSync, existsSync, readdirSync } from "node:fs";
-import { join, dirname, basename } from "node:path";
-import { fileURLToPath } from "node:url";
+import { probeTools, RE_SYSTEM_PROMPT, RE_TOOLS, setGhidraTarget } from "./index.js";
+import { type ChatMessage, callLLM, type LLMConfig, loadLLMConfig, type ToolCall, toolToFunction } from "./llm.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const VERSION = "0.88.7";
+const VERSION = "0.88.8";
 
 // Use chalk for proper Pi-style colors
 import chalk from "chalk";
@@ -87,7 +87,9 @@ class ToolSidebar implements Component {
 	private cached?: string[];
 	private cachedW = -1;
 
-	constructor() { this.refresh(); }
+	constructor() {
+		this.refresh();
+	}
 
 	refresh(): void {
 		this.status = probeTools();
@@ -116,7 +118,9 @@ class ToolSidebar implements Component {
 		return this.cached;
 	}
 
-	invalidate(): void { this.cached = undefined; }
+	invalidate(): void {
+		this.cached = undefined;
+	}
 }
 
 // ─── TranscriptView ────────────────────────────────────────────
@@ -132,7 +136,10 @@ class TranscriptView implements Component {
 
 	updateLast(text: string): void {
 		const last = this.entries[this.entries.length - 1];
-		if (last) { last.text = text; this.cached = undefined; }
+		if (last) {
+			last.text = text;
+			this.cached = undefined;
+		}
 	}
 
 	finalizeLast(): void {
@@ -153,12 +160,28 @@ class TranscriptView implements Component {
 			let prefix = "";
 			let color = (s: string) => s;
 			switch (e.type) {
-				case "user":      prefix = `${chalk.bold.cyan("you")} > `;    break;
-				case "assistant": prefix = `${chalk.bold.green("pire")} > `;  break;
-				case "tool_call": prefix = `${chalk.bold.yellow("⚙")} `;      color = chalk.yellow; break;
-				case "tool_result": prefix = `${chalk.dim("↳")} `;            color = chalk.dim; break;
-				case "system":    prefix = `${chalk.bold("system")} > `;      color = chalk.blue; break;
-				case "error":     prefix = `${chalk.bold.red("error")} > `;   color = chalk.red; break;
+				case "user":
+					prefix = `${chalk.bold.cyan("you")} > `;
+					break;
+				case "assistant":
+					prefix = `${chalk.bold.green("pire")} > `;
+					break;
+				case "tool_call":
+					prefix = `${chalk.bold.yellow("⚙")} `;
+					color = chalk.yellow;
+					break;
+				case "tool_result":
+					prefix = `${chalk.dim("↳")} `;
+					color = chalk.dim;
+					break;
+				case "system":
+					prefix = `${chalk.bold("system")} > `;
+					color = chalk.blue;
+					break;
+				case "error":
+					prefix = `${chalk.bold.red("error")} > `;
+					color = chalk.red;
+					break;
 			}
 			const prefixLen = visibleWidth(prefix);
 
@@ -201,7 +224,9 @@ class TranscriptView implements Component {
 		return this.cached;
 	}
 
-	invalidate(): void { this.cached = undefined; }
+	invalidate(): void {
+		this.cached = undefined;
+	}
 }
 
 // ─── StatusBar ─────────────────────────────────────────────────
@@ -216,12 +241,33 @@ class StatusBar implements Component {
 	private cached?: string[];
 	private cachedW = -1;
 
-	setTarget(t: string): void { this.target = t; this.cached = undefined; }
-	setModel(m: string): void { this.model = m; this.cached = undefined; }
-	setProcessing(p: boolean): void { this.processing = p; this.cached = undefined; }
-	setTurns(current: number, total: number): void { this.turnCurrent = current; this.turnTotal = total; this.cached = undefined; }
-	addTokens(inTokens: number, outTokens: number): void { this.tokensIn += inTokens; this.tokensOut += outTokens; this.cached = undefined; }
-	resetTokens(): void { this.tokensIn = 0; this.tokensOut = 0; this.cached = undefined; }
+	setTarget(t: string): void {
+		this.target = t;
+		this.cached = undefined;
+	}
+	setModel(m: string): void {
+		this.model = m;
+		this.cached = undefined;
+	}
+	setProcessing(p: boolean): void {
+		this.processing = p;
+		this.cached = undefined;
+	}
+	setTurns(current: number, total: number): void {
+		this.turnCurrent = current;
+		this.turnTotal = total;
+		this.cached = undefined;
+	}
+	addTokens(inTokens: number, outTokens: number): void {
+		this.tokensIn += inTokens;
+		this.tokensOut += outTokens;
+		this.cached = undefined;
+	}
+	resetTokens(): void {
+		this.tokensIn = 0;
+		this.tokensOut = 0;
+		this.cached = undefined;
+	}
 
 	render(width: number): string[] {
 		if (this.cached && this.cachedW === width) return this.cached;
@@ -232,7 +278,9 @@ class StatusBar implements Component {
 			parts.push(`${chalk.dim("turn:")} ${this.turnCurrent}/${this.turnTotal}`);
 		}
 		if (this.tokensIn > 0 || this.tokensOut > 0) {
-			parts.push(`${chalk.dim("tokens:")} ${chalk.cyan("↑")}${this.tokensIn} ${chalk.magenta("↓")}${this.tokensOut}`);
+			parts.push(
+				`${chalk.dim("tokens:")} ${chalk.cyan("↑")}${this.tokensIn} ${chalk.magenta("↓")}${this.tokensOut}`,
+			);
 		}
 		const left = parts.join("  ");
 		const right = this.processing ? chalk.bold.yellow("⟳ working") : chalk.green("● ready");
@@ -244,7 +292,9 @@ class StatusBar implements Component {
 		return this.cached;
 	}
 
-	invalidate(): void { this.cached = undefined; }
+	invalidate(): void {
+		this.cached = undefined;
+	}
 }
 
 // ─── Render throttle helper ────────────────────────────────────
@@ -323,8 +373,10 @@ export class PirePiTUI {
 		this.sidebar = new ToolSidebar();
 		this.statusBar = new StatusBar();
 
-		// Render throttle — coalesce rapid renders into one per frame
-		this.throttle = new RenderThrottle(() => this.ui.requestRender(), 16);
+		// Render throttle — coalesce rapid renders into one per frame.
+		// Use forced render (true) to ensure every render does a full screen
+		// clear + repaint, eliminating stale content from previous frames.
+		this.throttle = new RenderThrottle(() => this.ui.requestRender(true), 16);
 
 		this.input = new Input();
 		this.input.onSubmit = (value: string) => {
@@ -351,7 +403,10 @@ export class PirePiTUI {
 
 		// Initial transcript content
 		this.transcript.add("system", BANNER);
-		this.transcript.add("system", "Tell me what you need — load a binary with :load, or just describe what you're looking for.");
+		this.transcript.add(
+			"system",
+			"Tell me what you need — load a binary with :load, or just describe what you're looking for.",
+		);
 		this.transcript.add("system", "Type :help for commands, :quit to exit.");
 
 		// ScrollView wraps the transcript — this is the scrollable area
@@ -372,9 +427,7 @@ export class PirePiTUI {
 		// Sidebar column — padded to fill full height
 		const sidebarInner = new Box(1, 1);
 		sidebarInner.addChild(this.sidebar);
-		const sidebarVStack = new VStack([
-			{ component: sidebarInner, basis: 0, grow: 1, shrink: 0, minSize: 3 },
-		]);
+		const sidebarVStack = new VStack([{ component: sidebarInner, basis: 0, grow: 1, shrink: 0, minSize: 3 }]);
 
 		// HStack: sidebar (fixed 22 cols) | chat (fills rest)
 		const mainHStack = new HStack([
@@ -411,7 +464,9 @@ export class PirePiTUI {
 					this.stop();
 					process.exit(0);
 				}
-				ctrlCTimer = setTimeout(() => { ctrlCPressed = false; }, 5000);
+				ctrlCTimer = setTimeout(() => {
+					ctrlCPressed = false;
+				}, 5000);
 				return { consume: true };
 			}
 			return undefined;
@@ -467,18 +522,21 @@ export class PirePiTUI {
 
 		switch (command) {
 			case "help":
-				this.transcript.add("system", [
-					"Commands:",
-					"  :load <path|URL>  Load a target binary or URL",
-					"  :tools            List all RE tools",
-					"  :probe            Re-probe system for tools",
-					"  :skills           List available skills",
-					"  :save [path]      Save conversation history",
-					"  :clear            Clear transcript",
-					"  :quit             Exit pire",
-					"",
-					"Just type naturally — I'll run tools as needed.",
-				].join("\n"));
+				this.transcript.add(
+					"system",
+					[
+						"Commands:",
+						"  :load <path|URL>  Load a target binary or URL",
+						"  :tools            List all RE tools",
+						"  :probe            Re-probe system for tools",
+						"  :skills           List available skills",
+						"  :save [path]      Save conversation history",
+						"  :clear            Clear transcript",
+						"  :quit             Exit pire",
+						"",
+						"Just type naturally — I'll run tools as needed.",
+					].join("\n"),
+				);
 				break;
 
 			case "load":
@@ -504,10 +562,13 @@ export class PirePiTUI {
 				break;
 
 			case "tools":
-				this.transcript.add("system", RE_TOOLS.map((t) => `  ${t.name.padEnd(20)} ${t.description.split(".")[0]}`).join("\n"));
+				this.transcript.add(
+					"system",
+					RE_TOOLS.map((t) => `  ${t.name.padEnd(20)} ${t.description.split(".")[0]}`).join("\n"),
+				);
 				break;
 
-			case "probe":
+			case "probe": {
 				this.transcript.add("system", "Probing system for tools...");
 				this.sidebar.refresh();
 				const status = probeTools();
@@ -515,6 +576,7 @@ export class PirePiTUI {
 				const total = RE_TOOLS.length;
 				this.transcript.add("system", `${avail}/${total} tools available`);
 				break;
+			}
 
 			case "skills":
 				try {
@@ -587,7 +649,10 @@ export class PirePiTUI {
 					this.sidebar.refresh();
 					this.transcript.add("system", `Downloaded to: ${path}`);
 					this.statusBar.setTarget(basename(path));
-					this.messages.push({ role: "user", content: `I've loaded ${url} (downloaded to ${path}). Please analyze it.` });
+					this.messages.push({
+						role: "user",
+						content: `I've loaded ${url} (downloaded to ${path}). Please analyze it.`,
+					});
 				}
 			}
 
@@ -605,21 +670,26 @@ export class PirePiTUI {
 
 				let assistantContent = "";
 
-				const resp = await callLLM(this.llm, [{ role: "system", content: systemPrompt }, ...this.messages], toolSchemas, {
-					signal: this.abortController?.signal,
-					onContent: (chunk: string) => {
-						assistantContent += chunk;
-						const last = this.transcript["entries"][this.transcript["entries"].length - 1];
-						if (last && last.type === "assistant" && last.streaming) {
-							this.transcript.updateLast(assistantContent);
-						} else {
-							this.transcript.add("assistant", assistantContent);
-							this.transcript["entries"][this.transcript["entries"].length - 1].streaming = true;
-						}
-						// Throttled render — coalesces rapid chunks
-						this.requestRender();
+				const resp = await callLLM(
+					this.llm,
+					[{ role: "system", content: systemPrompt }, ...this.messages],
+					toolSchemas,
+					{
+						signal: this.abortController?.signal,
+						onContent: (chunk: string) => {
+							assistantContent += chunk;
+							const last = this.transcript["entries"][this.transcript["entries"].length - 1];
+							if (last && last.type === "assistant" && last.streaming) {
+								this.transcript.updateLast(assistantContent);
+							} else {
+								this.transcript.add("assistant", assistantContent);
+								this.transcript["entries"][this.transcript["entries"].length - 1].streaming = true;
+							}
+							// Throttled render — coalesces rapid chunks
+							this.requestRender();
+						},
 					},
-				});
+				);
 
 				this.transcript.finalizeLast();
 
@@ -644,14 +714,20 @@ export class PirePiTUI {
 					const tool = RE_TOOLS.find((t) => t.name === tc.function.name);
 					if (!tool) {
 						this.transcript.add("error", `Unknown tool: ${tc.function.name}`);
-						this.messages.push({ role: "tool", tool_call_id: tc.id, content: `Error: unknown tool ${tc.function.name}` });
+						this.messages.push({
+							role: "tool",
+							tool_call_id: tc.id,
+							content: `Error: unknown tool ${tc.function.name}`,
+						});
 						continue;
 					}
 
 					let args: any;
 					try {
 						args = JSON.parse(tc.function.arguments);
-					} catch { args = {}; }
+					} catch {
+						args = {};
+					}
 
 					// Auto-detect target from tool calls
 					if (!this.loadedTarget) {
@@ -711,7 +787,10 @@ export class PirePiTUI {
 					}
 					displayResult = cleanedLines.join("\n").trim() || "(no output)";
 
-					this.transcript.add("tool_result", displayResult.slice(0, 200) + (displayResult.length > 200 ? "..." : ""));
+					this.transcript.add(
+						"tool_result",
+						displayResult.slice(0, 200) + (displayResult.length > 200 ? "..." : ""),
+					);
 					this.requestRender();
 
 					this.messages.push({ role: "tool", tool_call_id: tc.id, content: resultText });
@@ -733,7 +812,9 @@ export class PirePiTUI {
 
 	start(): void {
 		this.ui.start();
-		setupGracefulQuit(() => { this.stop(); });
+		setupGracefulQuit(() => {
+			this.stop();
+		});
 	}
 
 	stop(): void {

@@ -1,12 +1,29 @@
-# pire v0.88.7 — Fix Ctrl+C with Kitty keyboard protocol + status bar duplication
+# pire v0.88.8 — Fix persistent status bar / sidebar duplication
 
-Released: 2026-08-04
+Released: 2026-08-05
 
 ## Fixed
 
-- **Ctrl+C abort now works with Kitty keyboard protocol.** Root cause: `ProcessTerminal` negotiates the Kitty keyboard protocol, which transforms Ctrl+C from raw byte `\x03` into CSI-u format (`\x1b[99;5u`). The input listener was checking `data === "\x03"` (raw byte), which never matched when Kitty protocol was active. Fixed by using `matchesKey(data, "ctrl+c")` which handles both raw and CSI-u encodings.
+- **Status bar and sidebar duplication during agent operation.** Root cause:
+  the render throttle used non-forced `requestRender()` which relies on
+  differential rendering (only updating changed lines). When the terminal
+  doesn't properly clear stale lines between frames — or when content shifts
+  between frames — old content persists alongside new content, appearing as
+  duplicated sidebar entries (random tools duplicated differently each run)
+  and stacked status bars showing different turns/states simultaneously.
 
-- **Status bar duplication during agent loop transitions.** Root cause: `RenderThrottle.flush()` only called `renderFn()` when a throttle timer was pending. If the timer had already fired (or was never set), `flush()` was a silent no-op — meaning `flushRender()` calls at turn boundaries (`setProcessing`, `setTurns`, `resetTokens`, etc.) were dropped. This left stale status bar content on screen while new content rendered elsewhere, creating the visual appearance of duplicated status lines. Fixed by always calling `renderFn()` in `flush()`, regardless of timer state.
+  Fix: ALL renders now use `requestRender(true)` (forced full redraw). This
+  clears `previousScreen` and sends `\x1b[2J` (clear entire screen) + full
+  repaint on every render, both during streaming and at transition points.
+  This eliminates any possibility of stale content accumulating.
+
+  Trade-off: slightly more CPU/GPU work per frame (full repaint vs diff),
+  but eliminates the duplication issue completely.
+
+## Previous: v0.88.7
+
+- Ctrl+C abort with Kitty keyboard protocol (uses `matchesKey` for both raw `\x03` and Kitty CSI-u)
+- Initial attempt at status bar duplication fix (force render on flush)
 
 ---
 

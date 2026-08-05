@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+
 /**
  * pire CLI entry point
  *
@@ -18,12 +19,12 @@
  *   pire --version            — Print version
  */
 
-import { RE_TOOLS, RE_SYSTEM_PROMPT, probeTools } from "./index.js";
-import { PireTUI, PireCLI } from "./tui.js";
-import { PirePiTUI } from "./pire-pi-tui.js";
-import { readdirSync, readFileSync, existsSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { probeTools, RE_SYSTEM_PROMPT, RE_TOOLS } from "./index.js";
+import { PirePiTUI } from "./pire-pi-tui.js";
+import { PireCLI, PireTUI } from "./tui.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -103,9 +104,10 @@ async function showDiagnose() {
 	console.log("Python Detection");
 	console.log("═══════════════════════════════════════════════════");
 
-	const pyCandidates = process.platform === "darwin"
-		? ["/opt/homebrew/bin/python3", "/usr/local/bin/python3", "python3"]
-		: ["/usr/bin/python3", "python3"];
+	const pyCandidates =
+		process.platform === "darwin"
+			? ["/opt/homebrew/bin/python3", "/usr/local/bin/python3", "python3"]
+			: ["/usr/bin/python3", "python3"];
 
 	let resolvedPython = "python3";
 	for (const p of pyCandidates) {
@@ -139,7 +141,9 @@ async function showDiagnose() {
 			execFileSync(resolvedPython, ["-c", `import ${mod}`], { stdio: "ignore" });
 			console.log(`  ✓ ${mod.padEnd(15)} importable`);
 		} catch {
-			console.log(`  ✗ ${mod.padEnd(15)} not found — install: pip install --user ${mod === "volatility3" ? "volatility3" : mod}`);
+			console.log(
+				`  ✗ ${mod.padEnd(15)} not found — install: pip install --user ${mod === "volatility3" ? "volatility3" : mod}`,
+			);
 		}
 	}
 
@@ -273,7 +277,7 @@ Chat Commands:
 
 // Parse flags
 let mode: "pi" | "ansi" | "cli" = "pi";
-let positionalArgs: string[] = [];
+const positionalArgs: string[] = [];
 
 for (const arg of args) {
 	if (arg === "-cli" || arg === "--cli") {
@@ -315,14 +319,14 @@ switch (args[0]) {
 		// Hand off to pire-uninstall.ts
 		await import("./pire-uninstall.js");
 		break;
-	default:
+	default: {
 		if (args[0]?.startsWith("-") && !["-cli", "--cli", "-ansi", "--ansi", "-mcp", "--mcp"].includes(args[0])) {
 			console.error(`Unknown option: ${args[0]}`);
 			process.exit(1);
 		}
 		// Start MCP server if -mcp flag is present
 		if (args.includes("-mcp") || args.includes("--mcp")) {
-			const mcpArgs = args.slice(args.indexOf(args.find(a => a === "-mcp" || a === "--mcp")!) + 1);
+			const mcpArgs = args.slice(args.indexOf(args.find((a) => a === "-mcp" || a === "--mcp")!) + 1);
 			const { startMCPServer } = await import("./mcp-server.js");
 			await startMCPServer(mcpArgs);
 			break;
@@ -349,4 +353,5 @@ switch (args[0]) {
 			tui.start();
 		}
 		break;
+	}
 }

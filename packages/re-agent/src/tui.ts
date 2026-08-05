@@ -3,7 +3,7 @@
  *
  * Layout:
  *  ┌──────────────────────────────────────────────────┐
- *  │ pire v0.88.7  │  target: /bin/ls  │  22 tools  │
+ *  │ pire v0.88.8  │  target: /bin/ls  │  22 tools  │
  *  ├──────────────┬───────────────────────────────────┤
  *  │ Tools        │  Chat / Output                    │
  *  │ ✓ strings    │                                   │
@@ -28,21 +28,35 @@
  *  :quit            — Exit
  */
 
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import * as readline from "node:readline";
-import { readdirSync, readFileSync, existsSync, writeFileSync, mkdirSync } from "node:fs";
-import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { RE_TOOLS, RE_SYSTEM_PROMPT, probeTools, fetchTool, validateToolParams, setGhidraTarget, type AgentTool } from "./index.js";
-import { loadLLMConfig, toolToFunction, callLLM, type ChatMessage } from "./llm.js";
+import {
+	type AgentTool,
+	fetchTool,
+	probeTools,
+	RE_SYSTEM_PROMPT,
+	RE_TOOLS,
+	setGhidraTarget,
+	validateToolParams,
+} from "./index.js";
+import { type ChatMessage, callLLM, loadLLMConfig, toolToFunction } from "./llm.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const VERSION = "0.88.7";
+const VERSION = "0.88.8";
 
 // ANSI
 const C = {
-	reset: "\x1b[0m", bold: "\x1b[1m", dim: "\x1b[2m",
-	red: "\x1b[31m", green: "\x1b[32m", yellow: "\x1b[33m",
-	blue: "\x1b[34m", cyan: "\x1b[36m", gray: "\x1b[90m",
+	reset: "\x1b[0m",
+	bold: "\x1b[1m",
+	dim: "\x1b[2m",
+	red: "\x1b[31m",
+	green: "\x1b[32m",
+	yellow: "\x1b[33m",
+	blue: "\x1b[34m",
+	cyan: "\x1b[36m",
+	gray: "\x1b[90m",
 	bg: "\x1b[48;5;236m",
 	clear: "\x1b[2J\x1b[H",
 	clearLine: "\x1b[2K",
@@ -63,7 +77,9 @@ function setupGracefulQuit(onQuit: () => void, onFirstPress?: () => void): void 
 		}
 		pressed = true;
 		onFirstPress?.();
-		timer = setTimeout(() => { pressed = false; }, 15000);
+		timer = setTimeout(() => {
+			pressed = false;
+		}, 15000);
 	});
 
 	process.on("SIGTERM", () => {
@@ -73,7 +89,10 @@ function setupGracefulQuit(onQuit: () => void, onFirstPress?: () => void): void 
 	});
 }
 
-interface OutputLine { text: string; kind: "cmd" | "out" | "err" | "info" | "tool" | "chat" | "stream" }
+interface OutputLine {
+	text: string;
+	kind: "cmd" | "out" | "err" | "info" | "tool" | "chat" | "stream";
+}
 
 // ─── TUI ───────────────────────────────────────────────────────
 
@@ -140,7 +159,7 @@ export class PireTUI {
 			const text = fetchResult.content.map((c: { text: string }) => c.text).join("\n");
 			this.push("tool", `fetch(${this.pendingUrl})`);
 			const pathMatch = text.match(/Downloaded to: (.+)/);
-			const localPath = pathMatch?.[1] || fetchResult.details?.path as string;
+			const localPath = pathMatch?.[1] || (fetchResult.details?.path as string);
 			if (localPath && existsSync(localPath)) {
 				this.loadedTarget = localPath;
 				this.push("info", `Loaded: ${localPath}`);
@@ -156,18 +175,25 @@ export class PireTUI {
 
 		this.render();
 		this.rl.setPrompt("");
-		this.rl.on("line", (line) => { this.inputQueue.push(line); this.processQueue(); });
-		this.rl.on("close", () => { /* don't exit while processing */ });
+		this.rl.on("line", (line) => {
+			this.inputQueue.push(line);
+			this.processQueue();
+		});
+		this.rl.on("close", () => {
+			/* don't exit while processing */
+		});
 
 		// Handle raw keypresses for scrollback
 		if (process.stdin.isTTY) {
 			process.stdin.on("data", (data: Buffer) => {
 				// Page Up / Page Down for scrolling
 				if (data.length === 3 && data[0] === 0x1b && data[1] === 0x5b) {
-					if (data[2] === 0x35) { // Page Up
+					if (data[2] === 0x35) {
+						// Page Up
 						this.scrollOffset = Math.min(this.scrollOffset + 10, this.output.length);
 						this.render();
-					} else if (data[2] === 0x36) { // Page Down
+					} else if (data[2] === 0x36) {
+						// Page Down
 						this.scrollOffset = Math.max(this.scrollOffset - 10, 0);
 						this.render();
 					}
@@ -177,8 +203,15 @@ export class PireTUI {
 
 		// Double Ctrl+C to quit
 		setupGracefulQuit(
-			() => { this.isActive = false; this.rl.close(); process.stdout.write(C.showCursor + C.reset + "\n"); },
-			() => { this.push("info", `${C.yellow}${C.bold}Press Ctrl+C again to quit.${C.reset}`); this.render(); },
+			() => {
+				this.isActive = false;
+				this.rl.close();
+				process.stdout.write(C.showCursor + C.reset + "\n");
+			},
+			() => {
+				this.push("info", `${C.yellow}${C.bold}Press Ctrl+C again to quit.${C.reset}`);
+				this.render();
+			},
 		);
 	}
 
@@ -202,7 +235,10 @@ export class PireTUI {
 			return;
 		}
 
-		const availTools = Object.entries(this.tools).filter(([,v]) => v).map(([k]) => k).join(", ");
+		const availTools = Object.entries(this.tools)
+			.filter(([, v]) => v)
+			.map(([k]) => k)
+			.join(", ");
 		const targetInfo = this.loadedTarget ? `\n\nCurrently loaded target: ${this.loadedTarget}` : "";
 		const systemPrompt = `${RE_SYSTEM_PROMPT}
 
@@ -251,15 +287,19 @@ When you have gathered enough information, write your analysis to a file using t
 			if (resp.tool_calls && resp.tool_calls.length > 0) {
 				for (const tc of resp.tool_calls) {
 					let args: Record<string, unknown> = {};
-					try { args = JSON.parse(tc.function.arguments); } catch {}
+					try {
+						args = JSON.parse(tc.function.arguments);
+					} catch {}
 					// Show full args for shell tool, truncate others
-					const argStr = Object.entries(args).map(([k,v]) => {
-						const val = String(v);
-						if (tc.function.name === "shell" && k === "command") {
-							return `${k}=${val}`;
-						}
-						return val.length > 100 ? `${k}=${val.slice(0,100)}...` : `${k}=${val}`;
-					}).join(" ");
+					const argStr = Object.entries(args)
+						.map(([k, v]) => {
+							const val = String(v);
+							if (tc.function.name === "shell" && k === "command") {
+								return `${k}=${val}`;
+							}
+							return val.length > 100 ? `${k}=${val.slice(0, 100)}...` : `${k}=${val}`;
+						})
+						.join(" ");
 					this.push("tool", `${tc.function.name}(${argStr})`);
 				}
 
@@ -268,12 +308,19 @@ When you have gathered enough information, write your analysis to a file using t
 				for (const tc of resp.tool_calls) {
 					const tool = this.toolMap.get(tc.function.name);
 					if (!tool) {
-						messages.push({ role: "tool", tool_call_id: tc.id, content: `Error: unknown tool "${tc.function.name}"` });
+						messages.push({
+							role: "tool",
+							tool_call_id: tc.id,
+							content: `Error: unknown tool "${tc.function.name}"`,
+						});
 						continue;
 					}
 					let params: Record<string, unknown>;
-					try { params = JSON.parse(tc.function.arguments); }
-					catch { params = {}; }
+					try {
+						params = JSON.parse(tc.function.arguments);
+					} catch {
+						params = {};
+					}
 
 					// Validate required params before execution
 					const validationError = validateToolParams(tool, params);
@@ -286,7 +333,11 @@ When you have gathered enough information, write your analysis to a file using t
 					// Deduplicate identical tool calls within the same turn
 					const callSig = `${tc.function.name}:${JSON.stringify(params)}`;
 					if (seenCalls.has(callSig)) {
-						messages.push({ role: "tool", tool_call_id: tc.id, content: "Skipped: identical call already executed this turn. Use the previous result." });
+						messages.push({
+							role: "tool",
+							tool_call_id: tc.id,
+							content: "Skipped: identical call already executed this turn. Use the previous result.",
+						});
 						this.push("info", "(skipped: duplicate call)");
 						continue;
 					}
@@ -299,10 +350,15 @@ When you have gathered enough information, write your analysis to a file using t
 						const truncated = text.length > 16000 ? text.slice(0, 16000) + "\n... (truncated)" : text;
 						messages.push({ role: "tool", tool_call_id: tc.id, content: truncated });
 						// Show tool output (truncated for display)
-						const displayText = text.length > 2000 ? text.slice(0, 2000) + "\n... (truncated, full output sent to LLM)" : text;
+						const displayText =
+							text.length > 2000 ? text.slice(0, 2000) + "\n... (truncated, full output sent to LLM)" : text;
 						this.push("out", displayText);
 					} catch (e) {
-						messages.push({ role: "tool", tool_call_id: tc.id, content: `Error: ${e instanceof Error ? e.message : e}` });
+						messages.push({
+							role: "tool",
+							tool_call_id: tc.id,
+							content: `Error: ${e instanceof Error ? e.message : e}`,
+						});
 						this.push("err", String(e instanceof Error ? e.message : e));
 					}
 				}
@@ -323,9 +379,15 @@ When you have gathered enough information, write your analysis to a file using t
 
 	private async handleInput(line: string) {
 		const cmd = line.trim();
-		if (!cmd) { this.render(); return; }
+		if (!cmd) {
+			this.render();
+			return;
+		}
 
-		if (cmd === ":quit" || cmd === ":q" || cmd === "exit" || cmd === "quit" || cmd === "q") { this.stop(); return; }
+		if (cmd === ":quit" || cmd === ":q" || cmd === "exit" || cmd === "quit" || cmd === "q") {
+			this.stop();
+			return;
+		}
 
 		if (cmd === ":help" || cmd === ":h") {
 			this.push("info", "Just type naturally — I'll run tools as needed.");
@@ -366,8 +428,12 @@ When you have gathered enough information, write your analysis to a file using t
 		if (cmd === ":skills") {
 			try {
 				let skillsDir = join(__dirname, "..", "..", "skills");
-				try { readdirSync(skillsDir); } catch { skillsDir = join(__dirname, "..", "..", "..", "skills"); }
-				const skills = readdirSync(skillsDir, { withFileTypes: true }).filter(d => d.isDirectory());
+				try {
+					readdirSync(skillsDir);
+				} catch {
+					skillsDir = join(__dirname, "..", "..", "..", "skills");
+				}
+				const skills = readdirSync(skillsDir, { withFileTypes: true }).filter((d) => d.isDirectory());
 				for (const s of skills) {
 					try {
 						const c = readFileSync(join(skillsDir, s.name, "SKILL.md"), "utf-8");
@@ -376,7 +442,9 @@ When you have gathered enough information, write your analysis to a file using t
 					} catch {}
 				}
 				this.push("info", `${skills.length} skills`);
-			} catch { this.push("err", "Skills directory not found"); }
+			} catch {
+				this.push("err", "Skills directory not found");
+			}
 			this.render();
 			return;
 		}
@@ -395,7 +463,7 @@ When you have gathered enough information, write your analysis to a file using t
 				const text = fetchResult.content.map((c: { text: string }) => c.text).join("\n");
 				this.push("tool", `fetch(${path})`);
 				const pathMatch = text.match(/Downloaded to: (.+)/);
-				const localPath = pathMatch?.[1] || fetchResult.details?.path as string;
+				const localPath = pathMatch?.[1] || (fetchResult.details?.path as string);
 				if (localPath && existsSync(localPath)) {
 					this.loadedTarget = localPath;
 					this.push("info", `Loaded: ${localPath}`);
@@ -417,12 +485,16 @@ When you have gathered enough information, write your analysis to a file using t
 			this.push("info", `Loaded: ${path} (${avail}/${RE_TOOLS.length} tools available)`);
 			this.render();
 			return;
-			}
+		}
 
-			if (cmd.startsWith(":save")) {
+		if (cmd.startsWith(":save")) {
 			const savePath = cmd.slice(4).trim() || join(process.cwd(), `pire-session-${Date.now()}.json`);
 			try {
-				const data = JSON.stringify({ version: VERSION, target: this.loadedTarget, messages: this.messages }, null, 2);
+				const data = JSON.stringify(
+					{ version: VERSION, target: this.loadedTarget, messages: this.messages },
+					null,
+					2,
+				);
 				mkdirSync(dirname(savePath), { recursive: true });
 				writeFileSync(savePath, data);
 				this.push("info", `Saved ${this.messages.length} messages to ${savePath}`);
@@ -465,7 +537,9 @@ When you have gathered enough information, write your analysis to a file using t
 		const headerMid = `${C.dim}${targetStr}${C.reset}`;
 		const headerRight = `${C.dim}${toolCount}${C.reset}`;
 		const padLen = Math.max(0, w - targetStr.length - toolCount.length - 12);
-		lines.push(`${headerLeft}  ${C.gray}${"─".repeat(Math.floor(padLen / 2))}${C.reset}  ${headerMid}  ${C.gray}${"─".repeat(Math.ceil(padLen / 2))}${C.reset}  ${headerRight}`);
+		lines.push(
+			`${headerLeft}  ${C.gray}${"─".repeat(Math.floor(padLen / 2))}${C.reset}  ${headerMid}  ${C.gray}${"─".repeat(Math.ceil(padLen / 2))}${C.reset}  ${headerRight}`,
+		);
 
 		// ─── Tools sidebar (left column, 20 chars wide) ───
 		const toolLines: string[] = [];
@@ -485,15 +559,16 @@ When you have gathered enough information, write your analysis to a file using t
 		const outputWidth = w - leftWidth - 2;
 		const wrappedOutput: { text: string; kind: string }[] = [];
 		for (const line of this.output) {
-			const prefix = {
-				cmd: `${C.cyan}» ${C.reset}`,
-				out: `${C.dim}  ${C.reset}`,
-				err: `${C.red}! ${C.reset}`,
-				info: `${C.blue}• ${C.reset}`,
-				tool: `${C.green}⚙ ${C.reset}`,
-				chat: `${C.bold}> ${C.reset}`,
-				stream: ``,
-			}[line.kind] || "";
+			const prefix =
+				{
+					cmd: `${C.cyan}» ${C.reset}`,
+					out: `${C.dim}  ${C.reset}`,
+					err: `${C.red}! ${C.reset}`,
+					info: `${C.blue}• ${C.reset}`,
+					tool: `${C.green}⚙ ${C.reset}`,
+					chat: `${C.bold}> ${C.reset}`,
+					stream: ``,
+				}[line.kind] || "";
 			const wrapped = this.wrap(prefix + line.text, outputWidth);
 			for (const wLine of wrapped) {
 				wrappedOutput.push({ text: wLine, kind: line.kind });
@@ -534,7 +609,10 @@ When you have gathered enough information, write your analysis to a file using t
 		let current = text;
 		while (current) {
 			const strippedCurrent = current.replace(/\x1b\[[0-9;]*m/g, "");
-			if (strippedCurrent.length <= width) { lines.push(current); break; }
+			if (strippedCurrent.length <= width) {
+				lines.push(current);
+				break;
+			}
 			let breakAt = width;
 			const spaceIdx = strippedCurrent.lastIndexOf(" ", width);
 			if (spaceIdx > 0) breakAt = spaceIdx;
@@ -606,7 +684,7 @@ export class PireCLI {
 			const text = fetchResult.content.map((c: { text: string }) => c.text).join("\n");
 			console.log(`⚙ fetch(${this.pendingUrl})`);
 			const pathMatch = text.match(/Downloaded to: (.+)/);
-			const localPath = pathMatch?.[1] || fetchResult.details?.path as string;
+			const localPath = pathMatch?.[1] || (fetchResult.details?.path as string);
 			if (localPath && existsSync(localPath)) {
 				this.loadedTarget = localPath;
 				console.log(`Loaded: ${localPath}`);
@@ -622,13 +700,24 @@ export class PireCLI {
 
 		this.rl.setPrompt("pire > ");
 		this.rl.prompt();
-		this.rl.on("line", (line) => { this.inputQueue.push(line); this.processQueue(); });
-		this.rl.on("close", () => { /* don't exit while processing */ });
+		this.rl.on("line", (line) => {
+			this.inputQueue.push(line);
+			this.processQueue();
+		});
+		this.rl.on("close", () => {
+			/* don't exit while processing */
+		});
 
 		// Double Ctrl+C to quit
 		setupGracefulQuit(
-			() => { this.rl.close(); process.stdout.write("\n"); },
-			() => { process.stdout.write(`\n${C.yellow}${C.bold}Press Ctrl+C again to quit.${C.reset}\n`); this.rl.prompt(); },
+			() => {
+				this.rl.close();
+				process.stdout.write("\n");
+			},
+			() => {
+				process.stdout.write(`\n${C.yellow}${C.bold}Press Ctrl+C again to quit.${C.reset}\n`);
+				this.rl.prompt();
+			},
 		);
 	}
 
@@ -648,7 +737,10 @@ export class PireCLI {
 			return;
 		}
 
-		const availTools = Object.entries(this.tools).filter(([,v]) => v).map(([k]) => k).join(", ");
+		const availTools = Object.entries(this.tools)
+			.filter(([, v]) => v)
+			.map(([k]) => k)
+			.join(", ");
 		const targetInfo = this.loadedTarget ? `\n\nCurrently loaded target: ${this.loadedTarget}` : "";
 		const systemPrompt = `${RE_SYSTEM_PROMPT}
 
@@ -679,7 +771,9 @@ When you have gathered enough information, write your analysis to a file using t
 			let resp;
 			try {
 				resp = await callLLM(this.llm, messages, toolSchemas, {
-					onContent: (chunk) => { process.stdout.write(chunk); },
+					onContent: (chunk) => {
+						process.stdout.write(chunk);
+					},
 				});
 			} catch (e) {
 				console.error(`LLM error: ${e instanceof Error ? e.message : e}`);
@@ -691,16 +785,20 @@ When you have gathered enough information, write your analysis to a file using t
 			if (resp.tool_calls && resp.tool_calls.length > 0) {
 				for (const tc of resp.tool_calls) {
 					let args: Record<string, unknown> = {};
-					try { args = JSON.parse(tc.function.arguments); } catch {}
+					try {
+						args = JSON.parse(tc.function.arguments);
+					} catch {}
 
 					// Show full args for shell tool, truncate others
-					const argStr = Object.entries(args).map(([k,v]) => {
-						const val = String(v);
-						if (tc.function.name === "shell" && k === "command") {
-							return `${k}=${val}`;
-						}
-						return val.length > 100 ? `${k}=${val.slice(0,100)}...` : `${k}=${val}`;
-					}).join(" ");
+					const argStr = Object.entries(args)
+						.map(([k, v]) => {
+							const val = String(v);
+							if (tc.function.name === "shell" && k === "command") {
+								return `${k}=${val}`;
+							}
+							return val.length > 100 ? `${k}=${val.slice(0, 100)}...` : `${k}=${val}`;
+						})
+						.join(" ");
 					console.log(`\r${C.green}⚙${C.reset} ${tc.function.name}(${argStr})`);
 				}
 
@@ -709,12 +807,19 @@ When you have gathered enough information, write your analysis to a file using t
 				for (const tc of resp.tool_calls) {
 					const tool = this.toolMap.get(tc.function.name);
 					if (!tool) {
-						messages.push({ role: "tool", tool_call_id: tc.id, content: `Error: unknown tool "${tc.function.name}"` });
+						messages.push({
+							role: "tool",
+							tool_call_id: tc.id,
+							content: `Error: unknown tool "${tc.function.name}"`,
+						});
 						continue;
 					}
 					let params: Record<string, unknown>;
-					try { params = JSON.parse(tc.function.arguments); }
-					catch { params = {}; }
+					try {
+						params = JSON.parse(tc.function.arguments);
+					} catch {
+						params = {};
+					}
 
 					// Validate required params before execution
 					const validationError = validateToolParams(tool, params);
@@ -727,7 +832,11 @@ When you have gathered enough information, write your analysis to a file using t
 					// Deduplicate identical tool calls within the same turn
 					const callSig = `${tc.function.name}:${JSON.stringify(params)}`;
 					if (seenCalls.has(callSig)) {
-						messages.push({ role: "tool", tool_call_id: tc.id, content: "Skipped: identical call already executed this turn. Use the previous result." });
+						messages.push({
+							role: "tool",
+							tool_call_id: tc.id,
+							content: "Skipped: identical call already executed this turn. Use the previous result.",
+						});
 						console.log(`  ${C.dim}(skipped: duplicate call)${C.reset}`);
 						continue;
 					}
@@ -739,10 +848,15 @@ When you have gathered enough information, write your analysis to a file using t
 						const truncated = text.length > 16000 ? text.slice(0, 16000) + "\n... (truncated)" : text;
 						messages.push({ role: "tool", tool_call_id: tc.id, content: truncated });
 						// Show tool result summary
-						const displayText = text.length > 500 ? text.slice(0, 500) + `\n... (${text.length} bytes total)` : text;
+						const displayText =
+							text.length > 500 ? text.slice(0, 500) + `\n... (${text.length} bytes total)` : text;
 						console.log(`  ${C.dim}${displayText}${C.reset}`);
 					} catch (e) {
-						messages.push({ role: "tool", tool_call_id: tc.id, content: `Error: ${e instanceof Error ? e.message : e}` });
+						messages.push({
+							role: "tool",
+							tool_call_id: tc.id,
+							content: `Error: ${e instanceof Error ? e.message : e}`,
+						});
 						console.log(`  ${C.red}! ${e instanceof Error ? e.message : e}${C.reset}`);
 					}
 				}
@@ -760,9 +874,15 @@ When you have gathered enough information, write your analysis to a file using t
 
 	private async handleInput(line: string) {
 		const cmd = line.trim();
-		if (!cmd) { this.rl.prompt(); return; }
+		if (!cmd) {
+			this.rl.prompt();
+			return;
+		}
 
-		if (cmd === ":quit" || cmd === ":q" || cmd === "exit" || cmd === "quit" || cmd === "q") { this.stop(); return; }
+		if (cmd === ":quit" || cmd === ":q" || cmd === "exit" || cmd === "quit" || cmd === "q") {
+			this.stop();
+			return;
+		}
 
 		if (cmd === ":help" || cmd === ":h") {
 			console.log("Just type naturally — I'll run tools as needed.");
@@ -795,8 +915,12 @@ When you have gathered enough information, write your analysis to a file using t
 		if (cmd === ":skills") {
 			try {
 				let skillsDir = join(__dirname, "..", "..", "skills");
-				try { readdirSync(skillsDir); } catch { skillsDir = join(__dirname, "..", "..", "..", "skills"); }
-				const skills = readdirSync(skillsDir, { withFileTypes: true }).filter(d => d.isDirectory());
+				try {
+					readdirSync(skillsDir);
+				} catch {
+					skillsDir = join(__dirname, "..", "..", "..", "skills");
+				}
+				const skills = readdirSync(skillsDir, { withFileTypes: true }).filter((d) => d.isDirectory());
 				for (const s of skills) {
 					try {
 						const c = readFileSync(join(skillsDir, s.name, "SKILL.md"), "utf-8");
@@ -805,7 +929,9 @@ When you have gathered enough information, write your analysis to a file using t
 					} catch {}
 				}
 				console.log(`${skills.length} skills`);
-			} catch { console.error("Skills directory not found"); }
+			} catch {
+				console.error("Skills directory not found");
+			}
 			this.rl.prompt();
 			return;
 		}
@@ -823,7 +949,7 @@ When you have gathered enough information, write your analysis to a file using t
 				const text = fetchResult.content.map((c: { text: string }) => c.text).join("\n");
 				console.log(`⚙ fetch(${path})`);
 				const pathMatch = text.match(/Downloaded to: (.+)/);
-				const localPath = pathMatch?.[1] || fetchResult.details?.path as string;
+				const localPath = pathMatch?.[1] || (fetchResult.details?.path as string);
 				if (localPath && existsSync(localPath)) {
 					this.loadedTarget = localPath;
 					console.log(`Loaded: ${localPath}`);
@@ -845,12 +971,16 @@ When you have gathered enough information, write your analysis to a file using t
 			console.log(`Loaded: ${path} (${avail}/${RE_TOOLS.length} tools available)`);
 			this.rl.prompt();
 			return;
-			}
+		}
 
-			if (cmd.startsWith(":save")) {
+		if (cmd.startsWith(":save")) {
 			const savePath = cmd.slice(4).trim() || join(process.cwd(), `pire-session-${Date.now()}.json`);
 			try {
-				const data = JSON.stringify({ version: VERSION, target: this.loadedTarget, messages: this.messages }, null, 2);
+				const data = JSON.stringify(
+					{ version: VERSION, target: this.loadedTarget, messages: this.messages },
+					null,
+					2,
+				);
 				mkdirSync(dirname(savePath), { recursive: true });
 				writeFileSync(savePath, data);
 				console.log(`Saved ${this.messages.length} messages to ${savePath}`);

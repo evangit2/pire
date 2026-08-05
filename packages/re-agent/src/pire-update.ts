@@ -12,8 +12,8 @@
  */
 
 import { execSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import chalk from "chalk";
 
@@ -37,9 +37,7 @@ function git(args: string, opts: { cwd: string; stdio?: "pipe" | "ignore" } = { 
 }
 
 function findPireRepo(): string | null {
-	const candidates: (string | undefined)[] = [
-		process.env.PIRE_REPO,
-	];
+	const candidates: (string | undefined)[] = [process.env.PIRE_REPO];
 
 	// Walk up from this file to find a .git dir
 	let dir = dirname(fileURLToPath(import.meta.url));
@@ -128,11 +126,18 @@ async function doUpdate(): Promise<void> {
 
 	// Record backup
 	if (!existsSync(PIRE_DIR)) mkdirSync(PIRE_DIR, { recursive: true });
-	writeFileSync(BACKUP_FILE, JSON.stringify({
-		sha: currentSha,
-		branch,
-		timestamp: new Date().toISOString(),
-	}, null, 2));
+	writeFileSync(
+		BACKUP_FILE,
+		JSON.stringify(
+			{
+				sha: currentSha,
+				branch,
+				timestamp: new Date().toISOString(),
+			},
+			null,
+			2,
+		),
+	);
 
 	console.log(chalk.cyan("\n→ Updating..."));
 
@@ -266,7 +271,9 @@ async function reverseUpdate(): Promise<void> {
 		}
 
 		// Remove the backup file so we don't reverse twice
-		try { unlinkSync(BACKUP_FILE); } catch {}
+		try {
+			unlinkSync(BACKUP_FILE);
+		} catch {}
 
 		console.log(chalk.dim(`\n  To return to latest: pire update`));
 	} catch (e: any) {

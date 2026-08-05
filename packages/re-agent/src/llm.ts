@@ -3,10 +3,10 @@
  * Used by both the TUI and the autonomous reimplementation pipeline.
  */
 
-import { readFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
-import * as https from "node:https";
+import { existsSync, readFileSync } from "node:fs";
 import * as http from "node:http";
+import * as https from "node:https";
+import { join } from "node:path";
 
 // ─── Types ─────────────────────────────────────────────────────
 
@@ -54,8 +54,7 @@ function parseYAMLConfig(content: string): Record<string, string> {
 		if (!match) continue;
 		let value = match[2].trim();
 		// Strip surrounding quotes
-		if ((value.startsWith('"') && value.endsWith('"')) ||
-			(value.startsWith("'") && value.endsWith("'"))) {
+		if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
 			value = value.slice(1, -1);
 		}
 		result[match[1]] = value;
@@ -64,10 +63,7 @@ function parseYAMLConfig(content: string): Record<string, string> {
 }
 
 export function loadLLMConfig(): LLMConfig | null {
-	const candidates = [
-		process.env.PIRE_CONFIG,
-		join(process.env.HOME || "/tmp", ".pire/config.yaml"),
-	];
+	const candidates = [process.env.PIRE_CONFIG, join(process.env.HOME || "/tmp", ".pire/config.yaml")];
 	for (const path of candidates) {
 		if (!path || !existsSync(path)) continue;
 		try {
@@ -77,7 +73,7 @@ export function loadLLMConfig(): LLMConfig | null {
 				return {
 					baseUrl: parsed.base_url.replace(/\/$/, ""),
 					apiKey: parsed.api_key,
-					model: (parsed.model && parsed.model !== "none") ? parsed.model : "",
+					model: parsed.model && parsed.model !== "none" ? parsed.model : "",
 					contextLength: parsed.context_length ? parseInt(parsed.context_length) : undefined,
 					maxTokens: parsed.max_tokens ? parseInt(parsed.max_tokens) : undefined,
 				};
@@ -146,98 +142,101 @@ export async function callLLM(
 		},
 	};
 
-	const doRequest = (): Promise<LLMResponse> => new Promise((resolve, reject) => {
-		const client = url.protocol === "https:" ? https : http;
-		const req = client.request(url, optionsReq, (res) => {
-			if (res.statusCode && res.statusCode >= 500) {
-				reject(new Error(`HTTP ${res.statusCode}`));
-				return;
-			}
+	const doRequest = (): Promise<LLMResponse> =>
+		new Promise((resolve, reject) => {
+			const client = url.protocol === "https:" ? https : http;
+			const req = client.request(url, optionsReq, (res) => {
+				if (res.statusCode && res.statusCode >= 500) {
+					reject(new Error(`HTTP ${res.statusCode}`));
+					return;
+				}
 
-			let content = "";
-			const toolCalls: ToolCall[] = [];
-			let buffer = "";
-			let usage: { prompt_tokens: number; completion_tokens: number } | undefined;
+				let content = "";
+				const toolCalls: ToolCall[] = [];
+				let buffer = "";
+				let usage: { prompt_tokens: number; completion_tokens: number } | undefined;
 
-			// If aborted, destroy the response stream
-			options?.signal?.addEventListener("abort", () => {
-				res.destroy();
-			});
+				// If aborted, destroy the response stream
+				options?.signal?.addEventListener("abort", () => {
+					res.destroy();
+				});
 
-			res.on("data", (chunk: Buffer) => {
-				buffer += chunk.toString();
-				const lines = buffer.split("\n");
-				buffer = lines.pop() || "";
+				res.on("data", (chunk: Buffer) => {
+					buffer += chunk.toString();
+					const lines = buffer.split("\n");
+					buffer = lines.pop() || "";
 
-				for (const line of lines) {
-					const trimmed = line.trim();
-					if (!trimmed || !trimmed.startsWith("data: ")) continue;
-					const data = trimmed.slice(6);
-					if (data === "[DONE]") continue;
+					for (const line of lines) {
+						const trimmed = line.trim();
+						if (!trimmed || !trimmed.startsWith("data: ")) continue;
+						const data = trimmed.slice(6);
+						if (data === "[DONE]") continue;
 
-					try {
-						const json = JSON.parse(data);
-						const delta = json.choices?.[0]?.delta;
-						if (!delta) {
-							// Check for usage in final chunk (some providers send it without choices)
+						try {
+							const json = JSON.parse(data);
+							const delta = json.choices?.[0]?.delta;
+							if (!delta) {
+								// Check for usage in final chunk (some providers send it without choices)
+								if (json.usage) {
+									usage = {
+										prompt_tokens: json.usage.prompt_tokens ?? 0,
+										completion_tokens: json.usage.completion_tokens ?? 0,
+									};
+								}
+								continue;
+							}
+
+							if (delta.content) {
+								content += delta.content;
+								options?.onContent?.(delta.content);
+							}
+							if (delta.tool_calls) {
+								for (const tc of delta.tool_calls) {
+									const idx = tc.index ?? 0;
+									if (!toolCalls[idx]) {
+										toolCalls[idx] = {
+											id: tc.id || "",
+											type: "function" as const,
+											function: { name: "", arguments: "" },
+										};
+									}
+									if (tc.id) toolCalls[idx].id = tc.id;
+									if (tc.function?.name) toolCalls[idx].function.name += tc.function.name;
+									if (tc.function?.arguments) toolCalls[idx].function.arguments += tc.function.arguments;
+								}
+							}
+							// Some providers send usage alongside the last delta
 							if (json.usage) {
 								usage = {
 									prompt_tokens: json.usage.prompt_tokens ?? 0,
 									completion_tokens: json.usage.completion_tokens ?? 0,
 								};
 							}
-							continue;
+						} catch {
+							/* skip malformed */
 						}
+					}
+				});
 
-						if (delta.content) {
-							content += delta.content;
-							options?.onContent?.(delta.content);
-						}
-						if (delta.tool_calls) {
-							for (const tc of delta.tool_calls) {
-								const idx = tc.index ?? 0;
-								if (!toolCalls[idx]) {
-									toolCalls[idx] = {
-										id: tc.id || "",
-										type: "function" as const,
-										function: { name: "", arguments: "" },
-									};
-								}
-								if (tc.id) toolCalls[idx].id = tc.id;
-								if (tc.function?.name) toolCalls[idx].function.name += tc.function.name;
-								if (tc.function?.arguments) toolCalls[idx].function.arguments += tc.function.arguments;
-							}
-						}
-						// Some providers send usage alongside the last delta
-						if (json.usage) {
-							usage = {
-								prompt_tokens: json.usage.prompt_tokens ?? 0,
-								completion_tokens: json.usage.completion_tokens ?? 0,
-							};
-						}
-					} catch { /* skip malformed */ }
-				}
-			});
-
-			res.on("end", () => {
-				resolve({
-					content: content || null,
-					tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
-					usage,
+				res.on("end", () => {
+					resolve({
+						content: content || null,
+						tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
+						usage,
+					});
 				});
 			});
-		});
-		req.on("error", reject);
-		req.setTimeout(options?.timeoutMs ?? 180000, () => req.destroy(new Error("Timeout")));
+			req.on("error", reject);
+			req.setTimeout(options?.timeoutMs ?? 180000, () => req.destroy(new Error("Timeout")));
 
-		// If aborted before response arrives, destroy the request
-		options?.signal?.addEventListener("abort", () => {
-			req.destroy(new Error("Aborted"));
-		});
+			// If aborted before response arrives, destroy the request
+			options?.signal?.addEventListener("abort", () => {
+				req.destroy(new Error("Aborted"));
+			});
 
-		req.write(body);
-		req.end();
-	});
+			req.write(body);
+			req.end();
+		});
 
 	let lastErr: Error | null = null;
 	for (let i = 0; i < 3; i++) {
@@ -245,7 +244,7 @@ export async function callLLM(
 			return await doRequest();
 		} catch (e) {
 			lastErr = e instanceof Error ? e : new Error(String(e));
-			if (i < 2) await new Promise(r => setTimeout(r, 2000 * (i + 1)));
+			if (i < 2) await new Promise((r) => setTimeout(r, 2000 * (i + 1)));
 		}
 	}
 	throw lastErr;

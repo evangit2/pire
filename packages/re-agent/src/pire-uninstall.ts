@@ -15,11 +15,11 @@
  */
 
 import { execSync } from "node:child_process";
-import { existsSync, rmSync, readFileSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
-import { createInterface } from "node:readline/promises";
+import { existsSync, readFileSync, rmSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { stdin, stdout } from "node:process";
+import { createInterface } from "node:readline/promises";
+import { fileURLToPath } from "node:url";
 import chalk from "chalk";
 
 const IS_WIN = process.platform === "win32";
@@ -31,11 +31,13 @@ const PIRE_DIR = join(HOME, ".pire");
 
 function run(cmd: string, opts: { stdio?: "pipe" | "ignore" } = {}): string {
 	try {
-		return execSync(cmd, {
-			encoding: "utf-8",
-			stdio: opts.stdio ?? "pipe",
-			timeout: 60000,
-		})?.trim() ?? "";
+		return (
+			execSync(cmd, {
+				encoding: "utf-8",
+				stdio: opts.stdio ?? "pipe",
+				timeout: 60000,
+			})?.trim() ?? ""
+		);
 	} catch {
 		return "";
 	}
@@ -58,8 +60,16 @@ function detectOS(): string {
 	if (process.platform === "darwin") return "macos";
 	try {
 		const id = run(". /etc/os-release 2>/dev/null && echo $ID");
-		if (id.includes("ubuntu") || id.includes("debian") || id.includes("linuxmint") || id.includes("pop")) return "debian";
-		if (id.includes("fedora") || id.includes("rhel") || id.includes("centos") || id.includes("rocky") || id.includes("almalinux")) return "fedora";
+		if (id.includes("ubuntu") || id.includes("debian") || id.includes("linuxmint") || id.includes("pop"))
+			return "debian";
+		if (
+			id.includes("fedora") ||
+			id.includes("rhel") ||
+			id.includes("centos") ||
+			id.includes("rocky") ||
+			id.includes("almalinux")
+		)
+			return "fedora";
 		if (id.includes("arch") || id.includes("manjaro")) return "arch";
 		if (id.includes("suse") || id.includes("opensuse")) return "suse";
 		if (id.includes("alpine")) return "alpine";
@@ -70,7 +80,9 @@ function detectOS(): string {
 function detectPkgMgr(os: string): string {
 	if (os === "macos") return "brew";
 	if (os === "windows") return "choco";
-	const which = run("command -v apt-get || command -v dnf || command -v pacman || command -v zypper || command -v apk");
+	const which = run(
+		"command -v apt-get || command -v dnf || command -v pacman || command -v zypper || command -v apk",
+	);
 	if (which.includes("apt-get")) return "apt";
 	if (which.includes("dnf")) return "dnf";
 	if (which.includes("pacman")) return "pacman";
@@ -268,12 +280,14 @@ function pkgUninstall(pkgmgr: string, pkgs: PkgEntry[]): void {
 
 function pipUninstall(pkgs: PkgEntry[]): void {
 	// Find the right python
-	const candidates = process.platform === "darwin"
-		? ["/opt/homebrew/bin/python3", "/usr/local/bin/python3", "python3"]
-		: ["python3"];
+	const candidates =
+		process.platform === "darwin" ? ["/opt/homebrew/bin/python3", "/usr/local/bin/python3", "python3"] : ["python3"];
 	let py = "python3";
 	for (const p of candidates) {
-		if (run(`command -v ${p} ${DEVNULL}`)) { py = p; break; }
+		if (run(`command -v ${p} ${DEVNULL}`)) {
+			py = p;
+			break;
+		}
 	}
 	let flags = "--user --break-system-packages";
 	if (!run(`${py} -m pip install --help 2>/dev/null | grep -- --break-system-packages`)) {
@@ -375,9 +389,12 @@ async function main() {
 	console.log(chalk.white("  Currently installed (detected):"));
 	const allPkgs = [...optPkgs, ...corePkgs];
 	for (const pkg of allPkgs) {
-		const installed = os === "macos"
-			? !!run(`brew list ${pkg.name} ${DEVNULL} 2>/dev/null`)
-			: !!run(`command -v ${pkg.name} ${DEVNULL} || ${pkgmgr} list --installed 2>/dev/null | grep -q ${pkg.name}`);
+		const installed =
+			os === "macos"
+				? !!run(`brew list ${pkg.name} ${DEVNULL} 2>/dev/null`)
+				: !!run(
+						`command -v ${pkg.name} ${DEVNULL} || ${pkgmgr} list --installed 2>/dev/null | grep -q ${pkg.name}`,
+					);
 		if (installed) {
 			console.log(`    ${chalk.green("✓")} ${pkg.label}`);
 		}
@@ -385,13 +402,20 @@ async function main() {
 	// Check python packages
 	for (const pkg of pyPkgs) {
 		const py = process.platform === "darwin" ? "/opt/homebrew/bin/python3" : "python3";
-		if (run(`${py} -c "import ${pkg.name.replace('-engine','').replace('-python','').replace('-tools','')}" ${DEVNULL} 2>/dev/null`) !== undefined) {
+		if (
+			run(
+				`${py} -c "import ${pkg.name.replace("-engine", "").replace("-python", "").replace("-tools", "")}" ${DEVNULL} 2>/dev/null`,
+			) !== undefined
+		) {
 			// Simplified check
 		}
 	}
 	console.log();
 
-	const removeOpt = await confirm(rl, chalk.yellow("  Remove optional RE packages (wine, mingw, gdb, binwalk, jadx, yara, etc.)? [y/N] "));
+	const removeOpt = await confirm(
+		rl,
+		chalk.yellow("  Remove optional RE packages (wine, mingw, gdb, binwalk, jadx, yara, etc.)? [y/N] "),
+	);
 	console.log();
 
 	if (removeOpt && optPkgs.length > 0) {
@@ -400,7 +424,10 @@ async function main() {
 		console.log();
 	}
 
-	const removePy = await confirm(rl, chalk.yellow("  Remove Python RE packages (capstone, unicorn, angr, lief, frida, volatility3, etc.)? [y/N] "));
+	const removePy = await confirm(
+		rl,
+		chalk.yellow("  Remove Python RE packages (capstone, unicorn, angr, lief, frida, volatility3, etc.)? [y/N] "),
+	);
 	console.log();
 
 	if (removePy) {
@@ -409,7 +436,10 @@ async function main() {
 		console.log();
 	}
 
-	const removeCore = await confirm(rl, chalk.yellow("  Remove core packages (node, radare2, binutils, python)? [y/N] "));
+	const removeCore = await confirm(
+		rl,
+		chalk.yellow("  Remove core packages (node, radare2, binutils, python)? [y/N] "),
+	);
 	console.log();
 
 	if (removeCore && corePkgs.length > 0) {

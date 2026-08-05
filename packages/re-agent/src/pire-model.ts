@@ -14,11 +14,11 @@
  * Inspired by `hermes model` — clean readline-based interactive UX.
  */
 
-import { createInterface } from "node:readline";
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
-import * as https from "node:https";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import * as http from "node:http";
+import * as https from "node:https";
+import { join } from "node:path";
+import { createInterface } from "node:readline";
 import chalk from "chalk";
 
 const PIRE_DIR = join(process.env.HOME || "/tmp", ".pire");
@@ -98,8 +98,7 @@ function loadConfig(): PireConfig | null {
 			const match = line.match(/^(\w+)\s*:\s*(.*)$/);
 			if (!match) continue;
 			let value = match[2].trim();
-			if ((value.startsWith('"') && value.endsWith('"')) ||
-				(value.startsWith("'") && value.endsWith("'"))) {
+			if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
 				value = value.slice(1, -1);
 			}
 			result[match[1]] = value;
@@ -108,7 +107,7 @@ function loadConfig(): PireConfig | null {
 			return {
 				base_url: result.base_url,
 				api_key: result.api_key,
-				model: (result.model && result.model !== "none") ? result.model : "",
+				model: result.model && result.model !== "none" ? result.model : "",
 				context_length: result.context_length ? parseInt(result.context_length) : undefined,
 				max_tokens: result.max_tokens ? parseInt(result.max_tokens) : undefined,
 			};
@@ -119,11 +118,7 @@ function loadConfig(): PireConfig | null {
 
 function saveConfig(config: PireConfig): void {
 	if (!existsSync(PIRE_DIR)) mkdirSync(PIRE_DIR, { recursive: true });
-	const lines = [
-		`base_url: ${config.base_url}`,
-		`api_key: ${config.api_key}`,
-		`model: ${config.model || "none"}`,
-	];
+	const lines = [`base_url: ${config.base_url}`, `api_key: ${config.api_key}`, `model: ${config.model || "none"}`];
 	if (config.context_length) lines.push(`context_length: ${config.context_length}`);
 	if (config.max_tokens) lines.push(`max_tokens: ${config.max_tokens}`);
 	writeFileSync(CONFIG_FILE, lines.join("\n") + "\n");
@@ -135,32 +130,36 @@ function fetchModels(baseUrl: string, apiKey: string): Promise<string[]> {
 	return new Promise((resolve, reject) => {
 		const url = new URL(baseUrl.replace(/\/$/, "") + "/models");
 		const client = url.protocol === "https:" ? https : http;
-		const req = client.request(url, {
-			method: "GET",
-			headers: {
-				Authorization: `Bearer ${apiKey}`,
-				"Content-Type": "application/json",
+		const req = client.request(
+			url,
+			{
+				method: "GET",
+				headers: {
+					Authorization: `Bearer ${apiKey}`,
+					"Content-Type": "application/json",
+				},
 			},
-		}, (res) => {
-			if (res.statusCode && res.statusCode >= 400) {
-				reject(new Error(`HTTP ${res.statusCode}`));
-				return;
-			}
-			let body = "";
-			res.on("data", (chunk) => body += chunk);
-			res.on("end", () => {
-				try {
-					const json = JSON.parse(body);
-					const models: string[] = (json.data || json.models || [])
-						.map((m: any) => m.id || m.name || m)
-						.filter((m: string) => typeof m === "string");
-					models.sort();
-					resolve(models);
-				} catch {
-					reject(new Error("Failed to parse /v1/models response"));
+			(res) => {
+				if (res.statusCode && res.statusCode >= 400) {
+					reject(new Error(`HTTP ${res.statusCode}`));
+					return;
 				}
-			});
-		});
+				let body = "";
+				res.on("data", (chunk) => (body += chunk));
+				res.on("end", () => {
+					try {
+						const json = JSON.parse(body);
+						const models: string[] = (json.data || json.models || [])
+							.map((m: any) => m.id || m.name || m)
+							.filter((m: string) => typeof m === "string");
+						models.sort();
+						resolve(models);
+					} catch {
+						reject(new Error("Failed to parse /v1/models response"));
+					}
+				});
+			},
+		);
 		req.on("error", reject);
 		req.setTimeout(15000, () => req.destroy(new Error("Timeout")));
 		req.end();
@@ -169,7 +168,12 @@ function fetchModels(baseUrl: string, apiKey: string): Promise<string[]> {
 
 // ─── Interactive flows ─────────────────────────────────────────
 
-async function selectFromList(rl: ReturnType<typeof createInterface>, title: string, items: string[], allowCustom = false): Promise<string | null> {
+async function selectFromList(
+	rl: ReturnType<typeof createInterface>,
+	title: string,
+	items: string[],
+	allowCustom = false,
+): Promise<string | null> {
 	console.log();
 	console.log(chalk.bold(title));
 	console.log(chalk.dim("─".repeat(40)));
@@ -254,7 +258,7 @@ async function main(): Promise<void> {
 			console.log(`  ${chalk.dim("Model:")}        ${config.model || chalk.yellow("(none)")}`);
 			if (config.context_length) console.log(`  ${chalk.dim("Context:")}      ${config.context_length} tokens`);
 			if (config.max_tokens) console.log(`  ${chalk.dim("Max tokens:")}   ${config.max_tokens}`);
-			const activeProv = db.providers.find(p => p.base_url === config.base_url);
+			const activeProv = db.providers.find((p) => p.base_url === config.base_url);
 			if (activeProv) console.log(`  ${chalk.dim("Provider:")}     ${activeProv.name}`);
 		} else {
 			console.log(chalk.yellow("No model configured yet."));
@@ -294,7 +298,7 @@ async function main(): Promise<void> {
 			const newConfig: PireConfig = {
 				base_url: p.base_url,
 				api_key: p.api_key,
-				model: sameProvider ? (existing?.model || "") : "",
+				model: sameProvider ? existing?.model || "" : "",
 				context_length: existing?.context_length,
 				max_tokens: existing?.max_tokens,
 			};

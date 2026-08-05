@@ -27,11 +27,18 @@
  *   pire -mcp --port 9847 --host 0.0.0.0
  */
 
-import * as readline from "node:readline";
-import * as net from "node:net";
 import { createServer } from "node:http";
-import { RE_TOOLS, RE_SYSTEM_PROMPT, probeTools, validateToolParams, type AgentTool, type ToolResult } from "./index.js";
-import { loadLLMConfig, toolToFunction, callLLM, type ChatMessage, type LLMConfig } from "./llm.js";
+import * as net from "node:net";
+import * as readline from "node:readline";
+import {
+	type AgentTool,
+	probeTools,
+	RE_SYSTEM_PROMPT,
+	RE_TOOLS,
+	type ToolResult,
+	validateToolParams,
+} from "./index.js";
+import { type ChatMessage, callLLM, type LLMConfig, loadLLMConfig, toolToFunction } from "./llm.js";
 
 // ─── Session ───────────────────────────────────────────────────
 
@@ -148,12 +155,19 @@ When you have gathered enough information, write your analysis to a file using t
 			for (const tc of resp.tool_calls) {
 				const tool = session.toolMap.get(tc.function.name);
 				if (!tool) {
-					messages.push({ role: "tool", tool_call_id: tc.id, content: `Error: unknown tool "${tc.function.name}"` });
+					messages.push({
+						role: "tool",
+						tool_call_id: tc.id,
+						content: `Error: unknown tool "${tc.function.name}"`,
+					});
 					continue;
 				}
 				let params: Record<string, unknown>;
-				try { params = JSON.parse(tc.function.arguments); }
-				catch { params = {}; }
+				try {
+					params = JSON.parse(tc.function.arguments);
+				} catch {
+					params = {};
+				}
 
 				// Validate required params
 				const validationError = validateToolParams(tool, params);
@@ -168,7 +182,11 @@ When you have gathered enough information, write your analysis to a file using t
 				// Deduplicate
 				const callSig = `${tc.function.name}:${JSON.stringify(params)}`;
 				if (seenCalls.has(callSig)) {
-					messages.push({ role: "tool", tool_call_id: tc.id, content: "Skipped: identical call already executed this turn." });
+					messages.push({
+						role: "tool",
+						tool_call_id: tc.id,
+						content: "Skipped: identical call already executed this turn.",
+					});
 					continue;
 				}
 				seenCalls.add(callSig);
@@ -238,7 +256,7 @@ async function handleRequest(req: RPCRequest): Promise<RPCResponse> {
 					protocolVersion: "2024-11-05",
 					serverInfo: { name: "pire", version: "0.88.6" },
 					capabilities: { tools: {}, resources: {}, prompts: {} },
-					tools: RE_TOOLS.map(t => ({
+					tools: RE_TOOLS.map((t) => ({
 						name: t.name,
 						description: t.description,
 						parameters: (t.parameters as any)?.properties ?? {},
@@ -250,7 +268,7 @@ async function handleRequest(req: RPCRequest): Promise<RPCResponse> {
 			case "tools/list":
 			case "tool.list": {
 				return ok(id, {
-					tools: RE_TOOLS.map(t => ({
+					tools: RE_TOOLS.map((t) => ({
 						name: t.name,
 						description: t.description,
 						parameters: (t.parameters as any)?.properties ?? {},
@@ -263,7 +281,7 @@ async function handleRequest(req: RPCRequest): Promise<RPCResponse> {
 			case "tool.execute": {
 				const toolName = p.name as string;
 				const toolArgs = (p.arguments ?? p.params ?? {}) as Record<string, unknown>;
-				const tool = RE_TOOLS.find(t => t.name === toolName);
+				const tool = RE_TOOLS.find((t) => t.name === toolName);
 				if (!tool) {
 					return err(id, -32602, `Unknown tool: ${toolName}`);
 				}
@@ -278,7 +296,10 @@ async function handleRequest(req: RPCRequest): Promise<RPCResponse> {
 				if (sid && sessions.has(sid)) {
 					const session = sessions.get(sid)!;
 					session.messages.push({ role: "tool", tool_call_id: `tool_${id}`, content: text });
-					session.messages.push({ role: "assistant", content: `Tool ${toolName} result: ${text.slice(0, 200)}${text.length > 200 ? "..." : ""}` });
+					session.messages.push({
+						role: "assistant",
+						content: `Tool ${toolName} result: ${text.slice(0, 200)}${text.length > 200 ? "..." : ""}`,
+					});
 				}
 				return ok(id, { content: [{ type: "text", text }] });
 			}
@@ -296,7 +317,7 @@ async function handleRequest(req: RPCRequest): Promise<RPCResponse> {
 
 			case "session.list": {
 				return ok(id, {
-					sessions: Array.from(sessions.values()).map(s => ({
+					sessions: Array.from(sessions.values()).map((s) => ({
 						id: s.id,
 						target: s.target,
 						messageCount: s.messages.length,
@@ -368,11 +389,15 @@ async function handleRequest(req: RPCRequest): Promise<RPCResponse> {
 				if (!session) {
 					return err(id, -32602, `Session not found: ${sid}`);
 				}
-				const data = JSON.stringify({
-					version: "0.88.6",
-					target: session.target,
-					messages: session.messages,
-				}, null, 2);
+				const data = JSON.stringify(
+					{
+						version: "0.88.6",
+						target: session.target,
+						messages: session.messages,
+					},
+					null,
+					2,
+				);
 				const { writeFileSync, mkdirSync } = await import("node:fs");
 				const { dirname } = await import("node:path");
 				mkdirSync(dirname(path), { recursive: true });
@@ -441,7 +466,9 @@ async function runTcpServer(port: number, host: string) {
 			}
 		});
 
-		socket.on("error", () => { /* client disconnected */ });
+		socket.on("error", () => {
+			/* client disconnected */
+		});
 	});
 
 	server.listen(port, host, () => {
@@ -460,7 +487,9 @@ async function runHttpServer(port: number, host: string) {
 		}
 
 		let body = "";
-		req.on("data", (chunk) => { body += chunk; });
+		req.on("data", (chunk) => {
+			body += chunk;
+		});
 		req.on("end", async () => {
 			let rpcReq: RPCRequest;
 			try {

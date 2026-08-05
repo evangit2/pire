@@ -1,4 +1,4 @@
-import { stringsTool, fileTool } from "../src/index.ts";
+import { fileTool, stringsTool } from "../src/index.ts";
 
 async function main() {
 	const r1 = await fileTool.execute("test1", { path: "/bin/ls" });

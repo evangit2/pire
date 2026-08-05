@@ -13,11 +13,11 @@
  *   pire-reimpl <binary> --turns 40                           — shorter budget
  */
 
-import { writeFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { RE_TOOLS, RE_SYSTEM_PROMPT, probeTools, type AgentTool } from "./index.js";
-import { loadLLMConfig, toolToFunction, callLLM, type ChatMessage } from "./llm.js";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { Type } from "typebox";
+import { type AgentTool, probeTools, RE_SYSTEM_PROMPT, RE_TOOLS } from "./index.js";
+import { type ChatMessage, callLLM, loadLLMConfig, toolToFunction } from "./llm.js";
 
 // ─── Write file tool (lets agent save files) ──────────────────
 
@@ -158,7 +158,7 @@ Examples:
 	}
 
 	if (!binaryPath) {
-		console.error("Usage: pire-reimpl <binary> [--task \"...\"] [--turns N]");
+		console.error('Usage: pire-reimpl <binary> [--task "..."] [--turns N]');
 		process.exit(1);
 	}
 
@@ -186,7 +186,10 @@ async function main() {
 
 	const winePrefix = process.env.WINEPREFIX || "$HOME/.wine";
 	const dir = dirname(binaryPath);
-	const toolsAvail = Object.entries(probeTools()).filter(([,v]) => v).map(([k]) => k).join(", ");
+	const toolsAvail = Object.entries(probeTools())
+		.filter(([, v]) => v)
+		.map(([k]) => k)
+		.join(", ");
 
 	// Build task prompt
 	const taskPrompt = (task || DEFAULT_TASK)
@@ -199,14 +202,16 @@ async function main() {
 	const systemPrompt = `${RE_SYSTEM_PROMPT}
 
 ${systemTemplate
-		.replace("{BINARY}", binaryPath)
-		.replace("{DIR}", dir)
-		.replace("{WINEPREFIX}", winePrefix)
-		.replace("{TOOLS}", toolsAvail)}`;
+	.replace("{BINARY}", binaryPath)
+	.replace("{DIR}", dir)
+	.replace("{WINEPREFIX}", winePrefix)
+	.replace("{TOOLS}", toolsAvail)}`;
 
 	console.log(`pire — Autonomous RE pipeline`);
 	console.log(`Target: ${binaryPath}`);
-	console.log(`Task: ${customSystem ? task.slice(0, 80) + (task.length > 80 ? "..." : "") : "Full RE + reimplementation"}`);
+	console.log(
+		`Task: ${customSystem ? task.slice(0, 80) + (task.length > 80 ? "..." : "") : "Full RE + reimplementation"}`,
+	);
 	console.log(`LLM: ${config.model}`);
 	console.log(`Turns: ${maxTurns}`);
 	console.log(`Tools: ${RE_TOOLS.length + 1} (including write_file)`);
@@ -241,22 +246,26 @@ ${systemTemplate
 			const analysisExists = existsSync(analysisPath);
 			const reimplExists = existsSync(reimplPath);
 			if (turn === 24 && !analysisExists) {
-				const msg = "⚠️ DEADLINE: You are at turn 25. You MUST write analysis.md NOW using write_file. Stop testing and write your analysis immediately.";
+				const msg =
+					"⚠️ DEADLINE: You are at turn 25. You MUST write analysis.md NOW using write_file. Stop testing and write your analysis immediately.";
 				messages.push({ role: "user", content: msg });
 				console.log(`  ${msg}`);
 			}
 			if (turn === 29 && !reimplExists) {
-				const msg = "⚠️ DEADLINE: You are at turn 30. You MUST write reimpl.c NOW using write_file. Write your best C reimplementation immediately — you can test and fix it in remaining turns.";
+				const msg =
+					"⚠️ DEADLINE: You are at turn 30. You MUST write reimpl.c NOW using write_file. Write your best C reimplementation immediately — you can test and fix it in remaining turns.";
 				messages.push({ role: "user", content: msg });
 				console.log(`  ${msg}`);
 			}
 			if (turn === 39 && !reimplExists) {
-				const msg = "⚠️ URGENT: You are at turn 40. You have NOT written reimpl.c yet. Write it NOW. Do not run any more shell commands. Call write_file with your C source code immediately.";
+				const msg =
+					"⚠️ URGENT: You are at turn 40. You have NOT written reimpl.c yet. Write it NOW. Do not run any more shell commands. Call write_file with your C source code immediately.";
 				messages.push({ role: "user", content: msg });
 				console.log(`  ${msg}`);
 			}
 			if (turn === 49 && !reimplExists) {
-				const msg = "⚠️ FINAL DEADLINE: You are at turn 50. Write reimpl.c IMMEDIATELY. Even if imperfect, a partial reimplementation is better than none. Use write_file now.";
+				const msg =
+					"⚠️ FINAL DEADLINE: You are at turn 50. Write reimpl.c IMMEDIATELY. Even if imperfect, a partial reimplementation is better than none. Use write_file now.";
 				messages.push({ role: "user", content: msg });
 				console.log(`  ${msg}`);
 			}
@@ -273,7 +282,12 @@ ${systemTemplate
 				const nonWriteCalls = resp.tool_calls.filter((tc) => tc.function.name !== "write_file");
 				if (nonWriteCalls.length > 0) {
 					for (const tc of nonWriteCalls) {
-						messages.push({ role: "tool", tool_call_id: tc.id, content: "BLOCKED: You are past the write deadline (turn 40). You MUST call write_file to write reimpl.c before doing anything else. No other tools are allowed." });
+						messages.push({
+							role: "tool",
+							tool_call_id: tc.id,
+							content:
+								"BLOCKED: You are past the write deadline (turn 40). You MUST call write_file to write reimpl.c before doing anything else. No other tools are allowed.",
+						});
 					}
 					const writeCalls = resp.tool_calls.filter((tc) => tc.function.name === "write_file");
 					if (writeCalls.length === 0) {
@@ -287,11 +301,15 @@ ${systemTemplate
 
 			for (const tc of resp.tool_calls) {
 				let args: Record<string, unknown> = {};
-				try { args = JSON.parse(tc.function.arguments); } catch {}
-				const argStr = Object.entries(args).map(([k,v]) => {
-					const val = String(v);
-					return val.length > 100 ? `${k}=${val.slice(0,100)}...` : `${k}=${val}`;
-				}).join(" ");
+				try {
+					args = JSON.parse(tc.function.arguments);
+				} catch {}
+				const argStr = Object.entries(args)
+					.map(([k, v]) => {
+						const val = String(v);
+						return val.length > 100 ? `${k}=${val.slice(0, 100)}...` : `${k}=${val}`;
+					})
+					.join(" ");
 				console.log(`  ⚙ ${tc.function.name}(${argStr})`);
 			}
 
@@ -300,12 +318,19 @@ ${systemTemplate
 			for (const tc of resp.tool_calls) {
 				const tool = toolMap.get(tc.function.name);
 				if (!tool) {
-					messages.push({ role: "tool", tool_call_id: tc.id, content: `Error: unknown tool "${tc.function.name}"` });
+					messages.push({
+						role: "tool",
+						tool_call_id: tc.id,
+						content: `Error: unknown tool "${tc.function.name}"`,
+					});
 					continue;
 				}
 				let params: Record<string, unknown>;
-				try { params = JSON.parse(tc.function.arguments); }
-				catch { params = {}; }
+				try {
+					params = JSON.parse(tc.function.arguments);
+				} catch {
+					params = {};
+				}
 
 				try {
 					const result = await tool.execute("reimpl", params);
