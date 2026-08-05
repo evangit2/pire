@@ -1351,13 +1351,25 @@ const fetchTool: AgentTool<{ url: string; outputDir?: string }> = {
 		outputDir: Type.Optional(Type.String()),
 	}),
 	async execute(_id, params) {
+		// Validate URL — only allow http/https
+		try {
+			const parsed = new URL(params.url);
+			if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+				return textResult(`Blocked: only http/https URLs are allowed (got ${parsed.protocol})`);
+			}
+		} catch {
+			return textResult(`Invalid URL: ${params.url}`);
+		}
+
 		const outDir = params.outputDir || "/tmp/pire-downloads";
 		try {
 			mkdirSync(outDir, { recursive: true });
 		} catch {}
 		// Derive filename from URL, fallback to timestamp
 		const urlPath = params.url.split("?")[0].split("/").pop() || `file_${Date.now()}`;
-		const outPath = join(outDir, urlPath);
+		// Sanitize filename — prevent path traversal
+		const safeName = urlPath.replace(/[^a-zA-Z0-9._-]/g, "_");
+		const outPath = join(outDir, safeName);
 
 		// Try wget first (handles redirects, SSL), fall back to curl
 		const wgetBin = which("wget");

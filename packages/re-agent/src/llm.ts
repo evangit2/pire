@@ -161,7 +161,7 @@ export async function callLLM(
 						const sc = res.statusCode ?? 500;
 						const err = new Error(`HTTP ${sc}: ${errBody.slice(0, 500)}`);
 						(err as any).statusCode = sc;
-						(err as any).retriable = sc >= 500;
+						(err as any).retriable = sc >= 500 || sc === 429;
 						reject(err);
 					});
 					return;
