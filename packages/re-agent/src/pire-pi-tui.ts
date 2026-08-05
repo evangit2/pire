@@ -52,28 +52,11 @@ const BANNER = `
 '--'                     
 `;
 
-// ─── Ctrl+C handling ──────────────────────────────────────────
-// First Ctrl+C: abort the current agent loop immediately.
-// Second Ctrl+C (within 5s): exit pire entirely.
-function setupGracefulQuit(onQuit: () => void, onAbort?: () => void): void {
-	let pressed = false;
-	let timer: NodeJS.Timeout | undefined;
-
-	process.on("SIGINT", () => {
-		if (pressed) {
-			// Double press — exit immediately
-			if (timer) clearTimeout(timer);
-			onQuit();
-			process.exit(0);
-		}
-		pressed = true;
-		// First press — abort current operation
-		onAbort?.();
-		timer = setTimeout(() => { pressed = false; }, 5000);
-	});
-
+// ─── SIGTERM handler ──────────────────────────────────────────
+// Note: Ctrl+C is handled in the constructor via addInputListener
+// because raw mode delivers it as 0x03, not as SIGINT.
+function setupGracefulQuit(onQuit: () => void): void {
 	process.on("SIGTERM", () => {
-		if (timer) clearTimeout(timer);
 		onQuit();
 		process.exit(0);
 	});
@@ -378,9 +361,9 @@ export class PirePiTUI {
 		statusBox.addChild(this.statusBar);
 		const chatVStack = new VStack([
 			{ component: this.scrollView, basis: 0, grow: 1, shrink: 1, minSize: 3 },
-			{ component: new DynamicBorder(), basis: "auto", grow: 0, shrink: 0 },
-			{ component: statusBox, basis: "auto", grow: 0, shrink: 0 },
-			{ component: this.input, basis: "auto", grow: 0, shrink: 0 },
+			{ component: new DynamicBorder(), basis: 1, grow: 0, shrink: 0 },
+			{ component: statusBox, basis: 1, grow: 0, shrink: 0, maxSize: 1 },
+			{ component: this.input, basis: 1, grow: 0, shrink: 0, maxSize: 1 },
 		]);
 
 		// Sidebar column — padded to fill full height
@@ -399,6 +382,35 @@ export class PirePiTUI {
 		// Set as layout root — TuiAltScreen uses renderLayoutFrame to
 		// enforce sizing constraints and clip to the fixed viewport
 		this.ui.setLayoutRoot(mainHStack);
+
+		// Intercept Ctrl+C (0x03) in raw mode — it arrives as a byte,
+		// not as SIGINT. The Input component silently drops control chars.
+		let ctrlCPressed = false;
+		let ctrlCTimer: NodeJS.Timeout | undefined;
+		this.ui.addInputListener((data) => {
+			if (data === "\x03") {
+				if (ctrlCPressed) {
+					// Double press — exit immediately
+					if (ctrlCTimer) clearTimeout(ctrlCTimer);
+					this.stop();
+					process.exit(0);
+				}
+				ctrlCPressed = true;
+				// First press — abort current operation
+				if (this.processing && this.abortController) {
+					this.abortController.abort();
+					this.transcript.add("system", chalk.bold.yellow("⏹ Aborted."));
+					this.flushRender();
+				} else if (!this.processing) {
+					// Not processing — exit on first Ctrl+C
+					this.stop();
+					process.exit(0);
+				}
+				ctrlCTimer = setTimeout(() => { ctrlCPressed = false; }, 5000);
+				return { consume: true };
+			}
+			return undefined;
+		});
 
 		// Focus the input
 		this.ui.setFocus(this.input);
@@ -715,17 +727,7 @@ export class PirePiTUI {
 
 	start(): void {
 		this.ui.start();
-		setupGracefulQuit(
-			() => { this.stop(); },
-			() => {
-				// First Ctrl+C — abort current operation
-				if (this.processing && this.abortController) {
-					this.abortController.abort();
-					this.transcript.add("system", chalk.bold.yellow("⏹ Aborted."));
-					this.flushRender();
-				}
-			},
-		);
+		setupGracefulQuit(() => { this.stop(); });
 	}
 
 	stop(): void {
