@@ -21,7 +21,7 @@
 import { RE_TOOLS, RE_SYSTEM_PROMPT, probeTools } from "./index.js";
 import { PireTUI, PireCLI } from "./tui.js";
 import { PirePiTUI } from "./pire-pi-tui.js";
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -326,6 +326,14 @@ switch (args[0]) {
 			const { startMCPServer } = await import("./mcp-server.js");
 			await startMCPServer(mcpArgs);
 			break;
+		}
+
+		// If first arg is a bare word (not a flag, not a file path, not a URL),
+		// it's likely a typo'd subcommand — don't silently launch the TUI.
+		if (args[0] && !args[0].startsWith("-") && !/^https?:\/\//.test(args[0]) && !existsSync(args[0])) {
+			console.error(`Unknown command: pire ${args[0]}`);
+			console.error(`Run 'pire --help' for available commands.`);
+			process.exit(1);
 		}
 
 		// Start interactive session
