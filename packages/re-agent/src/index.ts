@@ -633,14 +633,29 @@ const decompileTool: AgentTool<{ path: string; address: string; format?: string 
 					: `aaa; s ${seekTarget}; pdf`;
 				const fallback = await r2Session.run(params.path, fallbackCmd);
 				cleaned = fallback.replace(/\x00/g, "").trim();
-				if (!cleaned) {
-					return textResult(
-						`No decompilable function found at ${params.address}. The address may be in a data section, alignment padding, or not a function entry point. Use 'r2' with 'afl' to list valid function addresses.`,
-					);
+			}
+			// If pdf also produced nothing, try objdump disassembly as last resort
+			if (!cleaned) {
+				const objdumpPath = which("objdump");
+				if (objdumpPath) {
+					const addrNum = parseInt(seekTarget.replace(/^0x/, ""), 16);
+					if (!isNaN(addrNum)) {
+						const stopAddr = addrNum + 8192;
+						const raw = run(
+							`${objdumpPath} -d --start-address=0x${addrNum.toString(16)} --stop-address=0x${stopAddr.toString(16)} ${shellEscape(params.path)} ${DEVNULL}`,
+							{ timeout: 15000 },
+						);
+						const lines = raw.split("\n").filter((l) => /^\s+[0-9a-f]+:/.test(l));
+						if (lines.length > 0) {
+							return textResult(
+								`; Disassembly at ${params.address} (objdump fallback — r2 pdc/pdf returned nothing)\n` +
+									lines.join("\n"),
+							);
+						}
+					}
 				}
-			} else {
 				return textResult(
-					`No disassembly found at ${params.address}. The address may be invalid or in a data section.`,
+					`No decompilable function found at ${params.address}. The address may be in a data section, alignment padding, or not a function entry point. Use 'r2' with 'afl' to list valid function addresses, or try 'disasm_func' with the hex address.`,
 				);
 			}
 		}
@@ -1042,8 +1057,12 @@ const disasmFuncTool: AgentTool<{ path: string; startAddress: string; maxBytes?:
 			if (line.includes("<.text") || line.includes("<.init") || line.includes("<.fini")) continue;
 			// Track whether this is an actual instruction line (not a symbol header)
 			const isInstruction = /^\s+[0-9a-f]+:/.test(line);
-			// Stop at next function's endbr64 (but not the function's own first endbr64)
+			// Stop at next function's endbr64 (CET binaries, not Go)
 			if (line.includes("endbr64") && instrCount > 0) break;
+			// Stop at INT3 padding (common between functions in non-Go binaries)
+			if (/	int3/.test(line) && instrCount > 0) break;
+			// Stop at nop-padding after a ret (function boundary in Go and others)
+			if (/	nop/.test(line) && instrCount > 0 && funcLines.some((l) => /	ret/.test(l))) break;
 			if (isInstruction) instrCount++;
 			funcLines.push(line);
 		}
@@ -1651,7 +1670,7 @@ export function validateToolParams(tool: AgentTool<any>, params: Record<string, 
 	for (const key of required) {
 		const val = params[key];
 		if (val === undefined || val === null || val === "") {
-			return `Missing required parameter "${key}" for tool "${tool.name}". You must provide this parameter.`;
+			return `Missing required parameter "${key}" for tool "${tool.name}". You must provide this parameter. Please retry the tool call with all required parameters filled in.`;
 		}
 	}
 	return null;
@@ -1763,7 +1782,7 @@ export const RE_SYSTEM_PROMPT = `You are pire, a reverse engineering agent. Anal
 
 Run tools automatically — adapt to the task. Use filetype first, then pick tools. Run PE binaries with WINEPREFIX=$HOME/.wine wine <binary>. Use write_file for source code, not shell heredocs.
 
-Rules: Work on copies (patch tool creates backups). Quote exact addresses. If unsure about a constant, say so.
+Rules: Work on copies (patch tool creates backups). Quote exact addresses. If unsure about a constant, say so. If a tool call fails or returns an error, retry with corrected parameters — do not stop or give up.
 
 When listing functions, use 'aflj' (JSON) for parseable output. When decompiling, pass hex addresses (e.g. 0x3ca60) from the 'addr' column — never pass function indices.
 
