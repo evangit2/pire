@@ -529,8 +529,15 @@ if [ "$NODE_VER" -lt 22 ] 2>/dev/null; then
 	log_step "Upgrading Node.js..."
 	case "$OS" in
 		debian)
-			curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - >/dev/null 2>&1
-			sudo apt-get install -y -qq nodejs </dev/null >/dev/null 2>&1
+			# Remove the distro nodejs first so apt doesn't see it as "already installed"
+			sudo apt-get remove -y -qq nodejs </dev/null >/dev/null 2>&1
+			# Add NodeSource repo for Node 22
+			if curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - 2>&1; then
+				sudo apt-get update -qq </dev/null >/dev/null 2>&1
+				sudo apt-get install -y -qq nodejs </dev/null >/dev/null 2>&1
+			else
+				log_warn "NodeSource setup failed, trying nvm fallback..."
+			fi
 			;;
 		fedora)
 			curl -fsSL https://rpm.nodesource.com/setup_22.x | sudo bash - >/dev/null 2>&1
@@ -540,10 +547,29 @@ if [ "$NODE_VER" -lt 22 ] 2>/dev/null; then
 			pkg_install nodejs 2>/dev/null
 			;;
 		macos)
-			pkg_install node@22 2>/dev/null || brew link --overwrite node@22 </dev/null 2>/dev/null
+			pkg_install node@22 2>/dev/null || brew link --overwrite node@22 </dev/null >/dev/null 2>&1
 			;;
 	esac
-	log_done "Node.js upgraded to $(node -v)"
+	# Verify the upgrade actually worked
+	NODE_VER_NEW=$(node -v 2>/dev/null | sed 's/v//' | cut -d. -f1 || echo "0")
+	if [ "$NODE_VER_NEW" -lt 22 ] 2>/dev/null; then
+		log_warn "Node.js still at v$NODE_VER_NEW after upgrade attempt, trying nvm fallback..."
+		# nvm fallback — always works, user-space install
+		curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | sh >/dev/null 2>&1
+		NVM_DIR="$HOME/.nvm"
+		[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+		nvm install 22 >/dev/null 2>&1
+		nvm use 22 >/dev/null 2>&1
+		nvm alias default 22 >/dev/null 2>&1
+		NODE_VER_NEW=$(node -v 2>/dev/null | sed 's/v//' | cut -d. -f1 || echo "0")
+	fi
+	if [ "$NODE_VER_NEW" -ge 22 ] 2>/dev/null; then
+		log_done "Node.js upgraded to $(node -v)"
+	else
+		log_error "Failed to upgrade Node.js to v22+ (still v$NODE_VER_NEW)"
+		log_error "Please install Node.js 22+ manually: https://nodejs.org/"
+		exit 1
+	fi
 else
 	log_done "Node.js $(node -v)"
 fi
@@ -1049,7 +1075,14 @@ if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/package.json" ]; then
 		fi
 		if ! has tsx 2>/dev/null; then
 			log_step "Installing tsx..."
-			npm install -g tsx </dev/null >/dev/null 2>&1 || log_warn "Install tsx manually: npm install -g tsx"
+			if [ -w /usr/local/bin ]; then
+				npm install -g tsx </dev/null >/dev/null 2>&1
+			else
+				sudo npm install -g tsx </dev/null >/dev/null 2>&1
+			fi
+			if ! has tsx 2>/dev/null; then
+				log_warn "Install tsx manually: npm install -g tsx"
+			fi
 		fi
 		log_done "pire command available"
 	fi
