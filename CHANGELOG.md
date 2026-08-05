@@ -1,3 +1,15 @@
+# pire v0.88.7 — Fix Ctrl+C with Kitty keyboard protocol + status bar duplication
+
+Released: 2026-08-04
+
+## Fixed
+
+- **Ctrl+C abort now works with Kitty keyboard protocol.** Root cause: `ProcessTerminal` negotiates the Kitty keyboard protocol, which transforms Ctrl+C from raw byte `\x03` into CSI-u format (`\x1b[99;5u`). The input listener was checking `data === "\x03"` (raw byte), which never matched when Kitty protocol was active. Fixed by using `matchesKey(data, "ctrl+c")` which handles both raw and CSI-u encodings.
+
+- **Status bar duplication during agent loop transitions.** Root cause: `RenderThrottle.flush()` only called `renderFn()` when a throttle timer was pending. If the timer had already fired (or was never set), `flush()` was a silent no-op — meaning `flushRender()` calls at turn boundaries (`setProcessing`, `setTurns`, `resetTokens`, etc.) were dropped. This left stale status bar content on screen while new content rendered elsewhere, creating the visual appearance of duplicated status lines. Fixed by always calling `renderFn()` in `flush()`, regardless of timer state.
+
+---
+
 # pire v0.88.6 — Fix transient screen doubling during streaming
 
 Released: 2026-08-04

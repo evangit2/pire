@@ -29,6 +29,7 @@ import {
 	visibleWidth,
 	truncateToWidth,
 	wrapTextWithAnsi,
+	matchesKey,
 	type Component,
 } from "@earendil-works/pi-tui";
 import { RE_TOOLS, RE_SYSTEM_PROMPT, probeTools, setGhidraTarget } from "./index.js";
@@ -38,7 +39,7 @@ import { join, dirname, basename } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const VERSION = "0.88.6";
+const VERSION = "0.88.7";
 
 // Use chalk for proper Pi-style colors
 import chalk from "chalk";
@@ -277,9 +278,13 @@ class RenderThrottle {
 		if (this.timer) {
 			clearTimeout(this.timer);
 			this.timer = null;
-			this.pending = false;
-			this.renderFn();
 		}
+		// Always render on flush — even if the throttle timer already fired
+		// or was never set. Without this, flushRender() calls in the agent
+		// loop are silently dropped when no pending render exists, leaving
+		// stale status bar content on screen (appears as duplicated lines).
+		this.pending = false;
+		this.renderFn();
 	}
 
 	dispose(): void {
@@ -381,12 +386,14 @@ export class PirePiTUI {
 		// enforce sizing constraints and clip to the fixed viewport
 		this.ui.setLayoutRoot(mainHStack);
 
-		// Intercept Ctrl+C (0x03) in raw mode — it arrives as a byte,
-		// not as SIGINT. The Input component silently drops control chars.
+		// Intercept Ctrl+C — in raw mode it arrives as 0x03, but when the
+		// Kitty keyboard protocol is active it arrives as CSI-u (\x1b[99;5u).
+		// Use matchesKey() to handle both encodings. The Input component
+		// silently drops control chars, so we must intercept here.
 		let ctrlCPressed = false;
 		let ctrlCTimer: NodeJS.Timeout | undefined;
 		this.ui.addInputListener((data) => {
-			if (data === "\x03") {
+			if (matchesKey(data, "ctrl+c")) {
 				if (ctrlCPressed) {
 					// Double press — exit immediately
 					if (ctrlCTimer) clearTimeout(ctrlCTimer);
@@ -419,9 +426,10 @@ export class PirePiTUI {
 		this.throttle.request();
 	}
 
-	/** Flush any pending render immediately */
+	/** Flush any pending render immediately — forces a full render, bypassing all coalescing */
 	private flushRender(): void {
-		this.throttle.flush();
+		this.throttle.dispose();
+		this.ui.requestRender(true);
 	}
 
 	private async handleInput(input: string): Promise<void> {
