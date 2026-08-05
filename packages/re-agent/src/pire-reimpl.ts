@@ -28,42 +28,84 @@ function getContextCharLimit(): number {
 // Tool output truncation: 5% of context budget, min 2000, max 20000
 const MAX_TOOL_OUTPUT = Math.min(20000, Math.max(2000, Math.floor(getContextCharLimit() * 0.05)));
 const CONTEXT_CHAR_LIMIT = parseInt(process.env.PIRE_CONTEXT_LIMIT || "0", 10) || getContextCharLimit();
+const TOOL_RESULT_HEAD = 600;
+const TOOL_RESULT_TAIL = 600;
+const PRESERVE_RECENT = 8;
 
 // ─── Context trimming (prevents context overflow on long pipelines) ───
 
-function totalChars(messages: ChatMessage[]): number {
-	return messages.reduce((sum, m) => {
-		let len = (m.content || "").length;
-		if (m.tool_calls) for (const tc of m.tool_calls) len += (tc.function.arguments || "").length;
-		return sum + len;
-	}, 0);
+function estimateMessageChars(messages: ChatMessage[]): number {
+	let total = 0;
+	for (const msg of messages) {
+		if (typeof msg.content === "string") total += msg.content.length;
+		if (msg.tool_calls) {
+			for (const tc of msg.tool_calls) total += (tc.function?.arguments?.length ?? 0) + 100;
+		}
+	}
+	return total;
 }
 
 function trimContext(messages: ChatMessage[]): ChatMessage[] {
-	const total = totalChars(messages);
+	if (messages.length <= PRESERVE_RECENT) return messages;
+	let totalChars = estimateMessageChars(messages);
 	const triggerLimit = Math.floor(CONTEXT_CHAR_LIMIT * 0.6);
-	if (total <= triggerLimit) return messages;
+	if (totalChars <= triggerLimit) return messages;
+	const result = messages.map((m) => ({ ...m }));
+	const cutoff = result.length - PRESERVE_RECENT;
 
-	// Keep system (index 0) + user (index 1) + as many recent messages as fit
-	const system = messages[0];
-	const user = messages[1];
-	const recent = messages.slice(2);
-
-	const preserved: ChatMessage[] = [system, user];
-	let budget = triggerLimit - totalChars(preserved);
-
-	// Walk backwards through recent messages, keeping as many as fit
-	for (let i = recent.length - 1; i >= 0 && budget > 0; i--) {
-		const msg = recent[i];
-		const msgLen = (msg.content || "").length + (msg.tool_calls ? msg.tool_calls.reduce((s, tc) => s + (tc.function.arguments || "").length, 0) : 0);
-		if (msgLen > budget && preserved.length > 2) break; // Don't add a huge message that overflows
-		preserved.push(msg);
-		budget -= msgLen;
+	// Stage 1: Truncate old tool results to head+tail
+	for (let i = 0; i < cutoff && totalChars > triggerLimit; i++) {
+		const msg = result[i];
+		if (
+			msg.role === "tool" &&
+			typeof msg.content === "string" &&
+			msg.content.length > TOOL_RESULT_HEAD + TOOL_RESULT_TAIL
+		) {
+			const originalLen = msg.content.length;
+			msg.content =
+				msg.content.slice(0, TOOL_RESULT_HEAD) +
+				`\n... (truncated ${originalLen - TOOL_RESULT_HEAD - TOOL_RESULT_TAIL} chars) ...\n` +
+				msg.content.slice(-TOOL_RESULT_TAIL);
+			totalChars -= originalLen - msg.content.length;
+		}
 	}
 
-	// Reverse to maintain chronological order
-	preserved.reverse();
-	return preserved;
+	// Stage 2: Replace old tool results with 1-line stubs
+	for (let i = 0; i < cutoff && totalChars > triggerLimit; i++) {
+		const msg = result[i];
+		if (msg.role === "tool" && typeof msg.content === "string" && msg.content.length > 100) {
+			const originalLen = msg.content.length;
+			const firstLine = msg.content.split("\n")[0]?.slice(0, 80) ?? "";
+			msg.content = `[compressed: ${firstLine}...]`;
+			totalChars -= originalLen - msg.content.length;
+		}
+	}
+
+	// Stage 3: Compress old assistant messages
+	for (let i = 0; i < cutoff && totalChars > triggerLimit; i++) {
+		const msg = result[i];
+		if (msg.role === "assistant" && typeof msg.content === "string" && msg.content.length > 200) {
+			const originalLen = msg.content.length;
+			msg.content = (msg.content.split("\n")[0]?.slice(0, 120) ?? "") + " [...]";
+			totalChars -= originalLen - msg.content.length;
+			if (msg.tool_calls) {
+				totalChars -= msg.tool_calls.reduce((sum, tc) => sum + (tc.function?.arguments?.length ?? 0) + 100, 0);
+				delete msg.tool_calls;
+			}
+		}
+	}
+
+	// Stage 4: Compress old user messages
+	for (let i = 0; i < cutoff && totalChars > triggerLimit; i++) {
+		const msg = result[i];
+		if (msg.role === "user" && typeof msg.content === "string" && msg.content.length > 200) {
+			const originalLen = msg.content.length;
+			msg.content = (msg.content.split("\n")[0]?.slice(0, 120) ?? "") + " [...]";
+			totalChars -= originalLen - msg.content.length;
+		}
+	}
+
+	return result;
 }
 
 // ─── Write file tool (lets agent save files) ──────────────────

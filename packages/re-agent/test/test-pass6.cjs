@@ -67,7 +67,7 @@ ok(LLM_SRC.includes("ECONNREFUSED"), "ECONNREFUSED fail-fast");
 console.log("\n─ 3. reimpl context trimming ─");
 const REIMPL_SRC = fs.readFileSync(path.join(SRC, "pire-reimpl.ts"), "utf-8");
 ok(REIMPL_SRC.includes("function trimContext"), "trimContext function present");
-ok(REIMPL_SRC.includes("function totalChars"), "totalChars function present");
+ok(REIMPL_SRC.includes("estimateMessageChars"), "estimateMessageChars function present");
 ok(REIMPL_SRC.includes("CONTEXT_CHAR_LIMIT"), "CONTEXT_CHAR_LIMIT constant");
 ok(REIMPL_SRC.includes("trimmedMessages = trimContext(messages)"), "trimContext called before LLM call");
 ok(REIMPL_SRC.includes("triggerLimit"), "trigger limit for trimming");
@@ -78,6 +78,18 @@ ok(REIMPL_SRC.includes("toolTimeout"), "toolTimeout variable");
 ok(REIMPL_SRC.includes("timed out after"), "timeout error message");
 ok(REIMPL_SRC.includes("Promise.race"), "Promise.race for timeout");
 ok(REIMPL_SRC.includes("300000") && REIMPL_SRC.includes("120000"), "300s slow / 120s default");
+
+// ─── Test 5: TUI per-tool timeout ──────────────────────────────
+console.log("\n─ 5. TUI per-tool timeout ─");
+const TUI_SRC = fs.readFileSync(path.join(SRC, "tui.ts"), "utf-8");
+ok(TUI_SRC.includes("toolTimeout"), "TUI has toolTimeout");
+ok(TUI_SRC.includes("Promise.race"), "TUI uses Promise.race");
+// Should appear twice (main TUI + pi TUI)
+const tuiTimeoutCount = (TUI_SRC.match(/toolTimeout/g) || []).length;
+ok(tuiTimeoutCount >= 2, `TUI has ${tuiTimeoutCount} timeout blocks (main + pi)`);
+const PI_TUI_SRC = fs.readFileSync(path.join(SRC, "pire-pi-tui.ts"), "utf-8");
+ok(PI_TUI_SRC.includes("toolTimeout"), "pi-tui has toolTimeout");
+ok(PI_TUI_SRC.includes("Promise.race"), "pi-tui uses Promise.race");
 
 // ─── Test 5: reimpl has both parallel + sequential? ────────────
 console.log("\n─ 5. reimpl parallel execution (future) ─");

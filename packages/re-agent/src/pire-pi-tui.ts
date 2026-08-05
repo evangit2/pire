@@ -898,7 +898,13 @@ export class PirePiTUI {
 
 					let resultText: string;
 					try {
-						const result = await tool.execute("pire", args);
+						const toolTimeout = ["angr", "ghidra_decompile", "decompile", "volatility"].includes(tc.function.name) ? 300000 : 120000;
+						const result = await Promise.race([
+							tool.execute("pire", args),
+							new Promise<never>((_, reject) =>
+								setTimeout(() => reject(new Error(`Tool "${tc.function.name}" timed out after ${toolTimeout / 1000}s`)), toolTimeout),
+							),
+						]);
 						resultText = result.content[0]?.text ?? JSON.stringify(result);
 					} catch (e: any) {
 						resultText = `Error: ${e.message}`;
