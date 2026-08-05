@@ -44,7 +44,87 @@ import {
 import { type ChatMessage, callLLM, loadLLMConfig, toolToFunction } from "./llm.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const VERSION = "0.88.9";
+const VERSION = "0.89.0";
+
+// ─── Context Window Management ─────────────────────────────────
+// Aggressive multi-stage compression: truncate → stub → drop.
+const CONTEXT_CHAR_LIMIT = parseInt(process.env.PIRE_CONTEXT_LIMIT || "120000", 10) || 120000;
+const TOOL_RESULT_HEAD = 600;
+const TOOL_RESULT_TAIL = 600;
+const PRESERVE_RECENT = 8;
+
+function estimateMessageChars(messages: ChatMessage[]): number {
+	let total = 0;
+	for (const msg of messages) {
+		if (typeof msg.content === "string") total += msg.content.length;
+		if (msg.tool_calls) {
+			for (const tc of msg.tool_calls) total += (tc.function?.arguments?.length ?? 0) + 100;
+		}
+	}
+	return total;
+}
+
+function trimContext(messages: ChatMessage[]): ChatMessage[] {
+	if (messages.length <= PRESERVE_RECENT) return messages;
+	let totalChars = estimateMessageChars(messages);
+	if (totalChars <= CONTEXT_CHAR_LIMIT) return messages;
+	const result = messages.map((m) => ({ ...m }));
+	const cutoff = result.length - PRESERVE_RECENT;
+
+	// Stage 1: Truncate old tool results to head+tail
+	for (let i = 0; i < cutoff && totalChars > CONTEXT_CHAR_LIMIT; i++) {
+		const msg = result[i];
+		if (
+			msg.role === "tool" &&
+			typeof msg.content === "string" &&
+			msg.content.length > TOOL_RESULT_HEAD + TOOL_RESULT_TAIL
+		) {
+			const originalLen = msg.content.length;
+			msg.content =
+				msg.content.slice(0, TOOL_RESULT_HEAD) +
+				`\n... (truncated ${originalLen - TOOL_RESULT_HEAD - TOOL_RESULT_TAIL} chars) ...\n` +
+				msg.content.slice(-TOOL_RESULT_TAIL);
+			totalChars -= originalLen - msg.content.length;
+		}
+	}
+
+	// Stage 2: Replace old tool results with 1-line stubs
+	for (let i = 0; i < cutoff && totalChars > CONTEXT_CHAR_LIMIT; i++) {
+		const msg = result[i];
+		if (msg.role === "tool" && typeof msg.content === "string" && msg.content.length > 100) {
+			const originalLen = msg.content.length;
+			const firstLine = msg.content.split("\n")[0]?.slice(0, 80) ?? "";
+			msg.content = `[compressed: ${firstLine}...]`;
+			totalChars -= originalLen - msg.content.length;
+		}
+	}
+
+	// Stage 3: Compress old assistant messages
+	for (let i = 0; i < cutoff && totalChars > CONTEXT_CHAR_LIMIT; i++) {
+		const msg = result[i];
+		if (msg.role === "assistant" && typeof msg.content === "string" && msg.content.length > 200) {
+			const originalLen = msg.content.length;
+			msg.content = (msg.content.split("\n")[0]?.slice(0, 120) ?? "") + " [...]";
+			totalChars -= originalLen - msg.content.length;
+			if (msg.tool_calls) {
+				totalChars -= msg.tool_calls.reduce((sum, tc) => sum + (tc.function?.arguments?.length ?? 0) + 100, 0);
+				delete msg.tool_calls;
+			}
+		}
+	}
+
+	// Stage 4: Compress old user messages
+	for (let i = 0; i < cutoff && totalChars > CONTEXT_CHAR_LIMIT; i++) {
+		const msg = result[i];
+		if (msg.role === "user" && typeof msg.content === "string" && msg.content.length > 200) {
+			const originalLen = msg.content.length;
+			msg.content = (msg.content.split("\n")[0]?.slice(0, 120) ?? "") + " [...]";
+			totalChars -= originalLen - msg.content.length;
+		}
+	}
+
+	return result;
+}
 
 // ANSI
 const C = {
@@ -242,18 +322,13 @@ export class PireTUI {
 		const targetInfo = this.loadedTarget ? `\n\nCurrently loaded target: ${this.loadedTarget}` : "";
 		const systemPrompt = `${RE_SYSTEM_PROMPT}
 
-You have ${RE_TOOLS.length} tools available. Available on this system: ${availTools}.${targetInfo}
+Available tools: ${availTools}.${targetInfo}
 
-When the user mentions a path, binary, or directory — run tools on it yourself. Don't ask them to type commands.
-When the user provides a URL — use the fetch tool to download it first.
-Pick the right tools for whatever the user is asking for. Don't follow a fixed workflow — adapt to the task.
-
-IMPORTANT: When you need to write a file, use the shell tool with a command parameter. For example: shell(command="echo 'content' > /path/to/file"). Never call shell() without a command argument.
-When you have gathered enough information, write your analysis to a file using the shell tool. Do not just say you will write it — actually execute the shell tool with the full command.`;
+Run tools on paths/URLs yourself. Use fetch for URLs. Use write_file for files.`;
 
 		const messages: ChatMessage[] = [
 			{ role: "system", content: systemPrompt },
-			...this.messages,
+			...trimContext(this.messages),
 			{ role: "user", content: userMessage },
 		];
 
@@ -744,18 +819,13 @@ export class PireCLI {
 		const targetInfo = this.loadedTarget ? `\n\nCurrently loaded target: ${this.loadedTarget}` : "";
 		const systemPrompt = `${RE_SYSTEM_PROMPT}
 
-You have ${RE_TOOLS.length} tools available. Available on this system: ${availTools}.${targetInfo}
+Available tools: ${availTools}.${targetInfo}
 
-When the user mentions a path, binary, or directory — run tools on it yourself. Don't ask them to type commands.
-When the user provides a URL — use the fetch tool to download it first.
-Pick the right tools for whatever the user is asking for. Don't follow a fixed workflow — adapt to the task.
-
-IMPORTANT: When you need to write a file, use the shell tool with a command parameter. For example: shell(command="echo 'content' > /path/to/file"). Never call shell() without a command argument.
-When you have gathered enough information, write your analysis to a file using the shell tool. Do not just say you will write it — actually execute the shell tool with the full command.`;
+Run tools on paths/URLs yourself. Use fetch for URLs. Use write_file for files.`;
 
 		const messages: ChatMessage[] = [
 			{ role: "system", content: systemPrompt },
-			...this.messages,
+			...trimContext(this.messages),
 			{ role: "user", content: userMessage },
 		];
 

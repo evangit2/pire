@@ -10,7 +10,7 @@
  */
 
 import { execFileSync, execSync, spawn } from "node:child_process";
-import { closeSync, existsSync, mkdirSync, openSync, readSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Type } from "typebox";
@@ -93,7 +93,7 @@ function run(cmd: string, opts: { timeout?: number; maxBuffer?: number; cwd?: st
 }
 
 function textResult(text: string, details?: Record<string, unknown>): ToolResult {
-	const limit = 200000;
+	const limit = 500000;
 	const truncated = text.length > limit;
 	const out = truncated
 		? text.slice(0, limit) +
@@ -339,13 +339,11 @@ export function setGhidraTarget(path: string): void {
 
 const stringsTool: AgentTool<{ path: string; minLength?: number; encoding?: string }> = {
 	name: "strings",
-	description: "Extract printable strings from a binary file.",
+	description: "Extract strings from a binary.",
 	parameters: Type.Object({
-		path: Type.String({ description: "Path to the binary file" }),
-		minLength: Type.Optional(Type.Number({ description: "Minimum string length (default: 4)", default: 4 })),
-		encoding: Type.Optional(
-			Type.String({ description: "Encoding: s=7bit, S=8bit, b=16bit (default: s)", default: "s" }),
-		),
+		path: Type.String(),
+		minLength: Type.Optional(Type.Number({ default: 4 })),
+		encoding: Type.Optional(Type.String({ default: "s" })),
 	}),
 	async execute(_id, params) {
 		const minLen = params.minLength ?? 4;
@@ -356,8 +354,8 @@ const stringsTool: AgentTool<{ path: string; minLength?: number; encoding?: stri
 
 const fileTool: AgentTool<{ path: string }> = {
 	name: "filetype",
-	description: "Identify file type, architecture, and format.",
-	parameters: Type.Object({ path: Type.String({ description: "Path to the file" }) }),
+	description: "Identify file type and architecture.",
+	parameters: Type.Object({ path: Type.String() }),
 	async execute(_id, params) {
 		return textResult(run(`file ${shellEscape(params.path)}`).trim());
 	},
@@ -371,13 +369,13 @@ const objdumpTool: AgentTool<{
 	stopAddress?: string;
 }> = {
 	name: "objdump",
-	description: "Dump sections or disassemble ELF/PE binaries.",
+	description: "objdump: dump sections or disassemble.",
 	parameters: Type.Object({
-		path: Type.String({ description: "Path to the binary" }),
-		section: Type.Optional(Type.String({ description: "Section name to dump" })),
-		disassemble: Type.Optional(Type.Boolean({ description: "Disassemble code sections", default: false })),
-		startAddress: Type.Optional(Type.String({ description: "Hex start address" })),
-		stopAddress: Type.Optional(Type.String({ description: "Hex stop address" })),
+		path: Type.String(),
+		section: Type.Optional(Type.String()),
+		disassemble: Type.Optional(Type.Boolean({ default: false })),
+		startAddress: Type.Optional(Type.String()),
+		stopAddress: Type.Optional(Type.String()),
 	}),
 	async execute(_id, params) {
 		const parts = ["objdump"];
@@ -397,12 +395,10 @@ const objdumpTool: AgentTool<{
 
 const readelfTool: AgentTool<{ path: string; info?: string }> = {
 	name: "readelf",
-	description: "Read ELF headers, sections, symbols, relocations.",
+	description: "readelf: ELF headers, sections, symbols.",
 	parameters: Type.Object({
-		path: Type.String({ description: "Path to the ELF binary" }),
-		info: Type.Optional(
-			Type.String({ description: "headers, sections, symbols, dynamic, notes, all", default: "all" }),
-		),
+		path: Type.String(),
+		info: Type.Optional(Type.String({ default: "all" })),
 	}),
 	async execute(_id, params) {
 		const flagMap: Record<string, string> = {
@@ -420,11 +416,11 @@ const readelfTool: AgentTool<{ path: string; info?: string }> = {
 
 const hexdumpTool: AgentTool<{ path: string; offset?: number; length?: number }> = {
 	name: "hexdump",
-	description: "Hex dump a region of a file.",
+	description: "Hex dump a file region.",
 	parameters: Type.Object({
-		path: Type.String({ description: "Path to the file" }),
-		offset: Type.Optional(Type.Number({ description: "Byte offset (default: 0)", default: 0 })),
-		length: Type.Optional(Type.Number({ description: "Bytes to read (default: 256)", default: 256 })),
+		path: Type.String(),
+		offset: Type.Optional(Type.Number({ default: 0 })),
+		length: Type.Optional(Type.Number({ default: 256 })),
 	}),
 	async execute(_id, params) {
 		const offset = params.offset ?? 0;
@@ -536,10 +532,10 @@ const r2Session = new R2Session();
 const r2Tool: AgentTool<{ path: string; command: string }> = {
 	name: "r2",
 	description:
-		"Run a radare2 command on a binary. e.g. 'aaa; afl' (analyze+list functions), 'pdf @ main' (disassemble), 'iz' (strings).",
+		"Run a radare2 command. e.g. 'aaa; afl', 'pdf @ main', 'iz'. Use 'aflj' instead of 'afl' for JSON output (machine-parseable). Use 'afl' address column for decompile tool.",
 	parameters: Type.Object({
-		path: Type.String({ description: "Path to the binary" }),
-		command: Type.String({ description: "Radare2 command string" }),
+		path: Type.String(),
+		command: Type.String(),
 	}),
 	async execute(_id, params) {
 		// Auto-run 'aaa' on first call per file, prepend to subsequent commands only if not already analyzed
@@ -576,13 +572,11 @@ const r2Tool: AgentTool<{ path: string; command: string }> = {
 const decompileTool: AgentTool<{ path: string; address: string; format?: string }> = {
 	name: "decompile",
 	description:
-		"Decompile a function using radare2. Accepts hex addresses (e.g. 0x1140) or symbol names (e.g. main, entry0). Auto-runs aaa analysis on first call per file. Format: 'pdc' (pseudo-C, default) or 'pdf' (annotated disassembly with types/vars).",
+		"Decompile a function via radare2. Accepts hex addr (e.g. 0x3ca60) or symbol name (e.g. main). Do NOT pass function indices from afl output — use hex addresses from the 'addr' column.",
 	parameters: Type.Object({
-		path: Type.String({ description: "Path to the binary" }),
-		address: Type.String({ description: "Function address (hex, e.g. 0x1400016b0) or symbol name (e.g. main)" }),
-		format: Type.Optional(
-			Type.String({ description: "Output format: 'pdc' (pseudo-C, default) or 'pdf' (annotated disassembly)" }),
-		),
+		path: Type.String(),
+		address: Type.String(),
+		format: Type.Optional(Type.String({ default: "pdc" })),
 	}),
 	async execute(_id, params) {
 		const fmt = params.format === "pdf" ? "pdf" : "pdc";
@@ -654,8 +648,8 @@ const decompileTool: AgentTool<{ path: string; address: string; format?: string 
 
 const ghidraDecompile: AgentTool<{ function: string }> = {
 	name: "ghidra_decompile",
-	description: "Decompile a function using Ghidra. Requires Ghidra with MCP plugin running.",
-	parameters: Type.Object({ function: Type.String({ description: "Function name or address" }) }),
+	description: "Decompile a function via Ghidra.",
+	parameters: Type.Object({ function: Type.String() }),
 	async execute(_id, params) {
 		return textResult(ghidra.decompile(params.function));
 	},
@@ -663,7 +657,7 @@ const ghidraDecompile: AgentTool<{ function: string }> = {
 
 const ghidraListFunctions: AgentTool<Record<string, never>> = {
 	name: "ghidra_functions",
-	description: "List all functions in the Ghidra project.",
+	description: "List Ghidra functions.",
 	parameters: Type.Object({}),
 	async execute() {
 		return textResult(ghidra.listFunctions());
@@ -672,10 +666,10 @@ const ghidraListFunctions: AgentTool<Record<string, never>> = {
 
 const ghidraRename: AgentTool<{ oldName: string; newName: string }> = {
 	name: "ghidra_rename",
-	description: "Rename a function or variable in Ghidra.",
+	description: "Rename a function/variable in Ghidra.",
 	parameters: Type.Object({
-		oldName: Type.String({ description: "Current name" }),
-		newName: Type.String({ description: "New name" }),
+		oldName: Type.String(),
+		newName: Type.String(),
 	}),
 	async execute(_id, params) {
 		return textResult(ghidra.rename(params.oldName, params.newName));
@@ -684,8 +678,8 @@ const ghidraRename: AgentTool<{ oldName: string; newName: string }> = {
 
 const ghidraXrefs: AgentTool<{ address: string }> = {
 	name: "ghidra_xrefs",
-	description: "List cross-references to an address in Ghidra.",
-	parameters: Type.Object({ address: Type.String({ description: "Hex address" }) }),
+	description: "List xrefs to an address in Ghidra.",
+	parameters: Type.Object({ address: Type.String() }),
 	async execute(_id, params) {
 		return textResult(ghidra.xrefs(params.address));
 	},
@@ -693,8 +687,8 @@ const ghidraXrefs: AgentTool<{ address: string }> = {
 
 const ghidraStrings: AgentTool<{ pattern?: string }> = {
 	name: "ghidra_strings",
-	description: "Search strings in the Ghidra project.",
-	parameters: Type.Object({ pattern: Type.Optional(Type.String({ description: "Search pattern (regex)" })) }),
+	description: "Search strings in Ghidra.",
+	parameters: Type.Object({ pattern: Type.Optional(Type.String()) }),
 	async execute(_id, params) {
 		return textResult(ghidra.searchStrings(params.pattern ?? ""));
 	},
@@ -702,7 +696,7 @@ const ghidraStrings: AgentTool<{ pattern?: string }> = {
 
 const ghidraStatus: AgentTool<Record<string, never>> = {
 	name: "ghidra_status",
-	description: "Check if Ghidra MCP server is reachable.",
+	description: "Check Ghidra server status.",
 	parameters: Type.Object({}),
 	async execute() {
 		const s = ghidra.getStatus();
@@ -716,10 +710,10 @@ const ghidraStatus: AgentTool<Record<string, never>> = {
 
 const binwalkTool: AgentTool<{ path: string; extract?: boolean }> = {
 	name: "binwalk",
-	description: "Scan binary for embedded files, firmware images, and compressed data. Requires binwalk installed.",
+	description: "Scan for embedded files/firmware (binwalk).",
 	parameters: Type.Object({
-		path: Type.String({ description: "Path to the binary" }),
-		extract: Type.Optional(Type.Boolean({ description: "Extract found files", default: false })),
+		path: Type.String(),
+		extract: Type.Optional(Type.Boolean({ default: false })),
 	}),
 	async execute(_id, params) {
 		const bin = which("binwalk");
@@ -731,11 +725,10 @@ const binwalkTool: AgentTool<{ path: string; extract?: boolean }> = {
 
 const liefTool: AgentTool<{ path: string; action: string }> = {
 	name: "lief",
-	description:
-		"Parse binary formats (ELF, PE, Mach-O) with LIEF. Actions: info, imports, exports, sections, headers, dos.",
+	description: "Parse ELF/PE/Mach-O via LIEF. Actions: info, imports, exports, sections, headers, dos.",
 	parameters: Type.Object({
-		path: Type.String({ description: "Path to the binary" }),
-		action: Type.String({ description: "info|imports|exports|sections|headers|dos" }),
+		path: Type.String(),
+		action: Type.String(),
 	}),
 	async execute(_id, params) {
 		if (!pythonModule("lief")) return textResult("lief not installed. Install: pip install lief");
@@ -755,12 +748,11 @@ const liefTool: AgentTool<{ path: string; action: string }> = {
 
 const angrTool: AgentTool<{ path: string; action: string; target?: string }> = {
 	name: "angr",
-	description:
-		"Symbolic execution with angr. Actions: cfg (build CFG), find (find path to address), properties (binary properties).",
+	description: "Symbolic execution via angr. Actions: cfg, find, properties.",
 	parameters: Type.Object({
-		path: Type.String({ description: "Path to the binary" }),
-		action: Type.String({ description: "cfg|find|properties" }),
-		target: Type.Optional(Type.String({ description: "Target address for find action (hex)" })),
+		path: Type.String(),
+		action: Type.String(),
+		target: Type.Optional(Type.String()),
 	}),
 	async execute(_id, params) {
 		if (!pythonModule("angr")) return textResult("angr not installed. Install: pip install angr");
@@ -783,15 +775,13 @@ const angrTool: AgentTool<{ path: string; action: string; target?: string }> = {
 
 const capstoneTool: AgentTool<{ path: string; offset?: number; count?: number; arch?: string; mode?: string }> = {
 	name: "capstone",
-	description: "Disassemble binary data with Capstone. Supports multiple architectures.",
+	description: "Disassemble via Capstone.",
 	parameters: Type.Object({
-		path: Type.String({ description: "Path to the binary" }),
-		offset: Type.Optional(Type.Number({ description: "Byte offset to start (default: 0)", default: 0 })),
-		count: Type.Optional(Type.Number({ description: "Number of instructions (default: 50)", default: 50 })),
-		arch: Type.Optional(
-			Type.String({ description: "Architecture: x86, arm, arm64, mips (default: x86)", default: "x86" }),
-		),
-		mode: Type.Optional(Type.String({ description: "Mode: 32, 64, arm (default: 64)", default: "64" })),
+		path: Type.String(),
+		offset: Type.Optional(Type.Number({ default: 0 })),
+		count: Type.Optional(Type.Number({ default: 50 })),
+		arch: Type.Optional(Type.String({ default: "x86" })),
+		mode: Type.Optional(Type.String({ default: "64" })),
 	}),
 	async execute(_id, params) {
 		if (!pythonModule("capstone")) return textResult("capstone not installed. Install: pip install capstone");
@@ -806,12 +796,10 @@ const capstoneTool: AgentTool<{ path: string; offset?: number; count?: number; a
 
 const keystoneTool: AgentTool<{ assembly: string; arch?: string; mode?: string }> = {
 	name: "keystone",
-	description: "Assemble instructions to bytes with Keystone. Provide assembly text.",
+	description: "Assemble instructions to bytes (Keystone).",
 	parameters: Type.Object({
-		assembly: Type.String({ description: "Assembly instructions (e.g. 'xor eax, eax; ret')" }),
-		arch: Type.Optional(
-			Type.String({ description: "Architecture: x86, arm, arm64, mips (default: x86)", default: "x86" }),
-		),
+		assembly: Type.String(),
+		arch: Type.Optional(Type.String({ default: "x86" })),
 		mode: Type.Optional(Type.String({ description: "Mode: 32, 64, arm (default: 64)", default: "64" })),
 	}),
 	async execute(_id, params) {
@@ -825,17 +813,13 @@ const keystoneTool: AgentTool<{ assembly: string; arch?: string; mode?: string }
 
 const unicornTool: AgentTool<{ path: string; entry?: string; arch?: string; mode?: string; steps?: number }> = {
 	name: "unicorn",
-	description: "Emulate binary code with Unicorn Engine. Loads a code segment and emulates N steps.",
+	description: "Emulate code via Unicorn Engine.",
 	parameters: Type.Object({
-		path: Type.String({ description: "Path to the binary" }),
-		entry: Type.Optional(Type.String({ description: "Entry point hex address (default: auto-detect)" })),
-		arch: Type.Optional(
-			Type.String({ description: "Architecture: x86, arm, arm64, mips (default: x86)", default: "x86" }),
-		),
+		path: Type.String(),
+		entry: Type.Optional(Type.String()),
+		arch: Type.Optional(Type.String({ default: "x86" })),
 		mode: Type.Optional(Type.String({ description: "Mode: 32, 64, arm (default: 64)", default: "64" })),
-		steps: Type.Optional(
-			Type.Number({ description: "Number of instructions to emulate (default: 1000)", default: 1000 }),
-		),
+		steps: Type.Optional(Type.Number({ default: 1000 })),
 	}),
 	async execute(_id, params) {
 		if (!pythonModule("unicorn")) return textResult("unicorn not installed. Install: pip install unicorn");
@@ -857,10 +841,10 @@ const unicornTool: AgentTool<{ path: string; entry?: string; arch?: string; mode
 
 const yaraTool: AgentTool<{ path: string; rule: string }> = {
 	name: "yara",
-	description: "Scan binary with YARA rules. Provide rule text directly.",
+	description: "Scan with YARA rules.",
 	parameters: Type.Object({
-		path: Type.String({ description: "Path to the binary" }),
-		rule: Type.String({ description: "YARA rule text" }),
+		path: Type.String(),
+		rule: Type.String(),
 	}),
 	async execute(_id, params) {
 		if (!pythonModule("yara")) return textResult("yara-python not installed. Install: pip install yara-python");
@@ -882,12 +866,11 @@ const yaraTool: AgentTool<{ path: string; rule: string }> = {
 
 const fridaTool: AgentTool<{ target: string; script: string; action: string }> = {
 	name: "frida",
-	description:
-		"Dynamic instrumentation with Frida. Actions: spawn (spawn+inject), attach (attach to PID/name), list (list processes).",
+	description: "Frida dynamic instrumentation. Actions: spawn, attach, list.",
 	parameters: Type.Object({
-		target: Type.String({ description: "Binary path or PID (for spawn/attach) or empty (for list)" }),
-		script: Type.Optional(Type.String({ description: "Frida JS script" })),
-		action: Type.String({ description: "spawn|attach|list" }),
+		target: Type.String(),
+		script: Type.Optional(Type.String()),
+		action: Type.String(),
 	}),
 	async execute(_id, params) {
 		const fridaBin = which("frida") ?? which("frida-trace");
@@ -918,10 +901,10 @@ const fridaTool: AgentTool<{ target: string; script: string; action: string }> =
 
 const gdbTool: AgentTool<{ path: string; commands: string }> = {
 	name: "gdb",
-	description: "Run GDB commands on a binary. Requires gdb installed.",
+	description: "Run GDB commands on a binary.",
 	parameters: Type.Object({
-		path: Type.String({ description: "Path to the binary" }),
-		commands: Type.String({ description: "GDB commands separated by semicolons" }),
+		path: Type.String(),
+		commands: Type.String(),
 	}),
 	async execute(_id, params) {
 		const bin = which("gdb");
@@ -936,11 +919,11 @@ const gdbTool: AgentTool<{ path: string; commands: string }> = {
 
 const volatilityTool: AgentTool<{ memdump: string; plugin: string; extraArgs?: string }> = {
 	name: "volatility",
-	description: "Memory forensics with Volatility 3. Requires volatility3 + python.",
+	description: "Volatility 3 memory forensics.",
 	parameters: Type.Object({
-		memdump: Type.String({ description: "Path to memory dump" }),
-		plugin: Type.String({ description: "Plugin name (e.g. windows.pslist, windows.netscan)" }),
-		extraArgs: Type.Optional(Type.String({ description: "Extra arguments" })),
+		memdump: Type.String(),
+		plugin: Type.String(),
+		extraArgs: Type.Optional(Type.String()),
 	}),
 	async execute(_id, params) {
 		const vol = which("vol") ?? which("volatility3");
@@ -974,12 +957,11 @@ const volatilityTool: AgentTool<{ memdump: string; plugin: string; extraArgs?: s
  */
 const disasmFuncTool: AgentTool<{ path: string; startAddress: string; maxBytes?: number }> = {
 	name: "disasm_func",
-	description:
-		"Extract a single function's disassembly from a stripped binary. More reliable than raw objdump — collects the full function body past early-exit rets until the next function boundary. Provide a hex start address. Works on both ELF and PE binaries.",
+	description: "Extract function disassembly from stripped binary. Full function body, past early-exit rets.",
 	parameters: Type.Object({
-		path: Type.String({ description: "Path to the binary" }),
-		startAddress: Type.String({ description: "Hex start address of the function (e.g. '0x1140')" }),
-		maxBytes: Type.Optional(Type.Number({ description: "Max bytes to scan (default: 8192)", default: 8192 })),
+		path: Type.String(),
+		startAddress: Type.String(),
+		maxBytes: Type.Optional(Type.Number({ default: 8192 })),
 	}),
 	async execute(_id, params) {
 		let addr = params.startAddress.replace(/^0x/, "");
@@ -1092,7 +1074,7 @@ const BLOCKED_PATTERNS = [
 	/\bssh\s/,
 	/\bscp\s/,
 	/\brsync\s/,
-	/\bapt-get\s/,    // apt-get is the package manager — block it
+	/\bapt-get\s/, // apt-get is the package manager — block it
 	// \bapt\s removed — too many false positives (e.g. "adapt ", "apt " in source code heredocs)
 	/\bdpkg\s/,
 	/\byum\s/,
@@ -1128,11 +1110,10 @@ function isCommandBlocked(command: string): string | null {
 
 const shellTool: AgentTool<{ command: string; cwd?: string }> = {
 	name: "shell",
-	description:
-		"Run a shell command (ls, find, file, gcc, diff, etc.). Optional cwd to set working directory. In sandbox mode, network access, package management, and privileged commands are blocked. Use -loose flag or 'pire config' to disable sandbox.",
+	description: "Run a shell command. Sandbox blocks network/package/privilege escalation.",
 	parameters: Type.Object({
-		command: Type.String({ description: "Shell command to execute" }),
-		cwd: Type.Optional(Type.String({ description: "Working directory (default: workspace root)" })),
+		command: Type.String(),
+		cwd: Type.Optional(Type.String()),
 	}),
 	async execute(_id, params) {
 		const blocked = isCommandBlocked(params.command);
@@ -1159,11 +1140,10 @@ const shellTool: AgentTool<{ command: string; cwd?: string }> = {
 
 const fetchTool: AgentTool<{ url: string; outputDir?: string }> = {
 	name: "fetch",
-	description:
-		"Download a file from a URL (HTTP/HTTPS). Use when the user provides a link to a binary, archive, or file to analyze. Saves to /tmp/pire-downloads/ or specified dir.",
+	description: "Download a file from URL.",
 	parameters: Type.Object({
-		url: Type.String({ description: "URL to download" }),
-		outputDir: Type.Optional(Type.String({ description: "Output directory (default: /tmp/pire-downloads)" })),
+		url: Type.String(),
+		outputDir: Type.Optional(Type.String()),
 	}),
 	async execute(_id, params) {
 		const outDir = params.outputDir || "/tmp/pire-downloads";
@@ -1211,11 +1191,10 @@ const fetchTool: AgentTool<{ url: string; outputDir?: string }> = {
 
 const hashTool: AgentTool<{ path: string; algo?: string }> = {
 	name: "hash",
-	description:
-		"Compute file hashes (md5, sha1, sha256, or all). Useful for identifying known malware or comparing files.",
+	description: "Compute file hashes (md5, sha1, sha256).",
 	parameters: Type.Object({
-		path: Type.String({ description: "Path to file" }),
-		algo: Type.Optional(Type.String({ description: "Algorithm: md5, sha1, sha256, or all (default: all)" })),
+		path: Type.String(),
+		algo: Type.Optional(Type.String({ default: "all" })),
 	}),
 	async execute(_id, params) {
 		const algo = params.algo || "all";
@@ -1242,11 +1221,10 @@ const hashTool: AgentTool<{ path: string; algo?: string }> = {
 
 const entropyTool: AgentTool<{ path: string; blockSize?: number }> = {
 	name: "entropy",
-	description:
-		"Calculate Shannon entropy of a file (or per-block). High entropy = compressed/encrypted. Useful for detecting packed sections or encrypted data.",
+	description: "Shannon entropy of a file. High = compressed/encrypted.",
 	parameters: Type.Object({
-		path: Type.String({ description: "Path to file" }),
-		blockSize: Type.Optional(Type.Number({ description: "Block size in bytes (default: whole file)" })),
+		path: Type.String(),
+		blockSize: Type.Optional(Type.Number()),
 	}),
 	async execute(_id, params) {
 		const py = which(PYTHON);
@@ -1286,13 +1264,10 @@ else:
 
 const extractTool: AgentTool<{ path: string; outputDir?: string }> = {
 	name: "extract",
-	description:
-		"Extract archives (zip, tar.gz, tar.bz2, 7z, rar, deb, rpm). Auto-detects format. Use when analyzing packaged software or firmware.",
+	description: "Extract archives (zip, tar, 7z, rar, deb, rpm).",
 	parameters: Type.Object({
-		path: Type.String({ description: "Path to archive" }),
-		outputDir: Type.Optional(
-			Type.String({ description: "Output directory (default: /tmp/pire-extracted/<filename>)" }),
-		),
+		path: Type.String(),
+		outputDir: Type.Optional(Type.String()),
 	}),
 	async execute(_id, params) {
 		const baseName = params.path.split("/").pop() || "extracted";
@@ -1355,11 +1330,10 @@ const extractTool: AgentTool<{ path: string; outputDir?: string }> = {
 
 const nmTool: AgentTool<{ path: string; demangle?: boolean }> = {
 	name: "nm",
-	description:
-		"List symbols from a binary's symbol table (functions, variables, etc.). Use --demangle for C++ names. Useful for non-stripped binaries.",
+	description: "List symbols (nm).",
 	parameters: Type.Object({
-		path: Type.String({ description: "Path to binary" }),
-		demangle: Type.Optional(Type.Boolean({ description: "Demangle C++ symbols (default: true)" })),
+		path: Type.String(),
+		demangle: Type.Optional(Type.Boolean({ default: true })),
 	}),
 	async execute(_id, params) {
 		const bin = which("nm");
@@ -1383,9 +1357,9 @@ const nmTool: AgentTool<{ path: string; demangle?: boolean }> = {
 
 const sizeTool: AgentTool<{ path: string }> = {
 	name: "size",
-	description: "Display section sizes of a binary (text, data, bss). Quick overview of binary footprint.",
+	description: "Section sizes (text, data, bss).",
 	parameters: Type.Object({
-		path: Type.String({ description: "Path to binary" }),
+		path: Type.String(),
 	}),
 	async execute(_id, params) {
 		const bin = which("size");
@@ -1403,11 +1377,11 @@ const sizeTool: AgentTool<{ path: string }> = {
 
 const diffTool: AgentTool<{ a: string; b: string; context?: number }> = {
 	name: "diff",
-	description: "Diff two files or binaries. Useful for comparing patched vs original, or two versions of a binary.",
+	description: "Diff two files.",
 	parameters: Type.Object({
-		a: Type.String({ description: "First file path" }),
-		b: Type.String({ description: "Second file path" }),
-		context: Type.Optional(Type.Number({ description: "Lines of context (default: 3)" })),
+		a: Type.String(),
+		b: Type.String(),
+		context: Type.Optional(Type.Number({ default: 3 })),
 	}),
 	async execute(_id, params) {
 		const bin = which("diff");
@@ -1430,11 +1404,10 @@ const diffTool: AgentTool<{ a: string; b: string; context?: number }> = {
 
 const jadxTool: AgentTool<{ path: string; outputDir?: string }> = {
 	name: "jadx",
-	description:
-		"Decompile APK, DEX, JAR, or AAR files to Java source. Requires jadx installed. Use for Android apps and Java applications.",
+	description: "Decompile APK/DEX/JAR to Java (jadx).",
 	parameters: Type.Object({
-		path: Type.String({ description: "Path to APK/DEX/JAR file" }),
-		outputDir: Type.Optional(Type.String({ description: "Output directory (default: /tmp/pire-jadx/<filename>)" })),
+		path: Type.String(),
+		outputDir: Type.Optional(Type.String()),
 	}),
 	async execute(_id, params) {
 		const bin = which("jadx") ?? which("jadx-cli");
@@ -1461,11 +1434,10 @@ const jadxTool: AgentTool<{ path: string; outputDir?: string }> = {
 
 const ilspyTool: AgentTool<{ path: string; outputDir?: string }> = {
 	name: "ilspy",
-	description:
-		"Decompile .NET assemblies (DLL/EXE) to C# source. Requires ilspycmd or monodis installed. Use for .NET applications.",
+	description: "Decompile .NET assemblies to C# (ilspy).",
 	parameters: Type.Object({
-		path: Type.String({ description: "Path to .NET assembly" }),
-		outputDir: Type.Optional(Type.String({ description: "Output directory" })),
+		path: Type.String(),
+		outputDir: Type.Optional(Type.String()),
 	}),
 	async execute(_id, params) {
 		const ilspy = which("ilspycmd");
@@ -1508,13 +1480,12 @@ const ilspyTool: AgentTool<{ path: string; outputDir?: string }> = {
 
 const patchTool: AgentTool<{ path: string; offset: string; bytes: string; backup?: boolean }> = {
 	name: "patch",
-	description:
-		"Patch bytes at a hex offset in a binary. Takes hex offset and hex byte string. Creates backup by default. Use for binary patching / crackme solving.",
+	description: "Patch bytes at a hex offset.",
 	parameters: Type.Object({
-		path: Type.String({ description: "Path to binary" }),
-		offset: Type.String({ description: "Hex offset (e.g. 0x1234)" }),
-		bytes: Type.String({ description: "Hex bytes to write (e.g. 9090 for two NOPs)" }),
-		backup: Type.Optional(Type.Boolean({ description: "Create backup (default: true)" })),
+		path: Type.String(),
+		offset: Type.String(),
+		bytes: Type.String(),
+		backup: Type.Optional(Type.Boolean({ default: true })),
 	}),
 	async execute(_id, params) {
 		const backup = params.backup !== false;
@@ -1564,12 +1535,11 @@ with open(path, "r+b") as f:
 
 const searchTool: AgentTool<{ path: string; pattern: string; isHex?: boolean }> = {
 	name: "search",
-	description:
-		"Search for a pattern in a binary file. Supports text and hex patterns. Returns offset + context for each match.",
+	description: "Search for text/hex pattern in a binary.",
 	parameters: Type.Object({
-		path: Type.String({ description: "Path to file" }),
-		pattern: Type.String({ description: "Pattern to search (text or hex)" }),
-		isHex: Type.Optional(Type.Boolean({ description: "Treat pattern as hex (default: false = text)" })),
+		path: Type.String(),
+		pattern: Type.String(),
+		isHex: Type.Optional(Type.Boolean({ default: false })),
 	}),
 	async execute(_id, params) {
 		const py = which(PYTHON);
@@ -1600,6 +1570,61 @@ else:
 			return textResult(out);
 		} catch (e: any) {
 			return textResult(`Search failed: ${e.message}`);
+		}
+	},
+};
+
+// ─── Write File Tool ───────────────────────────────────────────
+
+const writeFileTool: AgentTool<{ path: string; content: string }> = {
+	name: "write_file",
+	description: "Write content to a file. Use this, not shell heredocs.",
+	parameters: Type.Object({
+		path: Type.String(),
+		content: Type.String(),
+	}),
+	async execute(_id, params) {
+		try {
+			mkdirSync(dirname(params.path), { recursive: true });
+			writeFileSync(params.path, params.content);
+			return textResult(`Wrote ${params.content.length} bytes to ${params.path}`);
+		} catch (e: any) {
+			return textResult(`Write failed: ${e.message}`);
+		}
+	},
+};
+
+// ─── Read File Tool ────────────────────────────────────────────
+
+const readFileTool: AgentTool<{ path: string; offset?: number; limit?: number }> = {
+	name: "read_file",
+	description: "Read a text file with line numbers.",
+	parameters: Type.Object({
+		path: Type.String(),
+		offset: Type.Optional(Type.Number({ default: 1 })),
+		limit: Type.Optional(Type.Number({ default: 2000 })),
+	}),
+	async execute(_id, params) {
+		if (!existsSync(params.path)) {
+			return textResult(`File not found: ${params.path}`);
+		}
+		try {
+			const content = readFileSync(params.path, "utf-8");
+			const lines = content.split("\n");
+			const offset = Math.max(1, params.offset ?? 1);
+			const limit = Math.min(2000, params.limit ?? 2000);
+			const slice = lines.slice(offset - 1, offset - 1 + limit);
+			const numbered = slice.map((line: string, i: number) => `${offset + i}| ${line}`).join("\n");
+			const total = lines.length;
+			let footer = "";
+			if (offset + limit - 1 < total) {
+				footer = `\n\n(${offset + limit - 1}/${total} lines shown. Use offset=${offset + limit} to continue.)`;
+			} else {
+				footer = `\n\n(${total}/${total} lines — end of file)`;
+			}
+			return textResult(numbered + footer, { totalLines: total, offset, limit });
+		} catch (e: any) {
+			return textResult(`Read failed: ${e.message}`);
 		}
 	},
 };
@@ -1663,6 +1688,9 @@ export const RE_TOOLS: AgentTool<any>[] = [
 	// Language-specific decompilers
 	jadxTool,
 	ilspyTool,
+	// File I/O
+	writeFileTool,
+	readFileTool,
 ];
 
 export function createReTools(extra: AgentTool<any>[] = []): AgentTool<any>[] {
@@ -1711,20 +1739,22 @@ export function probeTools(): Record<string, boolean> {
 		volatility: !!which("vol") || !!which("volatility3") || pythonModule("volatility3"),
 		jadx: !!which("jadx") || !!which("jadx-cli"),
 		ilspy: !!which("ilspycmd") || !!which("monodis"),
+		write_file: true,
+		read_file: true,
 	};
 }
 
 // ─── System Prompt ─────────────────────────────────────────────
 
-export const RE_SYSTEM_PROMPT = `You are pire, a reverse engineering agent. You're conversational and can work with any binary or software artifact.
+export const RE_SYSTEM_PROMPT = `You are pire, a reverse engineering agent. Analyze any binary or software artifact.
 
-The user gives you a path, URL, or directory and tells you what they want. Run the right tools automatically — don't follow a fixed workflow, adapt to the task.
+Run tools automatically — adapt to the task. Use filetype first, then pick tools. Run PE binaries with WINEPREFIX=$HOME/.wine wine <binary>. Use write_file for source code, not shell heredocs.
 
-Use **filetype** to identify what you're working with, then pick the right tools. disasm_func auto-detects PE (MZ header) and routes to r2. PE binaries often use CRLF line endings. Run PE binaries with WINEPREFIX=$HOME/.wine wine <binary>.
+Rules: Work on copies (patch tool creates backups). Quote exact addresses. If unsure about a constant, say so.
 
-Tips: \`imul\` with magic numbers = division, \`lea -0x30\` + \`cmp $0x9\` = ASCII digit check, \`endbr64\` = function boundary in stripped PIE, high entropy (>7.5) = likely packed. Quote exact addresses for findings. If unsure about a constant, say so.
+When listing functions, use 'aflj' (JSON) for parseable output. When decompiling, pass hex addresses (e.g. 0x3ca60) from the 'addr' column — never pass function indices.
 
-Rules: Never execute target binaries outside sandboxes. Work on copies (patch tool creates backups). If a tool isn't installed, tell the user how to install it.`;
+When writing analysis files, use the write_file tool directly with the full content. Do not use shell heredocs or echo commands.`;
 
 // ─── Exports ───────────────────────────────────────────────────
 
@@ -1765,4 +1795,6 @@ export {
 	volatilityTool,
 	jadxTool,
 	ilspyTool,
+	writeFileTool,
+	readFileTool,
 };

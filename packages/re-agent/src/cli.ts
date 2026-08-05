@@ -27,8 +27,8 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { probeTools, RE_SYSTEM_PROMPT, RE_TOOLS, setSandboxEnabled } from "./index.js";
-import { PirePiTUI } from "./pire-pi-tui.js";
 import { loadSettings } from "./pire-config.js";
+import { PirePiTUI } from "./pire-pi-tui.js";
 import { PireCLI, PireTUI } from "./tui.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -343,7 +343,10 @@ switch (args[0]) {
 		await import("./pire-uninstall.js");
 		break;
 	default: {
-		if (args[0]?.startsWith("-") && !["-cli", "--cli", "-ansi", "--ansi", "-mcp", "--mcp", "-loose", "--loose"].includes(args[0])) {
+		if (
+			args[0]?.startsWith("-") &&
+			!["-cli", "--cli", "-ansi", "--ansi", "-mcp", "--mcp", "-loose", "--loose"].includes(args[0])
+		) {
 			console.error(`Unknown option: ${args[0]}`);
 			process.exit(1);
 		}

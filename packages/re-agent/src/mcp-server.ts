@@ -27,9 +27,12 @@
  *   pire -mcp --port 9847 --host 0.0.0.0
  */
 
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import * as net from "node:net";
+import { dirname, join } from "node:path";
 import * as readline from "node:readline";
+import { fileURLToPath } from "node:url";
 import {
 	type AgentTool,
 	probeTools,
@@ -39,6 +42,24 @@ import {
 	validateToolParams,
 } from "./index.js";
 import { type ChatMessage, callLLM, type LLMConfig, loadLLMConfig, toolToFunction } from "./llm.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname_mcp = dirname(__filename);
+
+// Read version from package.json at module load
+// In source mode (src/), package.json is at ../../package.json
+// In compiled mode (dist/), package.json is at ../package.json
+let VERSION = "0.0.0";
+for (const rel of ["../package.json", "../../package.json"]) {
+	try {
+		const pkgPath = join(__dirname_mcp, rel);
+		const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
+		if (pkg.version) {
+			VERSION = pkg.version;
+			break;
+		}
+	} catch {}
+}
 
 // ─── Session ───────────────────────────────────────────────────
 
@@ -121,8 +142,7 @@ When the user mentions a path, binary, or directory — run tools on it yourself
 When the user provides a URL — use the fetch tool to download it first.
 Pick the right tools for whatever the user is asking for. Don't follow a fixed workflow — adapt to the task.
 
-IMPORTANT: When you need to write a file, use the shell tool with a command parameter. For example: shell(command="echo 'content' > /path/to/file"). Never call shell() without a command argument.
-When you have gathered enough information, write your analysis to a file using the shell tool. Do not just say you will write it — actually execute the shell tool with the full command.`;
+IMPORTANT: When you need to write a file, use the write_file tool with path and content parameters. Do not use shell heredocs or echo commands. Always write your analysis to a file before reporting completion.`;
 
 	const messages: ChatMessage[] = [
 		{ role: "system", content: systemPrompt },
@@ -150,16 +170,20 @@ When you have gathered enough information, write your analysis to a file using t
 		});
 
 		if (resp.tool_calls && resp.tool_calls.length > 0) {
+			// Save assistant message with tool calls to session history
+			session.messages.push({ role: "assistant", content: resp.content, tool_calls: resp.tool_calls });
 			messages.push({ role: "assistant", content: resp.content, tool_calls: resp.tool_calls });
 
 			for (const tc of resp.tool_calls) {
 				const tool = session.toolMap.get(tc.function.name);
 				if (!tool) {
+					const errMsg = `Error: unknown tool "${tc.function.name}"`;
 					messages.push({
 						role: "tool",
 						tool_call_id: tc.id,
-						content: `Error: unknown tool "${tc.function.name}"`,
+						content: errMsg,
 					});
+					session.messages.push({ role: "tool", tool_call_id: tc.id, content: errMsg });
 					continue;
 				}
 				let params: Record<string, unknown>;
@@ -173,6 +197,7 @@ When you have gathered enough information, write your analysis to a file using t
 				const validationError = validateToolParams(tool, params);
 				if (validationError) {
 					messages.push({ role: "tool", tool_call_id: tc.id, content: `Error: ${validationError}` });
+					session.messages.push({ role: "tool", tool_call_id: tc.id, content: `Error: ${validationError}` });
 					options.onToolCall?.(tc.function.name, params);
 					options.onToolResult?.(tc.function.name, `Error: ${validationError}`);
 					toolCallLog.push({ name: tc.function.name, args: params, result: `Error: ${validationError}` });
@@ -182,11 +207,13 @@ When you have gathered enough information, write your analysis to a file using t
 				// Deduplicate
 				const callSig = `${tc.function.name}:${JSON.stringify(params)}`;
 				if (seenCalls.has(callSig)) {
+					const skipMsg = "Skipped: identical call already executed this turn.";
 					messages.push({
 						role: "tool",
 						tool_call_id: tc.id,
-						content: "Skipped: identical call already executed this turn.",
+						content: skipMsg,
 					});
+					session.messages.push({ role: "tool", tool_call_id: tc.id, content: skipMsg });
 					continue;
 				}
 				seenCalls.add(callSig);
@@ -196,13 +223,15 @@ When you have gathered enough information, write your analysis to a file using t
 				try {
 					const result = await tool.execute("pire", params);
 					const text = result.content.map((c: { text: string }) => c.text).join("\n");
-					const truncated = text.length > 16000 ? text.slice(0, 16000) + "\n... (truncated)" : text;
+					const truncated = text.length > 100000 ? text.slice(0, 100000) + "\n... (truncated)" : text;
 					messages.push({ role: "tool", tool_call_id: tc.id, content: truncated });
+					session.messages.push({ role: "tool", tool_call_id: tc.id, content: truncated });
 					options.onToolResult?.(tc.function.name, text);
 					toolCallLog.push({ name: tc.function.name, args: params, result: text });
 				} catch (e) {
 					const errMsg = e instanceof Error ? e.message : String(e);
 					messages.push({ role: "tool", tool_call_id: tc.id, content: `Error: ${errMsg}` });
+					session.messages.push({ role: "tool", tool_call_id: tc.id, content: `Error: ${errMsg}` });
 					options.onToolResult?.(tc.function.name, `Error: ${errMsg}`);
 					toolCallLog.push({ name: tc.function.name, args: params, result: `Error: ${errMsg}` });
 				}
@@ -254,7 +283,7 @@ async function handleRequest(req: RPCRequest): Promise<RPCResponse> {
 			case "initialize": {
 				return ok(id, {
 					protocolVersion: "2024-11-05",
-					serverInfo: { name: "pire", version: "0.88.6" },
+					serverInfo: { name: "pire", version: VERSION },
 					capabilities: { tools: {}, resources: {}, prompts: {} },
 					tools: RE_TOOLS.map((t) => ({
 						name: t.name,
@@ -391,15 +420,13 @@ async function handleRequest(req: RPCRequest): Promise<RPCResponse> {
 				}
 				const data = JSON.stringify(
 					{
-						version: "0.88.6",
+						version: VERSION,
 						target: session.target,
 						messages: session.messages,
 					},
 					null,
 					2,
 				);
-				const { writeFileSync, mkdirSync } = await import("node:fs");
-				const { dirname } = await import("node:path");
 				mkdirSync(dirname(path), { recursive: true });
 				writeFileSync(path, data);
 				return ok(id, { saved: true, path, messages: session.messages.length });

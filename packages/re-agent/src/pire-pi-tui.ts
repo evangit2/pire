@@ -35,7 +35,7 @@ import {
 	visibleWidth,
 	wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
-import { probeTools, RE_SYSTEM_PROMPT, RE_TOOLS, setGhidraTarget } from "./index.js";
+import { probeTools, RE_SYSTEM_PROMPT, RE_TOOLS, setGhidraTarget, validateToolParams } from "./index.js";
 import { type ChatMessage, callLLM, type LLMConfig, loadLLMConfig, type ToolCall, toolToFunction } from "./llm.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -65,6 +65,107 @@ function setupGracefulQuit(onQuit: () => void): void {
 
 const MAX_TURNS = parseInt(process.env.PIRE_MAX_TURNS || "70", 10) || 70;
 const MAX_OUTPUT = parseInt(process.env.PIRE_MAX_OUTPUT || "16000", 10) || 16000;
+
+// ─── Context Window Management ─────────────────────────────────
+//
+// Aggressive multi-stage compression to keep context small:
+//   Stage 1: Truncate old tool results to head+tail (keep start + end)
+//   Stage 2: Drop old tool results entirely, replace with 1-line stub
+//   Stage 3: Drop old assistant messages, keep only first line
+//   Stage 4: Drop old user messages (keep first line)
+//
+// Always preserves the most recent N messages untouched.
+// Threshold is conservative — we compress well before the context window fills.
+
+const CONTEXT_CHAR_LIMIT = parseInt(process.env.PIRE_CONTEXT_LIMIT || "120000", 10) || 120000;
+const TOOL_RESULT_HEAD = 600; // Keep first N chars of old tool results
+const TOOL_RESULT_TAIL = 600; // Keep last N chars of old tool results
+const PRESERVE_RECENT = 8; // Never touch the most recent N messages
+
+/** Estimate total characters in the message array. */
+function estimateMessageChars(messages: ChatMessage[]): number {
+	let total = 0;
+	for (const msg of messages) {
+		if (typeof msg.content === "string") total += msg.content.length;
+		if (msg.tool_calls) {
+			for (const tc of msg.tool_calls) total += (tc.function?.arguments?.length ?? 0) + 100;
+		}
+	}
+	return total;
+}
+
+/**
+ * Aggressively compress the message array to stay under CONTEXT_CHAR_LIMIT.
+ * Multi-stage: truncate → stub → drop. Preserves recent messages.
+ */
+function trimContext(messages: ChatMessage[]): ChatMessage[] {
+	if (messages.length <= PRESERVE_RECENT) return messages;
+
+	let totalChars = estimateMessageChars(messages);
+	if (totalChars <= CONTEXT_CHAR_LIMIT) return messages;
+
+	// Work on a copy
+	const result = messages.map((m) => ({ ...m }));
+	const cutoff = result.length - PRESERVE_RECENT;
+
+	// Stage 1: Truncate old tool results to head+tail
+	for (let i = 0; i < cutoff && totalChars > CONTEXT_CHAR_LIMIT; i++) {
+		const msg = result[i];
+		if (
+			msg.role === "tool" &&
+			typeof msg.content === "string" &&
+			msg.content.length > TOOL_RESULT_HEAD + TOOL_RESULT_TAIL
+		) {
+			const originalLen = msg.content.length;
+			msg.content =
+				msg.content.slice(0, TOOL_RESULT_HEAD) +
+				`\n... (truncated ${originalLen - TOOL_RESULT_HEAD - TOOL_RESULT_TAIL} chars) ...\n` +
+				msg.content.slice(-TOOL_RESULT_TAIL);
+			totalChars -= originalLen - msg.content.length;
+		}
+	}
+
+	// Stage 2: Replace old tool results with 1-line stubs
+	for (let i = 0; i < cutoff && totalChars > CONTEXT_CHAR_LIMIT; i++) {
+		const msg = result[i];
+		if (msg.role === "tool" && typeof msg.content === "string" && msg.content.length > 100) {
+			const originalLen = msg.content.length;
+			// Keep just the first line as a summary
+			const firstLine = msg.content.split("\n")[0]?.slice(0, 80) ?? "";
+			msg.content = `[compressed: ${firstLine}...]`;
+			totalChars -= originalLen - msg.content.length;
+		}
+	}
+
+	// Stage 3: Compress old assistant messages — keep only first line
+	for (let i = 0; i < cutoff && totalChars > CONTEXT_CHAR_LIMIT; i++) {
+		const msg = result[i];
+		if (msg.role === "assistant" && typeof msg.content === "string" && msg.content.length > 200) {
+			const originalLen = msg.content.length;
+			const firstLine = msg.content.split("\n")[0]?.slice(0, 120) ?? "";
+			msg.content = firstLine + " [...]";
+			totalChars -= originalLen - msg.content.length;
+			// Drop old tool_calls from compressed assistant messages
+			if (msg.tool_calls) {
+				totalChars -= msg.tool_calls.reduce((sum, tc) => sum + (tc.function?.arguments?.length ?? 0) + 100, 0);
+				delete msg.tool_calls;
+			}
+		}
+	}
+
+	// Stage 4: Compress old user messages — keep only first line
+	for (let i = 0; i < cutoff && totalChars > CONTEXT_CHAR_LIMIT; i++) {
+		const msg = result[i];
+		if (msg.role === "user" && typeof msg.content === "string" && msg.content.length > 200) {
+			const originalLen = msg.content.length;
+			const firstLine = msg.content.split("\n")[0]?.slice(0, 120) ?? "";
+			msg.content = firstLine + " [...]";
+			totalChars -= originalLen - msg.content.length;
+		}
+	}
+
+	return result;
+}
 
 // ─── DynamicBorder ─────────────────────────────────────────────
 class DynamicBorder implements Component {
@@ -664,6 +765,7 @@ export class PirePiTUI {
 			if (this.loadedTarget) {
 				systemPrompt += `\n\nThe user has loaded: ${this.loadedTarget}`;
 			}
+			// write_file instruction is already in RE_SYSTEM_PROMPT
 
 			const toolSchemas = RE_TOOLS.map((t) => toolToFunction(t));
 
@@ -676,7 +778,7 @@ export class PirePiTUI {
 
 				const resp = await callLLM(
 					this.llm,
-					[{ role: "system", content: systemPrompt }, ...this.messages],
+					[{ role: "system", content: systemPrompt }, ...trimContext(this.messages)],
 					toolSchemas,
 					{
 						signal: this.abortController?.signal,
@@ -745,6 +847,18 @@ export class PirePiTUI {
 						if (args[key] === undefined || args[key] === null) {
 							delete args[key];
 						}
+					}
+
+					// Validate required params are present (catches undefined → deleted → missing)
+					const validationError = validateToolParams(tool, args);
+					if (validationError) {
+						this.transcript.add("error", validationError);
+						this.messages.push({
+							role: "tool",
+							tool_call_id: tc.id,
+							content: `Error: ${validationError}`,
+						});
+						continue;
 					}
 
 					// Auto-detect target from tool calls

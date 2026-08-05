@@ -111,7 +111,9 @@ async function interactiveConfig(): Promise<void> {
 	console.log(chalk.green("\n✓ Settings saved"));
 	console.log(chalk.dim(`  ${SETTINGS_FILE}\n`));
 	console.log("  " + chalk.dim("max_turns:") + `  ${settings.max_turns}`);
-	console.log("  " + chalk.dim("sandbox:") + `    ${settings.sandbox ? chalk.green("on") : chalk.yellow("off (loose mode)")}`);
+	console.log(
+		"  " + chalk.dim("sandbox:") + `    ${settings.sandbox ? chalk.green("on") : chalk.yellow("off (loose mode)")}`,
+	);
 	console.log("  " + chalk.dim("max_output:") + ` ${settings.max_output}`);
 	console.log("");
 }
