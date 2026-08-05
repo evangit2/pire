@@ -27,6 +27,44 @@ function getContextCharLimit(): number {
 
 // Tool output truncation: 5% of context budget, min 2000, max 20000
 const MAX_TOOL_OUTPUT = Math.min(20000, Math.max(2000, Math.floor(getContextCharLimit() * 0.05)));
+const CONTEXT_CHAR_LIMIT = parseInt(process.env.PIRE_CONTEXT_LIMIT || "0", 10) || getContextCharLimit();
+
+// ─── Context trimming (prevents context overflow on long pipelines) ───
+
+function totalChars(messages: ChatMessage[]): number {
+	return messages.reduce((sum, m) => {
+		let len = (m.content || "").length;
+		if (m.tool_calls) for (const tc of m.tool_calls) len += (tc.function.arguments || "").length;
+		return sum + len;
+	}, 0);
+}
+
+function trimContext(messages: ChatMessage[]): ChatMessage[] {
+	const total = totalChars(messages);
+	const triggerLimit = Math.floor(CONTEXT_CHAR_LIMIT * 0.6);
+	if (total <= triggerLimit) return messages;
+
+	// Keep system (index 0) + user (index 1) + as many recent messages as fit
+	const system = messages[0];
+	const user = messages[1];
+	const recent = messages.slice(2);
+
+	const preserved: ChatMessage[] = [system, user];
+	let budget = triggerLimit - totalChars(preserved);
+
+	// Walk backwards through recent messages, keeping as many as fit
+	for (let i = recent.length - 1; i >= 0 && budget > 0; i--) {
+		const msg = recent[i];
+		const msgLen = (msg.content || "").length + (msg.tool_calls ? msg.tool_calls.reduce((s, tc) => s + (tc.function.arguments || "").length, 0) : 0);
+		if (msgLen > budget && preserved.length > 2) break; // Don't add a huge message that overflows
+		preserved.push(msg);
+		budget -= msgLen;
+	}
+
+	// Reverse to maintain chronological order
+	preserved.reverse();
+	return preserved;
+}
 
 // ─── Write file tool (lets agent save files) ──────────────────
 
@@ -242,9 +280,12 @@ ${systemTemplate
 	for (let turn = 0; turn < maxTurns; turn++) {
 		console.log(`\n--- Turn ${turn + 1}/${maxTurns} ---`);
 
+		// Trim context to prevent overflow on long pipelines
+		const trimmedMessages = trimContext(messages);
+
 		let resp;
 		try {
-			resp = await callLLM(config, messages, toolSchemas);
+			resp = await callLLM(config, trimmedMessages, toolSchemas);
 		} catch (e) {
 			console.error(`LLM error: ${e instanceof Error ? e.message : e}`);
 			break;
@@ -342,7 +383,14 @@ ${systemTemplate
 				}
 
 				try {
-					const result = await tool.execute("reimpl", params);
+					// Per-tool timeout: 120s default, 300s for slow tools
+					const toolTimeout = ["angr", "ghidra_decompile", "decompile", "volatility"].includes(tc.function.name) ? 300000 : 120000;
+					const result = await Promise.race([
+						tool.execute("reimpl", params),
+						new Promise<never>((_, reject) =>
+							setTimeout(() => reject(new Error(`Tool "${tc.function.name}" timed out after ${toolTimeout / 1000}s`)), toolTimeout),
+						),
+					]);
 					const text = result.content.map((c: { text: string }) => c.text).join("\n");
 					const truncated =
 						text.length > MAX_TOOL_OUTPUT ? text.slice(0, MAX_TOOL_OUTPUT) + "\n... (truncated)" : text;

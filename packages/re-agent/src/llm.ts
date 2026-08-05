@@ -47,15 +47,22 @@ export interface LLMResponse {
 function parseYAMLConfig(content: string): Record<string, string> {
 	const result: Record<string, string> = {};
 	for (const rawLine of content.split("\n")) {
-		// Strip comments
-		const commentIdx = rawLine.indexOf("#");
-		const line = commentIdx >= 0 ? rawLine.slice(0, commentIdx) : rawLine;
-		const match = line.match(/^(\w+)\s*:\s*(.*)$/);
+		const match = rawLine.match(/^\s*(\w+)\s*:\s*(.*)$/);
 		if (!match) continue;
 		let value = match[2].trim();
-		// Strip surrounding quotes
-		if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-			value = value.slice(1, -1);
+		// Strip comments only if NOT inside quotes
+		if (value.startsWith('"') || value.startsWith("'")) {
+			const quote = value[0];
+			// Find the closing quote
+			const endQuote = value.indexOf(quote, 1);
+			if (endQuote >= 0) {
+				// Everything after closing quote is comment (if any)
+				value = value.slice(1, endQuote);
+			}
+		} else {
+			// Unquoted: strip everything after #
+			const commentIdx = value.indexOf("#");
+			if (commentIdx >= 0) value = value.slice(0, commentIdx).trim();
 		}
 		result[match[1]] = value;
 	}
@@ -256,6 +263,13 @@ export async function callLLM(
 			// Don't retry 4xx client errors — they will never succeed
 			const retriable = (lastErr as any).retriable;
 			if (retriable === false) throw lastErr;
+			// Retry on: 5xx (retriable=true), network errors (ECONNRESET, ETIMEDOUT, ECONNREFUSED), timeouts
+			// These are all transient and may succeed on retry
+			const code = (lastErr as any).code;
+			if (code === "ECONNREFUSED") {
+				// Server not running — don't retry, fail fast
+				throw lastErr;
+			}
 			if (i < 2) await new Promise((r) => setTimeout(r, 2000 * (i + 1)));
 		}
 	}

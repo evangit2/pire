@@ -216,3 +216,50 @@ Ran 24 integration tests covering the 12 previously untested tools: extract, fet
 - `packages/re-agent/src/mcp-server.ts` — parallel execution, per-tool timeout, refactored tool call loop
 - `packages/re-agent/src/index.ts` — `executionMode: "sequential"` on r2, decompile, ghidra_decompile, gdb, frida
 - `packages/re-agent/test/test-pass5.cjs` — 15 unit tests for parallel execution + timeout
+
+---
+
+## Pass 6: YAML Parser Fix, reimpl Context Trimming, LLM Retry Logic (v0.89.12)
+
+### Bug #25: YAML parser broke on `#` inside quoted strings
+
+**File:** `packages/re-agent/src/llm.ts`
+
+**Problem:** The parser stripped comments by finding the first `#` anywhere on the line, then matching the key. This broke values containing `#` inside quotes:
+- `api_key: "secret-key-with-#-hash"` → parsed as `"secret-key-with-` (truncated at `#`)
+- Indented keys like `  indented_key: value` → failed to match entirely
+
+**Fix:** Rewrote `parseYAMLConfig` to:
+1. Match indented keys (`^\s*(\w+)`)
+2. Only strip comments when NOT inside quotes — find the closing quote first, then strip everything after it
+3. For unquoted values, strip from `#` as before
+
+### Bug #26: pire-reimpl had no context trimming
+
+**File:** `packages/re-agent/src/pire-reimpl.ts`
+
+**Problem:** The autonomous RE pipeline runs up to 80 turns. Each turn adds tool output (up to 20KB truncated). After ~15 turns, the context overflows the model's window, causing HTTP 400 errors and pipeline failure.
+
+**Fix:** Added `trimContext()` and `totalChars()` functions (matching the TUI's implementation). The LLM call now uses trimmed messages, keeping the system prompt + initial user message + as many recent messages as fit within 60% of the context limit.
+
+### Bug #27: pire-reimpl had no per-tool timeout
+
+**File:** `packages/re-agent/src/pire-reimpl.ts`
+
+**Problem:** Same as #24 in mcp-server — a stuck tool blocks the entire pipeline.
+
+**Fix:** Added `Promise.race` with per-tool timeout (120s default, 300s for slow tools).
+
+### Improvement #28: LLM retry fails fast on ECONNREFUSED
+
+**File:** `packages/re-agent/src/llm.ts`
+
+**Problem:** When the LLM server is down, the client retried 3 times with 2s/4s delays, wasting 6 seconds before failing.
+
+**Fix:** Check for `ECONNREFUSED` error code and fail immediately without retry.
+
+### Files Modified (Pass 6)
+
+- `packages/re-agent/src/llm.ts` — YAML parser fix, ECONNREFUSED fail-fast
+- `packages/re-agent/src/pire-reimpl.ts` — context trimming, per-tool timeout
+- `packages/re-agent/test/test-pass6.cjs` — 18 unit tests
