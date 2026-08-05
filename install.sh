@@ -19,6 +19,9 @@
 
 set +e
 
+# Prevent Homebrew from auto-updating itself during installs — major source of hangs
+export HOMEBREW_NO_AUTO_UPDATE=1
+
 # ── Helpers ───────────────────────────────────────────────────
 log_step()   { printf '\033[0;36m→\033[0m %s\n' "$1"; }
 log_done()   { printf '\033[0;32m✓\033[0m %s\n' "$1"; }
@@ -339,14 +342,14 @@ pkg_install() {
 		zypper) sudo zypper install -y -q "$@" </dev/null >/dev/null 2>&1 ;;
 		apk)    sudo apk add -q "$@" </dev/null >/dev/null 2>&1 ;;
 		brew)
-			# HOMEBREW_NO_AUTO_UPDATE skips the slow auto-update step.
+			# HOMEBREW_NO_AUTO_UPDATE is exported globally.
 			# sudo credentials are cached in the foreground before parallel phase.
-			# Output goes to a temp log — piping through head/grep breaks the pipe
-			# and causes brew to hang on SIGPIPE.
+			# brew gets a longer timeout — it can compile from source on fresh Macs.
+			# Output goes to a temp log — piping breaks the pipe (SIGPIPE).
 			local _brew_log
 			_brew_log=$(mktemp 2>/dev/null || echo /tmp/pire-brew-$$.log)
-			if ! HOMEBREW_NO_AUTO_UPDATE=1 run_with_timeout brew install "$@" </dev/null >"$_brew_log" 2>&1; then
-				if ! HOMEBREW_NO_AUTO_UPDATE=1 run_with_timeout brew install --cask "$@" </dev/null >"$_brew_log" 2>&1; then
+			if ! _run_with_timeout_impl "$BREW_INSTALL_TIMEOUT" brew install "$@" </dev/null >"$_brew_log" 2>&1; then
+				if ! _run_with_timeout_impl "$BREW_INSTALL_TIMEOUT" brew install --cask "$@" </dev/null >"$_brew_log" 2>&1; then
 					tail -3 "$_brew_log" 2>/dev/null >&2
 				fi
 			fi
@@ -365,7 +368,8 @@ pkg_install() {
 }
 
 PIP_INSTALL_TIMEOUT=180
-DOWNLOAD_TIMEOUT=300  # 5 min for large downloads (Ghidra zip, etc.)
+BREW_INSTALL_TIMEOUT=600   # 10 min — brew can compile from source on fresh Macs
+DOWNLOAD_TIMEOUT=300       # 5 min for large downloads (Ghidra zip, etc.)
 
 # Run a command with a timeout. On Linux, uses GNU `timeout`.
 # On macOS (no timeout/gtimeout), uses a Perl wrapper that kills the
@@ -385,6 +389,8 @@ _run_with_timeout_impl() {
 	elif command -v gtimeout >/dev/null 2>&1; then
 		gtimeout -k 5 "$_secs" "$@"
 	else
+		# Perl fallback — no GNU timeout available (fresh macOS without coreutils).
+		# Fork child, alarm timeout, kill child process group on timeout.
 		perl -e '
 			use POSIX qw(setpgid);
 			my $secs = shift;
@@ -395,7 +401,8 @@ _run_with_timeout_impl() {
 				exec @ARGV or die "exec: $!";
 			}
 			local $SIG{ALRM} = sub {
-				kill -9, $$;  # signal entire process group
+				# Kill all processes in our process group (parent + child + grandchildren)
+				kill -9, $$;  # $$ = our PID, negative = process group
 				exit 124;
 			};
 			alarm $secs;
@@ -519,10 +526,11 @@ case "$OS" in
 			/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" </dev/null >/dev/null 2>&1
 		fi
 		log_done "Homebrew ready"
+		# Install coreutils FIRST — provides gtimeout for reliable timeouts
+		# Without gtimeout, the Perl timeout wrapper may not kill brew's child processes
+		brew install coreutils </dev/null >/dev/null 2>&1 || true
 		log_step "Installing core packages..."
 		pkg_install node radare2 binutils git
-		# Install coreutils for gtimeout (needed for pip timeout)
-		pkg_install coreutils 2>/dev/null || true
 		# Ensure Python is available (node formula may pull it in, but not always)
 		pkg_install python@3 2>/dev/null || true
 		;;
