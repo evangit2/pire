@@ -339,8 +339,10 @@ pkg_install() {
 		zypper) sudo zypper install -y -q "$@" </dev/null >/dev/null 2>&1 ;;
 		apk)    sudo apk add -q "$@" </dev/null >/dev/null 2>&1 ;;
 		brew)
-			# Try brew install — if it fails, try as cask
-			brew install "$@" </dev/null >/dev/null 2>&1 || brew install --cask "$@" </dev/null >/dev/null 2>&1
+			# Homebrew can hang on auto-update, slow downloads, or Xcode CLT prompts.
+			# Wrap in run_with_timeout + HOMEBREW_NO_AUTO_UPDATE to prevent indefinite hangs.
+			HOMEBREW_NO_AUTO_UPDATE=1 run_with_timeout brew install "$@" </dev/null >/dev/null 2>&1 \
+				|| HOMEBREW_NO_AUTO_UPDATE=1 run_with_timeout brew install --cask "$@" </dev/null >/dev/null 2>&1
 			;;
 		*)      log_warn "Unknown package manager for: $*" ;;
 	esac
@@ -355,15 +357,25 @@ pkg_install() {
 }
 
 PIP_INSTALL_TIMEOUT=180
+DOWNLOAD_TIMEOUT=300  # 5 min for large downloads (Ghidra zip, etc.)
 
 # Run a command with a timeout. On Linux, uses GNU `timeout`.
 # On macOS (no timeout/gtimeout), uses a Perl wrapper that kills the
 # entire process group so child processes (gcc, cc, ld) don't survive.
+# Usage: run_with_timeout <cmd...>  (uses PIP_INSTALL_TIMEOUT)
+#        run_with_timeout_dl <cmd...>  (uses DOWNLOAD_TIMEOUT)
 run_with_timeout() {
+	_run_with_timeout_impl "$PIP_INSTALL_TIMEOUT" "$@"
+}
+run_with_timeout_dl() {
+	_run_with_timeout_impl "$DOWNLOAD_TIMEOUT" "$@"
+}
+_run_with_timeout_impl() {
+	local _secs="$1"; shift
 	if command -v timeout >/dev/null 2>&1; then
-		timeout -k 5 "$PIP_INSTALL_TIMEOUT" "$@"
+		timeout -k 5 "$_secs" "$@"
 	elif command -v gtimeout >/dev/null 2>&1; then
-		gtimeout -k 5 "$PIP_INSTALL_TIMEOUT" "$@"
+		gtimeout -k 5 "$_secs" "$@"
 	else
 		perl -e '
 			use POSIX qw(setpgid);
@@ -381,7 +393,7 @@ run_with_timeout() {
 			alarm $secs;
 			waitpid($pid, 0);
 			exit $? >> 8;
-		' "$PIP_INSTALL_TIMEOUT" "$@"
+		' "$_secs" "$@"
 	fi
 }
 
@@ -565,14 +577,14 @@ if [ "$NODE_VER" -lt 22 ] 2>/dev/null; then
 			esac
 
 			# Fetch the latest Node 22 version from the official API
-			NODE_LATEST=$(curl -fsSL "https://nodejs.org/dist/index.json" 2>/dev/null \
-				| grep -o '"version":"v22\.[^"]*"' | head -1 | sed 's/"version":"//;s/"//')
-			[ -z "$NODE_LATEST" ] && NODE_LATEST="v22.11.0"
+				NODE_LATEST=$(run_with_timeout_dl curl -fsSL "https://nodejs.org/dist/index.json" 2>/dev/null \
+					| grep -o '"version":"v22[^"]*"' | head -1 | sed 's/"version":"//;s/"//')
+				[ -z "$NODE_LATEST" ] && NODE_LATEST="v22.11.0"
 
-			NODE_TARBALL="/tmp/node22-$$.tar.xz"
-			NODE_URL="https://nodejs.org/dist/$NODE_LATEST/node-$NODE_LATEST-linux-$NODE_ARCH.tar.xz"
+				NODE_TARBALL="/tmp/node22-$$.tar.xz"
+				NODE_URL="https://nodejs.org/dist/$NODE_LATEST/node-$NODE_LATEST-linux-$NODE_ARCH.tar.xz"
 
-			if curl -fsSL "$NODE_URL" -o "$NODE_TARBALL" 2>/dev/null; then
+				if run_with_timeout_dl curl -fsSL "$NODE_URL" -o "$NODE_TARBALL" 2>/dev/null; then
 				if [ -w /usr/local ]; then
 					tar -xJf "$NODE_TARBALL" -C /usr/local --strip-components=1 2>/dev/null
 				else
@@ -590,7 +602,7 @@ if [ "$NODE_VER" -lt 22 ] 2>/dev/null; then
 	if [ "$NODE_VER_NEW" -lt 22 ] 2>/dev/null; then
 		log_warn "Binary install didn't take, trying nvm fallback..."
 		# nvm fallback — user-space install, no sudo needed
-		curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | sh >/dev/null 2>&1
+		run_with_timeout_dl curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | sh >/dev/null 2>&1
 		NVM_DIR="$HOME/.nvm"
 		[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
 		nvm install 22 >/dev/null 2>&1
@@ -685,7 +697,7 @@ install_wine() {
 	if [ "$OS" != "windows" ]; then
 		WINEPREFIX="${WINEPREFIX:-$HOME/.wine}"
 		if [ ! -d "$WINEPREFIX" ] && has wine; then
-			WINEPREFIX="$WINEPREFIX" wineboot --init >/dev/null 2>&1 || true
+			run_with_timeout env WINEPREFIX="$WINEPREFIX" wineboot --init >/dev/null 2>&1 || true
 		fi
 	fi
 	if has wine || has wine64 || [ "$OS" = "windows" ]; then
@@ -767,7 +779,7 @@ install_jadx() {
 			pkg_install default-jre 2>/dev/null || true
 			if ! has jadx 2>/dev/null; then
 				JADX_VER="1.5.0"
-				curl -fsSL "https://github.com/skylot/jadx/releases/download/v${JADX_VER}/jadx-${JADX_VER}.zip" -o /tmp/jadx.zip 2>/dev/null
+				run_with_timeout_dl curl -fsSL "https://github.com/skylot/jadx/releases/download/v${JADX_VER}/jadx-${JADX_VER}.zip" -o /tmp/jadx.zip 2>/dev/null
 				sudo mkdir -p /opt/jadx && sudo unzip -q -o /tmp/jadx.zip -d /opt/jadx </dev/null 2>/dev/null
 				sudo ln -sf /opt/jadx/bin/jadx /usr/local/bin/jadx 2>/dev/null
 				sudo ln -sf /opt/jadx/bin/jadx-gui /usr/local/bin/jadx-gui 2>/dev/null
@@ -820,7 +832,7 @@ install_ghidra() {
 			if has java 2>/dev/null; then
 				GHIDRA_VER="11.1.2"
 				GHIDRA_DATE="20240709"
-				run_with_timeout curl -fsSL "https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_${GHIDRA_VER}_build/ghidra_${GHIDRA_VER}_PUBLIC_${GHIDRA_DATE}.zip" -o /tmp/ghidra.zip 2>/dev/null
+				run_with_timeout_dl curl -fsSL "https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_${GHIDRA_VER}_build/ghidra_${GHIDRA_VER}_PUBLIC_${GHIDRA_DATE}.zip" -o /tmp/ghidra.zip 2>/dev/null
 				if [ -f /tmp/ghidra.zip ] && [ -s /tmp/ghidra.zip ]; then
 					sudo unzip -q -o /tmp/ghidra.zip -d /opt/ </dev/null 2>/dev/null
 					sudo ln -sf /opt/ghidra_${GHIDRA_VER}_PUBLIC/ghidraRun /usr/local/bin/ghidra 2>/dev/null
@@ -835,7 +847,7 @@ install_ghidra() {
 			GHIDRA_DATE="20240709"
 			GHIDRA_URL="https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_${GHIDRA_VER}_build/ghidra_${GHIDRA_VER}_PUBLIC_${GHIDRA_DATE}.zip"
 			GHIDRA_DIR="$HOME/.local/share/ghidra"
-			run_with_timeout curl -fsSL "$GHIDRA_URL" -o /tmp/ghidra.zip 2>/dev/null
+			run_with_timeout_dl curl -fsSL "$GHIDRA_URL" -o /tmp/ghidra.zip 2>/dev/null
 			if [ -f /tmp/ghidra.zip ] && [ -s /tmp/ghidra.zip ]; then
 				mkdir -p "$GHIDRA_DIR" 2>/dev/null
 				unzip -q -o /tmp/ghidra.zip -d "$GHIDRA_DIR" 2>/dev/null
@@ -857,17 +869,17 @@ install_ghidra() {
 		if [ -n "$GHIDRA_DIR" ]; then
 			GHIDRA_VERSION=$(basename "$GHIDRA_DIR" | sed 's/ghidra_//;s/_PUBLIC//')
 			GHIDRA_EXT_DIR="$HOME/.config/ghidra_${GHIDRA_VERSION}_PUBLIC/Extensions/GhidraMCP"
-			MCP_RELEASE=$(curl -sL "https://api.github.com/repos/bethington/ghidra-mcp/releases/latest" 2>/dev/null | grep -oP '"tag_name":\s*"v\K[^"]+' | head -1)
+			MCP_RELEASE=$(run_with_timeout_dl curl -sL "https://api.github.com/repos/bethington/ghidra-mcp/releases/latest" 2>/dev/null | grep -oP '"tag_name":\s*"v\K[^"]+' | head -1)
 			if [ -n "$MCP_RELEASE" ]; then
 				mkdir -p /tmp/ghidra-mcp-install
-				curl -sL "https://github.com/bethington/ghidra-mcp/releases/download/v${MCP_RELEASE}/GhidraMCP-${MCP_RELEASE}.zip" -o /tmp/ghidra-mcp-install/GhidraMCP.zip 2>/dev/null
+				run_with_timeout_dl curl -sL "https://github.com/bethington/ghidra-mcp/releases/download/v${MCP_RELEASE}/GhidraMCP-${MCP_RELEASE}.zip" -o /tmp/ghidra-mcp-install/GhidraMCP.zip 2>/dev/null
 				if [ -f /tmp/ghidra-mcp-install/GhidraMCP.zip ] && [ -s /tmp/ghidra-mcp-install/GhidraMCP.zip ]; then
 					mkdir -p "$GHIDRA_EXT_DIR"
 					unzip -q -o /tmp/ghidra-mcp-install/GhidraMCP.zip -d "$GHIDRA_EXT_DIR" 2>/dev/null
 				fi
 				# Install bridge script to /opt/ghidra-mcp
 				sudo mkdir -p /opt/ghidra-mcp 2>/dev/null
-				curl -sL "https://github.com/bethington/ghidra-mcp/releases/download/v${MCP_RELEASE}/bridge_mcp_ghidra.py" -o /opt/ghidra-mcp/bridge_mcp_ghidra.py 2>/dev/null || true
+				run_with_timeout_dl curl -sL "https://github.com/bethington/ghidra-mcp/releases/download/v${MCP_RELEASE}/bridge_mcp_ghidra.py" -o /opt/ghidra-mcp/bridge_mcp_ghidra.py 2>/dev/null || true
 				rm -rf /tmp/ghidra-mcp-install
 			fi
 		fi
@@ -922,7 +934,7 @@ install_python_tools() {
 	# keystone-engine has no arm64 wheel on PyPI — use our pre-built one
 	if [ "$OS" = "macos" ] && [ "$(uname -m)" = "arm64" ]; then
 		KS_WHEEL="/tmp/keystone_engine-arm64.whl"
-		curl -fsSL "https://raw.githubusercontent.com/evangit2/pire/main/wheels/macos-arm64/keystone_engine-0.9.2-py2.py3-none-macosx_14_0_arm64.whl" -o "$KS_WHEEL" 2>/dev/null
+		run_with_timeout_dl curl -fsSL "https://raw.githubusercontent.com/evangit2/pire/main/wheels/macos-arm64/keystone_engine-0.9.2-py2.py3-none-macosx_14_0_arm64.whl" -o "$KS_WHEEL" 2>/dev/null
 		if [ -f "$KS_WHEEL" ]; then
 			pip_install "$KS_WHEEL" 2>/dev/null || pip_install keystone-engine 2>/dev/null || true
 		else
@@ -975,7 +987,20 @@ if [ -n "$COMPONENTS" ]; then
 
 	# Main render loop
 	ALL_DONE=0
+	MAX_INSTALL_SECS=600  # 10 min global cap — kill any component still running
+	LOOP_START=$SECONDS
 	while [ $ALL_DONE -eq 0 ]; do
+		# Global safety net — kill any background installs still running
+		if [ $((SECONDS - LOOP_START)) -gt $MAX_INSTALL_SECS ]; then
+			log_warn "Global timeout reached ($MAX_INSTALL_SECS s) — killing stalled installs"
+			for comp in $COMPONENTS; do
+				status=$(cat "$TMPDIR_PIRE/$comp.status" 2>/dev/null || echo "")
+				if [ "$status" = "$ST_RUNNING" ] || [ "$status" = "$ST_PENDING" ]; then
+					echo "$ST_FAILED" > "$TMPDIR_PIRE/$comp.status"
+				fi
+			done
+			break
+		fi
 		# Get current spinner char
 		SPIN_IDX=$(( (SPIN_IDX + 1) % 10 ))
 		SPIN_CHAR=$(echo "$SPIN_FRAMES" | cut -d' ' -f$((SPIN_IDX + 1)))
