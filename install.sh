@@ -314,7 +314,11 @@ pkg_install() {
 		fi
 	fi
 	case "$PKG_MGR" in
-		apt)    sudo apt-get install -y -qq "$@" </dev/null >/dev/null 2>&1 ;;
+		apt)
+			# Use --fix-broken to handle partial installs, and don't let
+			# broken third-party repos block the entire install.
+			sudo apt-get install -y --no-install-recommends --fix-broken "$@" </dev/null >/dev/null 2>&1
+			;;
 		dnf)    sudo dnf install -y -q "$@" </dev/null >/dev/null 2>&1 ;;
 		pacman)
 			if [ "$OS" = "windows" ]; then
@@ -1038,16 +1042,19 @@ has objdump && log_done "objdump"                      || log_warn "objdump not 
 has nm      && log_done "nm"                           || log_warn "nm not installed"
 has file    && log_done "file"                         || log_warn "file not installed"
 
-[ "$INSTALL_WINE" = "1" ]   && { (has wine || has wine64)                       && log_done "wine"                       || log_warn "wine not installed"; }
-[ "$INSTALL_MINGW" = "1" ]  && { has x86_64-w64-mingw32-gcc                     && log_done "MinGW-w64"                  || log_warn "MinGW-w64 not installed"; }
-[ "$INSTALL_GDB" = "1" ]    && { has gdb                                        && log_done "gdb"                        || log_warn "gdb not installed"; }
-[ "$INSTALL_BINWALK" = "1" ] && { has binwalk                                   && log_done "binwalk"                    || log_warn "binwalk not installed"; }
-[ "$INSTALL_FRIDA" = "1" ]  && { (has frida || has frida-ps || "${PIRE_PYTHON:-python3}" -c "import frida" 2>/dev/null) && log_done "frida" || log_warn "frida not installed"; }
-[ "$INSTALL_JADX" = "1" ]   && { has jadx                                       && log_done "jadx"                       || log_warn "jadx not installed"; }
-[ "$INSTALL_YARA" = "1" ]   && { has yara                                       && log_done "yara"                       || log_warn "yara not installed"; }
+[ "$INSTALL_WINE" = "1" ]   && { (has wine || has wine64)                       && log_done "wine"                       || log_error "wine not installed"; }
+[ "$INSTALL_MINGW" = "1" ]  && { has x86_64-w64-mingw32-gcc                     && log_done "MinGW-w64"                  || log_error "MinGW-w64 not installed"; }
+[ "$INSTALL_GDB" = "1" ]    && { has gdb                                        && log_done "gdb"                        || log_error "gdb not installed"; }
+[ "$INSTALL_BINWALK" = "1" ] && { has binwalk                                   && log_done "binwalk"                    || log_error "binwalk not installed"; }
+[ "$INSTALL_FRIDA" = "1" ]  && { (has frida || has frida-ps || "${PIRE_PYTHON:-python3}" -c "import frida" 2>/dev/null) && log_done "frida" || log_error "frida not installed"; }
+[ "$INSTALL_JADX" = "1" ]   && { (has jadx || has jadx-cli)                     && log_done "jadx"                       || log_error "jadx not installed"; }
+[ "$INSTALL_YARA" = "1" ]   && { (has yara || "${PIRE_PYTHON:-python3}" -c "import yara" 2>/dev/null) && log_done "yara" || log_error "yara not installed"; }
+[ "$INSTALL_GHIDRA" = "1" ] && { (has ghidra || has ghidraRun)                  && log_done "ghidra"                     || log_error "ghidra not installed"; }
+[ "$INSTALL_ILSPY" = "1" ]  && { (has ilspycmd || has monodis)                  && log_done "ilspy"                      || log_error "ilspy not installed"; }
+[ "$INSTALL_VOLATILITY" = "1" ] && { (has vol || "${PIRE_PYTHON:-python3}" -c "import volatility3" 2>/dev/null) && log_done "volatility" || log_error "volatility not installed"; }
 [ "$INSTALL_PYTHON_TOOLS" = "1" ] && {
-	"${PIRE_PYTHON:-python3}" -c "import capstone" 2>/dev/null && log_done "capstone" || log_warn "capstone not installed"
-	"${PIRE_PYTHON:-python3}" -c "import lief" 2>/dev/null     && log_done "lief"     || log_warn "lief not installed"
+	"${PIRE_PYTHON:-python3}" -c "import capstone" 2>/dev/null && log_done "capstone" || log_error "capstone not installed"
+	"${PIRE_PYTHON:-python3}" -c "import lief" 2>/dev/null     && log_done "lief"     || log_error "lief not installed"
 }
 
 # ── Install npm dependencies & link CLI ────────────────────────
