@@ -1102,15 +1102,30 @@ if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/package.json" ]; then
 		log_warn "TUI framework build incomplete — pire may not start"
 	fi
 
-	# Link pire CLI
+	# Link pire CLI — use local tsx from node_modules, not npx (which prompts to download)
 	if [ -f "$SCRIPT_DIR/packages/re-agent/src/cli.ts" ]; then
 		log_step "Linking pire CLI..."
 		PIRE_WRAPPER="/usr/local/bin/pire"
+		# Prefer local tsx from node_modules, fall back to global tsx, then npx
+		if [ -x "$SCRIPT_DIR/node_modules/.bin/tsx" ]; then
+			TSX_BIN="$SCRIPT_DIR/node_modules/.bin/tsx"
+		elif has tsx 2>/dev/null; then
+			TSX_BIN="tsx"
+		else
+			# Install tsx globally as last resort
+			log_step "Installing tsx..."
+			if [ -w /usr/local/bin ]; then
+				npm install -g tsx </dev/null >/dev/null 2>&1
+			else
+				sudo npm install -g tsx </dev/null >/dev/null 2>&1
+			fi
+			TSX_BIN="tsx"
+		fi
 		if [ -w /usr/local/bin ]; then
-			printf '#!/bin/sh\nexec npx tsx "%s/packages/re-agent/src/cli.ts" "$@"\n' "$SCRIPT_DIR" > "$PIRE_WRAPPER"
+			printf '#!/bin/sh\nexec %s "%s/packages/re-agent/src/cli.ts" "$@"\n' "$TSX_BIN" "$SCRIPT_DIR" > "$PIRE_WRAPPER"
 			chmod +x "$PIRE_WRAPPER"
 		else
-			sudo sh -c "printf '#!/bin/sh\nexec npx tsx \"$SCRIPT_DIR/packages/re-agent/src/cli.ts\" \"\$@\"\n' > '$PIRE_WRAPPER'" 2>/dev/null
+			sudo sh -c "printf '#!/bin/sh\\nexec $TSX_BIN \\\"$SCRIPT_DIR/packages/re-agent/src/cli.ts\\\" \\\"\\$@\\\"\\n' > '$PIRE_WRAPPER'" 2>/dev/null
 			sudo chmod +x "$PIRE_WRAPPER" 2>/dev/null
 		fi
 		if has pire 2>/dev/null; then
@@ -1118,18 +1133,6 @@ if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/package.json" ]; then
 		else
 			log_warn "Could not create /usr/local/bin/pire"
 		fi
-		if ! has tsx 2>/dev/null; then
-			log_step "Installing tsx..."
-			if [ -w /usr/local/bin ]; then
-				npm install -g tsx </dev/null >/dev/null 2>&1
-			else
-				sudo npm install -g tsx </dev/null >/dev/null 2>&1
-			fi
-			if ! has tsx 2>/dev/null; then
-				log_warn "Install tsx manually: npm install -g tsx"
-			fi
-		fi
-		log_done "pire command available"
 	fi
 
 	# Run tests
