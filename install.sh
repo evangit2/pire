@@ -339,10 +339,14 @@ pkg_install() {
 		zypper) sudo zypper install -y -q "$@" </dev/null >/dev/null 2>&1 ;;
 		apk)    sudo apk add -q "$@" </dev/null >/dev/null 2>&1 ;;
 		brew)
-			# Homebrew can hang on auto-update, slow downloads, or Xcode CLT prompts.
-			# Wrap in run_with_timeout + HOMEBREW_NO_AUTO_UPDATE to prevent indefinite hangs.
-			HOMEBREW_NO_AUTO_UPDATE=1 run_with_timeout brew install "$@" </dev/null >/dev/null 2>&1 \
-				|| HOMEBREW_NO_AUTO_UPDATE=1 run_with_timeout brew install --cask "$@" </dev/null >/dev/null 2>&1
+			# HOMEBREW_NO_AUTO_UPDATE skips the slow auto-update step.
+			# sudo credentials are cached in the foreground before parallel phase.
+			# Don't redirect stderr to /dev/null — cask sudo prompts need to be visible
+			# if the cache expired.
+			HOMEBREW_NO_AUTO_UPDATE=1 run_with_timeout brew install "$@" </dev/null 2>&1 \
+				| grep -vE '^==> |^Warning: ' | head -5 \
+				|| HOMEBREW_NO_AUTO_UPDATE=1 run_with_timeout brew install --cask "$@" </dev/null 2>&1 \
+				| grep -vE '^==> |^Warning: ' | head -5
 			;;
 		*)      log_warn "Unknown package manager for: $*" ;;
 	esac
@@ -632,6 +636,7 @@ fi
 NEEDS_SUDO=0
 case "$OS" in
 	debian|fedora|arch|suse|alpine|wsl) NEEDS_SUDO=1 ;;
+	macos) NEEDS_SUDO=1 ;;  # cask installs (wine, etc.) need sudo
 esac
 if [ "$NEEDS_SUDO" = "1" ]; then
 	log_step "Caching sudo credentials for parallel installs..."
