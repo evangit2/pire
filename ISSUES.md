@@ -2,7 +2,7 @@
 
 ## Summary
 
-Audited the pire codebase across two passes. First pass found and fixed 11 issues. Second pass (advanced multi-turn RE tasks) found and fixed 5 more issues across 5 files. All 501 tests pass plus 46 advanced integration tests.
+Audited the pire codebase across three passes. First pass found and fixed 11 issues. Second pass (advanced multi-turn RE tasks) found and fixed 5 more issues across 5 files. Third pass (deep tool + agent loop testing) found and fixed 3 critical issues. All 531 tests pass plus 38 integration tests.
 
 ---
 
@@ -109,3 +109,44 @@ Ran complex multi-turn RE workflows (multi-stage analysis, error recovery, tool 
 - `packages/re-agent/src/pire-reimpl.ts` — getContextCharLimit, MAX_TOOL_OUTPUT cap, removed loadSettings
 - `packages/re-agent/src/index.ts` — hash tool algorithm labels
 - `packages/re-agent/test/test-suite.cjs` — version assertions updated
+
+---
+
+## Pass 3: Deep Tool + Agent Loop Testing (v0.89.9)
+
+Built a test binary with license validation + XOR-encoded flag, ran 38 integration tests covering patch/diff, search (text+hex), read_file/write_file, shell, hash, entropy, YARA, capstone, nm, size, disasm_func, and multi-turn agent conversations.
+
+### Issue #17: Agent loop duplicated user messages and dropped last tool result (CRITICAL)
+
+**File:** `packages/re-agent/src/mcp-server.ts`
+
+**Problem:** The agent loop used `session.messages.slice(0, -1)` to "exclude the just-added user message" then re-appended `{ role: "user", content: userMessage }` to the `messages` array. After turn 1, `session.messages` ends with tool results (not the user message), so `slice(0, -1)` dropped the last tool result from the previous turn. The user message was also duplicated in the array.
+
+**Impact:** Model couldn't see the result of the last tool call from the previous turn. User message appeared twice. Wasted tokens on duplicate context.
+
+**Fix:** Use `session.messages` directly (already contains the user message from the one-time push). No slicing, no re-appending.
+
+### Issue #18: finalContent accumulated across all turns (MODERATE)
+
+**File:** `packages/re-agent/src/mcp-server.ts`
+
+**Problem:** `finalContent` was initialized once before the loop and accumulated via `+=` across all turns. The returned content included intermediate reasoning from tool-call turns ("Let me check...") concatenated with the final answer.
+
+**Impact:** Returned content was noisy and unnecessarily long.
+
+**Fix:** Reset `finalContent = ""` at the start of each turn. Only the last turn's content is returned.
+
+### Issue #19: pire-pi-tui hardcoded 120000 context limit (TOKEN WASTE)
+
+**File:** `packages/re-agent/src/pire-pi-tui.ts`
+
+**Problem:** `CONTEXT_CHAR_LIMIT` fell back to hardcoded `120000` instead of reading from model config. With GLM-5.2's 131072 context, this was close but wrong for other models. Also had `MAX_OUTPUT = 100000` (100K chars per tool output).
+
+**Fix:** Added `getContextCharLimit()` function (matching tui.ts and mcp-server.ts). Capped `MAX_OUTPUT` at 20K (5% of context budget).
+
+### Files Modified (Pass 3)
+
+- `packages/re-agent/src/mcp-server.ts` — agent loop fix (no duplicate user msg, no dropped tool result), finalContent reset per turn
+- `packages/re-agent/src/pire-pi-tui.ts` — getContextCharLimit, MAX_OUTPUT cap, 60% trigger
+- `packages/re-agent/test/test-pass3.cjs` — 30 unit tests for agent loop + context fixes
+- `/tmp/pire-pass3-test.py` — 38 integration tests (not committed, external test script)

@@ -262,15 +262,17 @@ IMPORTANT: When you need to write a file, use the write_file tool with path and 
 		turnCount = turn + 1;
 		options.onTurn?.(turn + 1, MAX_TURNS);
 
-		// Build messages from trimmed session history (excludes the just-added user message,
-		// which we append separately)
-		const historyBeforeUser = session.messages.slice(0, -1);
-		const trimmedHistory = trimContextMessages(historyBeforeUser);
+		// Reset finalContent each turn — we only want the last turn's response
+		finalContent = "";
+
+		// Build messages from trimmed session history.
+		// session.messages already contains the user message (added above) and all
+		// prior assistant/tool messages. Just trim and send.
+		const trimmedHistory = trimContextMessages(session.messages);
 
 		const messages: ChatMessage[] = [
 			{ role: "system", content: systemPrompt },
 			...trimmedHistory,
-			{ role: "user", content: userMessage },
 		];
 
 		// seenCalls is per-turn, not per-session — allows re-running same tool in different turns
