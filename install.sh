@@ -1172,8 +1172,11 @@ if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/package.json" ]; then
 			printf '#!/bin/sh\nexec %s "%s/packages/re-agent/src/cli.ts" "$@"\n' "$TSX_BIN" "$SCRIPT_DIR" > "$PIRE_WRAPPER"
 			chmod +x "$PIRE_WRAPPER"
 		else
-			sudo sh -c "printf '#!/bin/sh\\nexec $TSX_BIN \\\"$SCRIPT_DIR/packages/re-agent/src/cli.ts\\\" \\\"\\$@\\\"\\n' > '$PIRE_WRAPPER'" 2>/dev/null
-			sudo chmod +x "$PIRE_WRAPPER" 2>/dev/null
+			# Write to temp file then sudo mv — avoids fragile quote escaping in sudo sh -c
+			_TMP_WRAPPER=$(mktemp)
+			printf '#!/bin/sh\nexec %s "%s/packages/re-agent/src/cli.ts" "$@"\n' "$TSX_BIN" "$SCRIPT_DIR" > "$_TMP_WRAPPER"
+			sudo install -m 755 "$_TMP_WRAPPER" "$PIRE_WRAPPER" 2>/dev/null
+			rm -f "$_TMP_WRAPPER"
 		fi
 		if has pire 2>/dev/null; then
 			log_done "pire command available"
