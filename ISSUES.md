@@ -341,3 +341,27 @@ Ran 24 integration tests covering the 12 previously untested tools: extract, fet
 - `packages/re-agent/src/index.ts` — 3 new sandbox patterns
 - `packages/re-agent/src/mcp-server.ts` — body limit, batch support, error handler
 - `packages/re-agent/src/pire-reimpl.ts` — parallel tool execution
+
+---
+
+## Pass 9: File tool path protection (v0.89.15)
+
+### Bug #36: write_file had no path validation
+
+**File:** `packages/re-agent/src/index.ts`
+
+**Problem:** `write_file` tool accepted any path — an LLM could write to `/etc/passwd`, `/usr/bin/...`, or `~/.ssh/authorized_keys`.
+
+**Fix:** Added path validation:
+- Blocks writes to `/etc`, `/usr`, `/bin`, `/sbin`, `/boot`, `/proc`, `/sys`, `/dev`
+- Blocks writes to `~/.ssh/authorized_keys` and `authorized_keys2`
+
+### Bug #37: read_file could read sensitive files
+
+**File:** `packages/re-agent/src/index.ts`
+
+**Problem:** `read_file` tool could read `/etc/shadow`, SSH private keys, and other credential files.
+
+**Fix:** Added read protection:
+- Blocks reading `/etc/shadow`, `/etc/gshadow`
+- Blocks reading files matching `/.ssh/id_`, `/.ssh/authorized_keys`, `/.ssh/config`

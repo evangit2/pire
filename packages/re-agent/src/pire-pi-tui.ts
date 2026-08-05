@@ -39,7 +39,7 @@ import { probeTools, RE_SYSTEM_PROMPT, RE_TOOLS, setGhidraTarget, validateToolPa
 import { type ChatMessage, callLLM, type LLMConfig, loadLLMConfig, type ToolCall, toolToFunction } from "./llm.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const VERSION = "0.89.14";
+const VERSION = "0.89.15";
 
 // Use chalk for proper Pi-style colors
 import chalk from "chalk";

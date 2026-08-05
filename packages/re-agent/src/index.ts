@@ -11,7 +11,7 @@
 
 import { execFileSync, execSync, spawn } from "node:child_process";
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, writeFileSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Type } from "typebox";
 
@@ -1793,6 +1793,18 @@ const writeFileTool: AgentTool<{ path: string; content: string }> = {
 	}),
 	async execute(_id, params) {
 		try {
+			// Prevent writing to sensitive system paths
+			const resolved = resolve(params.path);
+			const blockedPaths = ["/etc", "/usr", "/bin", "/sbin", "/boot", "/proc", "/sys", "/dev"];
+			for (const blocked of blockedPaths) {
+				if (resolved.startsWith(blocked + "/") || resolved === blocked) {
+					return textResult(`Write blocked: ${resolved} is a protected system path`);
+				}
+			}
+			// Block writes to SSH authorized_keys
+			if (resolved.endsWith("/.ssh/authorized_keys") || resolved.endsWith("/.ssh/authorized_keys2")) {
+				return textResult(`Write blocked: cannot modify SSH authorized_keys`);
+			}
 			mkdirSync(dirname(params.path), { recursive: true });
 			writeFileSync(params.path, params.content);
 			return textResult(`Wrote ${params.content.length} bytes to ${params.path}`);
@@ -1813,6 +1825,16 @@ const readFileTool: AgentTool<{ path: string; offset?: number; limit?: number }>
 		limit: Type.Optional(Type.Number({ default: 2000 })),
 	}),
 	async execute(_id, params) {
+		// Block reading sensitive files
+		const resolved = resolve(params.path);
+		const sensitiveFiles = ["/etc/shadow", "/etc/gshadow"];
+		const sensitivePatterns = ["/.ssh/id_", "/.ssh/authorized_keys", "/.ssh/config"];
+		for (const sf of sensitiveFiles) {
+			if (resolved === sf) return textResult(`Read blocked: ${resolved} is a sensitive system file`);
+		}
+		for (const sp of sensitivePatterns) {
+			if (resolved.includes(sp)) return textResult(`Read blocked: ${resolved} contains SSH credentials`);
+		}
 		if (!existsSync(params.path)) {
 			return textResult(`File not found: ${params.path}`);
 		}
