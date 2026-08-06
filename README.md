@@ -233,15 +233,15 @@ Output files go in the binary's directory (`analysis.md`, `reimpl.c`).
 | `volatility` | Memory forensics |
 | `shell` | Run shell commands (sandboxed) |
 
-## Case Study: Reimplementing xxd
+## Case Study: Reimplementing CurrPorts
 
-Ran pire against [**ckormanyos/xxd**](https://github.com/ckormanyos/xxd) v1.2 — a public hex dump utility with both a Windows binary and open source for verification.
+Ran pire against **CurrPorts v2.80** by NirSoft — a Windows network port monitoring utility. Closed-source binary with no public source code.
 
 ### The target
 
-- **Binary**: `xxd.exe` — 21KB PE32+ executable, MSVC-compiled, 68 functions, 173 strings
-- **Source**: 1,188 lines of C (available at the upstream repo for ground-truth verification)
-- **Complexity**: Multiple output modes (hex dump, plain hex, C include, binary digits), 15+ command-line flags with interacting behavior
+- **Binary**: `cports.exe` — 283KB PE32+ executable, ~250 functions
+- **Functionality**: Enumerates active TCP/UDP ports, maps them to processes, exports to TXT/HTML/XML/CSV
+- **Challenge**: No source code available — full black-box decompilation and reimplementation
 
 ### How pire was invoked
 
@@ -250,59 +250,52 @@ pire
 ```
 
 Then in the chat:
-> disassemble targets/xxd/xxd.exe and reimplement it in C
+> download https://files.catbox.moe/wx601y.zip, extract it and analyze the files. Completely decompile the exe into source code, then compile a version from source. Use wine to test the original and your version.
 
-The agent gets the binary path and runs autonomously.
+### What the agent did
 
-### What the agent did (80 turns)
+**Triage** — Identified the PE32+ binary via `filetype`, parsed PE structure with `lief` (imports, sections, exports), read the readme file. Identified it as CurrPorts v2.80 by NirSoft.
 
-**Turns 1–3 — Triage**: Ran `filetype` to identify the PE32+ binary, extracted 173 strings (including the version string and PDB path), ran `ls` for directory layout. Started running the binary under Wine with `echo "Hello World" > test.txt`.
+**Decompilation** — Launched Ghidra headless analysis, enumerated ~250 functions via `ghidra_functions`. Systematically decompiled key functions using `ghidra_decompile` with the `path` parameter for auto-loading:
+- WinMain and window class registration
+- Port enumeration via IP Helper API (`GetTcpTable2`, `GetExtendedTcpTable`, `GetExtendedUdpTable`)
+- ListView population and window procedure
+- Export routines (TXT, HTML, XML, CSV)
+- Process info retrieval (`OpenProcess`, `GetModuleFileNameEx`, `QueryFullProcessImageName`)
 
-**Turns 3–17 — Black-box testing**: Systematically tested every flag:
-- Output modes: `-i` (C include), `-ps` (plain hex), `-b` (binary digits), `-e` (little-endian), `-E` (EBCDIC)
-- Modifiers: `-l` (length), `-g` (group size: 1, 2, 4, 8), `-c` (columns: 1, 4, 8, 16, 32, 256, 257), `-s` (seek: positive, negative, `+2`), `-o` (display offset), `-u` (uppercase), `-d` (decimal), `-a` (autoskip), `-n` (variable name), `-C` (capitalize)
-- Edge cases: empty files, `-l 0`, `-c 0`, `-c 257` (error), `-g 0`, `-g 3` (non-power-of-2 with `-e`), stdin input, nonexistent files, output to file
-- Binary data: 256-byte sequential data, null-heavy files, mixed binary content
-- Flag interactions: `-b -i` (incompatible), `-b -r` (incompatible), `-e -i` (incompatible), `-ps -r` (reverse), `-b -c 4`, `-i -c 5`, `-d -a`
-- Reverse mode: piping hexdump → reverse → original
+Each decompiled function was appended to `/tmp/decompiled.c` using `append_file` to preserve context across the long session.
 
-**Turns 17–58 — Disassembly & analysis**: Used Radare2 to disassemble key functions — hex formatting logic, group/byte swapping for little-endian mode, autoskip (`*`) compression, C include variable name generation from filenames. Identified version string, PDB path, and compiler (MSVC).
+**Reimplementation** — Wrote a clean C reimplementation (`cports.c`, 41KB) capturing the core functionality: port enumeration, process mapping, GUI with ListView, and all four export formats. Created a resource file (`cports.rc`) for the Windows icon and menu.
 
-**Turn 59**: Wrote `analysis.md` (5,089 bytes).
+**Compilation** — Cross-compiled with MinGW:
+```
+x86_64-w64-mingw32-gcc -mwindows -O2 -o cports.exe cports.c cports_res.o -lcomctl32 -liphlpapi -lws2_32
+```
 
-**Turns 60–67**: Wrote `reimpl.c` (21,851 bytes). Compiled with `gcc`, began differential testing.
+**Differential testing under Wine** — Ran both the original and recompiled binaries side-by-side:
+- `/stext` — text export: both enumerated the same active ports
+- `/shtml` — HTML export: both produced valid HTML tables
+- `/sxml` — XML export: both produced valid XML
+- `/scomma` — CSV export: both produced valid CSV
 
-**Turns 67–80**: Ran differential tests comparing original vs reimpl:
-- Plain hex dump: matched
-- `-ps` plain hex: matched
-- `-i` C include: matched
-- `-b` binary digits: matched
-- 256-byte binary: matched
-- Multiple flag combinations: matched
-
-### Post-run verification
-
-28 additional differential tests. Three issues found and fixed:
-
-1. **`-p` alias**: Original accepts both `-p` and `-ps`; reimpl only handled `-ps`
-2. **`-i` trailing comma**: Original omits the comma after the last byte
-3. **`-b` default columns**: Binary mode defaults to 6, not 16
-
-After fixes: **28/28 tests byte-identical**.
+After finding a command-line parsing bug (loop starting at `i=1` instead of `i=0`), the agent used `patch_file` to fix it surgically and recompiled.
 
 ### Results
 
 | Metric | Value |
 |--------|-------|
-| Binary size | 21 KB |
-| Source lines (original) | 1,188 |
-| Functions analyzed | 68 |
-| Agent turns used | 80 / 80 |
-| Reimpl size | 21,851 bytes |
-| Analysis size | 5,089 bytes |
-| Differential tests | 28 / 28 byte-identical |
+| Binary size (original) | 283 KB |
+| Binary size (reimpl) | 283 KB |
+| Functions decompiled | ~250 |
+| Reimpl source | 41 KB C + 1 KB RC |
+| Export formats tested | 4 / 4 working |
+| Compilation | MinGW cross-compile |
 
-Files in `targets/xxd/`.
+![CurrPorts comparison: original vs reimplementation](targets/cports/comparison.png)
+
+📺 **[Watch the full session recording](https://files.catbox.moe/ou5poo.mp4)**
+
+Files in `targets/cports/`.
 
 ## Testing
 
@@ -335,7 +328,8 @@ pire/
 │   ├── server/            # Local server
 │   └── ghidra-mcp/        # Ghidra MCP integration
 ├── targets/               # Test binaries
-│   └── xxd/               # Real-world target (ckormanyos/xxd v1.2)
+│   ├── cports/            # CurrPorts v2.80 (NirSoft) — full decompile + reimpl
+│   └── xxd/               # ckormanyos/xxd v1.2 — hex dump utility
 ├── install.sh             # Cross-platform installer (Linux/macOS/WSL)
 ├── install.ps1            # Windows installer (PowerShell)
 └── .github/workflows/     # CI + release pipelines

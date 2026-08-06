@@ -10,7 +10,17 @@
  */
 
 import { execFileSync, execSync, spawn } from "node:child_process";
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, unlinkSync, rmSync, writeFileSync } from "node:fs";
+import {
+	closeSync,
+	existsSync,
+	mkdirSync,
+	openSync,
+	readFileSync,
+	readSync,
+	rmSync,
+	unlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Type } from "typebox";
@@ -207,8 +217,8 @@ class GhidraBridge {
 		if (!mvnPath || !javacPath) {
 			console.error(
 				`[ghidra] Cannot auto-build MCP JAR: ${!mvnPath ? "Maven" : ""}${!mvnPath && !javacPath ? " and " : ""}${!javacPath ? "JDK" : ""} not found.\n` +
-				`  Install with: sudo apt install maven default-jdk  (or: brew install maven openjdk)\n` +
-				`  Then re-run pire — the JAR will build automatically on first Ghidra tool use.`,
+					`  Install with: sudo apt install maven default-jdk  (or: brew install maven openjdk)\n` +
+					`  Then re-run pire — the JAR will build automatically on first Ghidra tool use.`,
 			);
 			return;
 		}
@@ -344,7 +354,13 @@ class GhidraBridge {
 			// Verify the project was actually created
 			const repExists = existsSync(repPath);
 			if (!repExists) {
-				const logContent = (() => { try { return readFileSync(analyzeLog, "utf-8").slice(-500); } catch { return "(no log)"; } })();
+				const logContent = (() => {
+					try {
+						return readFileSync(analyzeLog, "utf-8").slice(-500);
+					} catch {
+						return "(no log)";
+					}
+				})();
 				throw new Error(`Ghidra analyzeHeadless failed to create project. Log: ${logContent}`);
 			}
 		}
@@ -417,12 +433,16 @@ class GhidraBridge {
 
 		// Case 2: Server alive but program NOT loaded → kill it so we can restart clean
 		if (this.isAlive() && this.currentTarget && !this.isProgramLoaded()) {
-			try { run("fuser -k 8089/tcp 2>/dev/null; sleep 2", { timeout: 15000 }); } catch {}
+			try {
+				run("fuser -k 8089/tcp 2>/dev/null; sleep 2", { timeout: 15000 });
+			} catch {}
 		}
 
 		if (this.restartCount >= this.maxRestarts) {
 			// Last resort: kill any stale server and reset counter for one more try
-			try { run("fuser -k 8089/tcp 2>/dev/null; sleep 2", { timeout: 15000 }); } catch {}
+			try {
+				run("fuser -k 8089/tcp 2>/dev/null; sleep 2", { timeout: 15000 });
+			} catch {}
 			this.restartCount = 0;
 		}
 		this.restartCount++;
@@ -1953,7 +1973,8 @@ const readFileTool: AgentTool<{ path: string; offset?: number; limit?: number }>
 
 const appendFileTool: AgentTool<{ path: string; content: string }> = {
 	name: "append_file",
-	description: "Append content to a file (creates if not exists). Use this to incrementally build decompiled source files — append each function as you decompile it, instead of writing one massive file.",
+	description:
+		"Append content to a file (creates if not exists). Use this to incrementally build decompiled source files — append each function as you decompile it, instead of writing one massive file.",
 	parameters: Type.Object({
 		path: Type.String(),
 		content: Type.String(),
@@ -1967,7 +1988,9 @@ const appendFileTool: AgentTool<{ path: string; content: string }> = {
 			mkdirSync(dirname(params.path), { recursive: true });
 			const existing = existsSync(params.path) ? readFileSync(params.path, "utf-8") : "";
 			writeFileSync(params.path, existing + params.content);
-			return textResult(`Appended ${params.content.length} bytes to ${params.path} (total: ${existing.length + params.content.length} bytes)`);
+			return textResult(
+				`Appended ${params.content.length} bytes to ${params.path} (total: ${existing.length + params.content.length} bytes)`,
+			);
 		} catch (e: any) {
 			return textResult(`Append failed: ${e.message}`);
 		}
@@ -1978,7 +2001,8 @@ const appendFileTool: AgentTool<{ path: string; content: string }> = {
 
 const patchFileTool: AgentTool<{ path: string; old: string; new: string }> = {
 	name: "patch_file",
-	description: "Find-and-replace in a file. Finds 'old' string and replaces with 'new'. Use this for surgical edits to existing files instead of rewriting the whole file. The 'old' string must be unique in the file. Pass replace_all=true to replace all occurrences.",
+	description:
+		"Find-and-replace in a file. Finds 'old' string and replaces with 'new'. Use this for surgical edits to existing files instead of rewriting the whole file. The 'old' string must be unique in the file. Pass replace_all=true to replace all occurrences.",
 	parameters: Type.Object({
 		path: Type.String(),
 		old: Type.String(),
@@ -1996,14 +2020,20 @@ const patchFileTool: AgentTool<{ path: string; old: string; new: string }> = {
 			const content = readFileSync(params.path, "utf-8");
 			const count = content.split(params.old).length - 1;
 			if (count === 0) {
-				return textResult(`Patch failed: string not found in ${params.path}. The 'old' string must exist in the file.`);
+				return textResult(
+					`Patch failed: string not found in ${params.path}. The 'old' string must exist in the file.`,
+				);
 			}
 			if (count > 1) {
-				return textResult(`Patch failed: found ${count} occurrences of the 'old' string. Make it more unique (include surrounding context lines).`);
+				return textResult(
+					`Patch failed: found ${count} occurrences of the 'old' string. Make it more unique (include surrounding context lines).`,
+				);
 			}
 			const patched = content.replace(params.old, params.new);
 			writeFileSync(params.path, patched);
-			return textResult(`Patched ${params.path}: replaced ${params.old.length} chars with ${params.new.length} chars`);
+			return textResult(
+				`Patched ${params.path}: replaced ${params.old.length} chars with ${params.new.length} chars`,
+			);
 		} catch (e: any) {
 			return textResult(`Patch failed: ${e.message}`);
 		}

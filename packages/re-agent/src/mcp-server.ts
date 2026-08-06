@@ -118,7 +118,10 @@ function trimContextMessages(messages: ChatMessage[]): ChatMessage[] {
 		const msg = result[i];
 		if (msg.role === "tool" && typeof msg.content === "string" && msg.content.length > toolHead + toolTail) {
 			const originalLen = msg.content.length;
-			msg.content = msg.content.slice(0, toolHead) + `\n... (truncated ${originalLen - toolHead - toolTail} chars) ...\n` + msg.content.slice(-toolTail);
+			msg.content =
+				msg.content.slice(0, toolHead) +
+				`\n... (truncated ${originalLen - toolHead - toolTail} chars) ...\n` +
+				msg.content.slice(-toolTail);
 			totalChars -= originalLen - msg.content.length;
 		}
 	}
@@ -246,9 +249,7 @@ Pick the right tools for whatever the user is asking for. Don't follow a fixed w
 IMPORTANT: When you need to write a file, use the write_file tool with path and content parameters. Do not use shell heredocs or echo commands. Always write your analysis to a file before reporting completion.`;
 
 	// Only send schemas for tools that are actually available — saves ~50% tokens
-	const toolSchemas = RE_TOOLS
-		.filter((t) => session.tools[t.name] !== false)
-		.map(toolToFunction);
+	const toolSchemas = RE_TOOLS.filter((t) => session.tools[t.name] !== false).map(toolToFunction);
 	const MAX_TURNS = options.maxTurns ?? 70;
 	const toolCallLog: { name: string; args: Record<string, unknown>; result: string }[] = [];
 
@@ -270,10 +271,7 @@ IMPORTANT: When you need to write a file, use the write_file tool with path and 
 		// prior assistant/tool messages. Just trim and send.
 		const trimmedHistory = trimContextMessages(session.messages);
 
-		const messages: ChatMessage[] = [
-			{ role: "system", content: systemPrompt },
-			...trimmedHistory,
-		];
+		const messages: ChatMessage[] = [{ role: "system", content: systemPrompt }, ...trimmedHistory];
 
 		// seenCalls is per-turn, not per-session — allows re-running same tool in different turns
 		const seenCalls = new Set<string>();
@@ -343,15 +341,21 @@ IMPORTANT: When you need to write a file, use the write_file tool with path and 
 
 				try {
 					// Per-tool timeout: 120s default, 300s for known slow tools
-					const toolTimeout = ["angr", "ghidra_decompile", "decompile", "volatility"].includes(tc.function.name) ? 300000 : 120000;
+					const toolTimeout = ["angr", "ghidra_decompile", "decompile", "volatility"].includes(tc.function.name)
+						? 300000
+						: 120000;
 					const result = await Promise.race([
 						tool.execute("pire", params),
 						new Promise<never>((_, reject) =>
-							setTimeout(() => reject(new Error(`Tool "${tc.function.name}" timed out after ${toolTimeout / 1000}s`)), toolTimeout),
+							setTimeout(
+								() => reject(new Error(`Tool "${tc.function.name}" timed out after ${toolTimeout / 1000}s`)),
+								toolTimeout,
+							),
 						),
 					]);
 					const text = result.content.map((c: { text: string }) => c.text).join("\n");
-					const truncated = text.length > MAX_TOOL_OUTPUT ? text.slice(0, MAX_TOOL_OUTPUT) + "\n... (truncated)" : text;
+					const truncated =
+						text.length > MAX_TOOL_OUTPUT ? text.slice(0, MAX_TOOL_OUTPUT) + "\n... (truncated)" : text;
 					messages.push({ role: "tool", tool_call_id: tc.id, content: truncated });
 					session.messages.push({ role: "tool", tool_call_id: tc.id, content: truncated });
 					options.onToolResult?.(tc.function.name, text);
@@ -371,16 +375,16 @@ IMPORTANT: When you need to write a file, use the write_file tool with path and 
 				await execToolCall(tc);
 			}
 			continue;
-			}
+		}
 
-			if (resp.content) {
+		if (resp.content) {
 			session.messages.push({ role: "assistant", content: resp.content });
-			}
-			break;
-			}
+		}
+		break;
+	}
 
-			return { content: finalContent, toolCalls: toolCallLog, turns: turnCount };
-			}
+	return { content: finalContent, toolCalls: toolCallLog, turns: turnCount };
+}
 
 // ─── JSON-RPC ──────────────────────────────────────────────────
 

@@ -251,9 +251,18 @@ export async function callLLM(
 									let escape = false;
 									for (let i = 0; i < fixed.length; i++) {
 										const ch = fixed[i];
-										if (escape) { escape = false; continue; }
-										if (ch === "\\") { escape = true; continue; }
-										if (ch === '"') { inString = !inString; continue; }
+										if (escape) {
+											escape = false;
+											continue;
+										}
+										if (ch === "\\") {
+											escape = true;
+											continue;
+										}
+										if (ch === '"') {
+											inString = !inString;
+											continue;
+										}
 										if (!inString) {
 											if (ch === "{") braces++;
 											else if (ch === "}") braces--;
@@ -262,7 +271,10 @@ export async function callLLM(
 									// Close any open string
 									if (inString) fixed += '"';
 									// Close open braces
-									while (braces > 0) { fixed += "}"; braces--; }
+									while (braces > 0) {
+										fixed += "}";
+										braces--;
+									}
 								}
 								try {
 									JSON.parse(fixed);

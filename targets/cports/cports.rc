@@ -1,0 +1,48 @@
+#include <windows.h>
+
+/* Icon resource */
+// 0x65 ICON "cports.ico"
+
+/* Menu resource */
+0x67 MENU
+BEGIN
+    POPUP "&File"
+    BEGIN
+        MENUITEM "&Refresh",                0x9C41
+        MENUITEM "&Save Selected Items...", 0x9C42
+        MENUITEM SEPARATOR
+        MENUITEM "E&xit",                   0x9C44
+    END
+    POPUP "&View"
+    BEGIN
+        MENUITEM "Mark &Suspicious Items",  0x9C46
+        MENUITEM "Show Only &TCP",          0x9C48
+        MENUITEM "Show Only &Incoming TCP", 0x9C49
+        MENUITEM SEPARATOR
+        MENUITEM "&Auto Refresh",           0x9C4E
+    END
+    POPUP "&Help"
+    BEGIN
+        MENUITEM "&About CurrPorts",        0xC2EE
+    END
+END
+
+/* Accelerator table */
+0x67 ACCELERATORS
+BEGIN
+    "R", 0x9C41, VIRTKEY, CONTROL
+    "S", 0x9C42, VIRTKEY, CONTROL
+    VK_F5, 0x9C41, VIRTKEY
+END
+
+/* String table */
+STRINGTABLE
+BEGIN
+    0x04    "%d items"
+    0x05    ", %d processes"
+    0x07    "Comma-Separated Values File (*.csv)"
+    0x0D    ", %d processes"
+    0x10    "Select All"
+    0x13    "Suspicious Item Detected"
+    0x16    "Close"
+END

@@ -348,9 +348,7 @@ Run tools on paths/URLs yourself. Use fetch for URLs. Use write_file for files.`
 
 		this.messages.push({ role: "user", content: userMessage });
 
-		const toolSchemas = RE_TOOLS
-			.filter((t) => this.tools[t.name] !== false)
-			.map(toolToFunction);
+		const toolSchemas = RE_TOOLS.filter((t) => this.tools[t.name] !== false).map(toolToFunction);
 		const MAX_TURNS = parseInt(process.env.PIRE_MAX_TURNS || "70", 10) || 70;
 
 		for (let turn = 0; turn < MAX_TURNS; turn++) {
@@ -438,11 +436,16 @@ Run tools on paths/URLs yourself. Use fetch for URLs. Use write_file for files.`
 
 					this.render();
 					try {
-						const toolTimeout = ["angr", "ghidra_decompile", "decompile", "volatility"].includes(tc.function.name) ? 300000 : 120000;
+						const toolTimeout = ["angr", "ghidra_decompile", "decompile", "volatility"].includes(tc.function.name)
+							? 300000
+							: 120000;
 						const result = await Promise.race([
 							tool.execute("pire", params),
 							new Promise<never>((_, reject) =>
-								setTimeout(() => reject(new Error(`Tool "${tc.function.name}" timed out after ${toolTimeout / 1000}s`)), toolTimeout),
+								setTimeout(
+									() => reject(new Error(`Tool "${tc.function.name}" timed out after ${toolTimeout / 1000}s`)),
+									toolTimeout,
+								),
 							),
 						]);
 						const text = result.content.map((c: { text: string }) => c.text).join("\n");
@@ -869,9 +872,7 @@ Run tools on paths/URLs yourself. Use fetch for URLs. Use write_file for files.`
 
 		this.messages.push({ role: "user", content: userMessage });
 
-		const toolSchemas = RE_TOOLS
-			.filter((t) => this.tools[t.name] !== false)
-			.map(toolToFunction);
+		const toolSchemas = RE_TOOLS.filter((t) => this.tools[t.name] !== false).map(toolToFunction);
 		const MAX_TURNS = parseInt(process.env.PIRE_MAX_TURNS || "70", 10) || 70;
 
 		for (let turn = 0; turn < MAX_TURNS; turn++) {
@@ -955,11 +956,16 @@ Run tools on paths/URLs yourself. Use fetch for URLs. Use write_file for files.`
 					seenCalls.add(callSig);
 
 					try {
-						const toolTimeout = ["angr", "ghidra_decompile", "decompile", "volatility"].includes(tc.function.name) ? 300000 : 120000;
+						const toolTimeout = ["angr", "ghidra_decompile", "decompile", "volatility"].includes(tc.function.name)
+							? 300000
+							: 120000;
 						const result = await Promise.race([
 							tool.execute("pire", params),
 							new Promise<never>((_, reject) =>
-								setTimeout(() => reject(new Error(`Tool "${tc.function.name}" timed out after ${toolTimeout / 1000}s`)), toolTimeout),
+								setTimeout(
+									() => reject(new Error(`Tool "${tc.function.name}" timed out after ${toolTimeout / 1000}s`)),
+									toolTimeout,
+								),
 							),
 						]);
 						const text = result.content.map((c: { text: string }) => c.text).join("\n");
