@@ -299,9 +299,9 @@ const IS_MAC = process.platform === "darwin";
 try {
 	if (IS_MAC) {
 		// macOS produces Mach-O binaries, not ELF
-		execSync('echo \'int main(){return 42;}\' | cc -x c -o /tmp/pire_test_binary -', { timeout: 10000 });
+		execSync('printf \'const char* s = "hello pire test string";\\nint main(){return 42;}\\n\' | cc -x c -o /tmp/pire_test_binary -', { timeout: 10000 });
 	} else {
-		execSync('echo \'int main(){return 42;}\' | gcc -x c -o /tmp/pire_test_binary -', { timeout: 10000 });
+		execSync('printf \'const char* s = "hello pire test string";\\nint main(){return 42;}\\n\' | gcc -x c -o /tmp/pire_test_binary -', { timeout: 10000 });
 	}
 	ok(fs.existsSync(testBin), "test binary compiled");
 
