@@ -312,10 +312,10 @@ fi
 # ── Package Manager Abstraction ───────────────────────────────
 pkg_install() {
 	# Serialize package manager calls — apt/dnf/pacman all use lock files
-	# and will fail if invoked in parallel. Brew doesn't need this.
+	# and will fail if invoked in parallel. Brew also needs this — parallel
+	# brew installs conflict on /opt/homebrew/Cellar locks.
 	PKG_LOCKFILE="/tmp/pire-pkg-install.lock"
 	PKG_LOCKHELD=0
-	if [ "$PKG_MGR" != "brew" ]; then
 	if command -v flock >$DN 2>&1; then
 		exec 9>"$PKG_LOCKFILE"
 		if flock -w 300 9; then
@@ -326,7 +326,7 @@ pkg_install() {
 			return 1
 		fi
 	else
-		# No flock (macOS non-brew) — retry loop as fallback
+		# No flock (macOS without coreutils) — mkdir lock as fallback
 		PKG_TRIES=0
 		while [ $PKG_TRIES -lt 60 ]; do
 			if mkdir "$PKG_LOCKFILE" 2>$DN; then
@@ -340,7 +340,6 @@ pkg_install() {
 			log_warn "Could not acquire package lock for: $*"
 			return 1
 		fi
-	fi
 	fi
 	case "$PKG_MGR" in
 		apt)
@@ -776,8 +775,8 @@ install_gdb() {
 	case "$OS" in
 		windows) pkg_install mingw-w64-x86_64-gdb ;;
 		macos)
-			# gdb is a formula on macOS, not a cask
-			brew install gdb </dev/null >$DN 2>&1 || true
+			# gdb is a formula on macOS, not a cask — use pkg_install for locking
+			pkg_install gdb
 			;;
 		*)       pkg_install gdb ;;
 	esac
@@ -972,7 +971,7 @@ install_yara() {
 	echo "$ST_RUNNING" > "$TMPDIR_PIRE/yara.status"
 	case "$OS" in
 		debian|fedora|arch|suse) pkg_install yara ;;
-		macos) brew install yara </dev/null >$DN 2>&1 || true ;;
+		macos) pkg_install yara 2>$DN || true ;;
 		*) pip_install yara-python ;;
 	esac
 	# Always install yara-python — pire uses the Python module, not the CLI
@@ -1012,9 +1011,9 @@ install_python_tools() {
 	done
 	# keystone-engine has no arm64 wheel on PyPI — use our pre-built one
 	if [ "$OS" = "macos" ] && [ "$(uname -m)" = "arm64" ]; then
-		KS_WHEEL="/tmp/keystone_engine-arm64.whl"
+		KS_WHEEL="/tmp/keystone_engine-0.9.2-py2.py3-none-macosx_14_0_arm64.whl"
 		run_with_timeout_dl curl -fsSL "https://raw.githubusercontent.com/evangit2/pire/main/wheels/macos-arm64/keystone_engine-0.9.2-py2.py3-none-macosx_14_0_arm64.whl" -o "$KS_WHEEL" 2>$DN
-		if [ -f "$KS_WHEEL" ]; then
+		if [ -f "$KS_WHEEL" ] && [ -s "$KS_WHEEL" ]; then
 			pip_install "$KS_WHEEL" 2>$DN || pip_install keystone-engine 2>$DN || true
 		else
 			pip_install keystone-engine 2>$DN || true
