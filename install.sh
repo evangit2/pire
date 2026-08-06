@@ -595,7 +595,7 @@ esac
 
 # Ensure Node.js 22+
 log_step "Checking Node.js version..."
-NODE_VER=$(node -v 2>/dev/null | sed 's/v//' | cut -d. -f1)
+NODE_VER=$(command -v node >/dev/null 2>&1 && node -v 2>/dev/null | sed 's/v//' | cut -d. -f1 || echo "0")
 [ -z "$NODE_VER" ] && NODE_VER=0
 if [ "$NODE_VER" -lt 22 ] 2>/dev/null; then
 	log_warn "Node.js is v$NODE_VER, need v22+"
@@ -644,7 +644,7 @@ if [ "$NODE_VER" -lt 22 ] 2>/dev/null; then
 	esac
 
 	# Verify
-	NODE_VER_NEW=$(node -v 2>/dev/null | sed 's/v//' | cut -d. -f1 || echo "0")
+	NODE_VER_NEW=$(command -v node >/dev/null 2>&1 && node -v 2>/dev/null | sed 's/v//' | cut -d. -f1 || echo "0")
 	if [ "$NODE_VER_NEW" -lt 22 ] 2>/dev/null; then
 		log_warn "Binary install didn't take, trying nvm fallback..."
 		# nvm fallback — user-space install, no sudo needed
@@ -660,18 +660,18 @@ if [ "$NODE_VER" -lt 22 ] 2>/dev/null; then
 			grep -q 'NVM_DIR' "$PROFILE_FILE" 2>$DN && break
 			printf '\n# nvm\nexport NVM_DIR="$HOME/.nvm"\n[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"\n' >> "$PROFILE_FILE"
 		done
-		NODE_VER_NEW=$(node -v 2>/dev/null | sed 's/v//' | cut -d. -f1 || echo "0")
+		NODE_VER_NEW=$(command -v node >/dev/null 2>&1 && node -v 2>/dev/null | sed 's/v//' | cut -d. -f1 || echo "0")
 	fi
 
 	if [ "$NODE_VER_NEW" -ge 22 ] 2>/dev/null; then
-		log_done "Node.js $(node -v)"
+		log_done "Node.js v$NODE_VER_NEW"
 	else
 		log_error "Failed to install Node.js 22+ (still v$NODE_VER_NEW)"
 		log_error "Please install manually: https://nodejs.org/en/download"
 		exit 1
 	fi
 else
-	log_done "Node.js $(node -v)"
+	log_done "Node.js v$NODE_VER"
 fi
 
 # ── Cache sudo credentials for parallel phase ─────────────────
