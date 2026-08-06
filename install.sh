@@ -519,12 +519,12 @@ case "$OS" in
 		sudo apt-get update -qq </dev/null 2>$DN
 		log_step "Installing core packages..."
 		# Note: nodejs/npm installed separately from official binary below
-		pkg_install git build-essential radare2 binutils file python3-pip python3-venv
+		pkg_install git build-essential radare2 binutils file python3-pip python3-venv unzip
 		/usr/bin/python3 -m pip --version >$DN 2>&1 || /usr/bin/python3 -m ensurepip --user </dev/null >$DN 2>&1
 		;;
 	fedora)
 		log_step "Installing core packages..."
-		pkg_install git gcc make radare2 binutils file python3-pip
+		pkg_install git gcc make radare2 binutils file python3-pip unzip
 		;;
 	arch)
 		log_step "Installing core packages..."
@@ -532,7 +532,7 @@ case "$OS" in
 		;;
 	suse)
 		log_step "Installing core packages..."
-		pkg_install git gcc make radare2 binutils file python3-pip
+		pkg_install git gcc make radare2 binutils file python3-pip unzip
 		;;
 	alpine)
 		log_step "Installing core packages..."
@@ -623,7 +623,7 @@ if [ "$NODE_VER" -lt 22 ] 2>$DN; then
 			esac
 
 			# Fetch the latest Node 22 version from the official API
-				NODE_LATEST=$(run_with_timeout_dl curl -fsSL "https://nodejs.org/dist/index.json" 2>$DN \
+				NODE_LATEST=$(run_with_timeout_dl curl -fsSL "https://nodejs.org/dist/index.json" 2>/dev/null \
 					| grep -o '"version":"v22[^"]*"' | head -1 | sed 's/"version":"//;s/"//')
 				[ -z "$NODE_LATEST" ] && NODE_LATEST="v22.11.0"
 
