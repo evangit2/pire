@@ -235,6 +235,45 @@ export async function callLLM(
 				});
 
 				res.on("end", () => {
+					// Sanitize tool calls: ensure arguments are valid JSON
+					for (const tc of toolCalls) {
+						if (tc.function?.arguments) {
+							try {
+								JSON.parse(tc.function.arguments);
+							} catch {
+								// Arguments are malformed JSON — try to fix common issues
+								let fixed = tc.function.arguments;
+								// If truncated (unterminated string), close it
+								if (fixed.includes('"') && !fixed.endsWith("}")) {
+									// Count unmatched braces
+									let braces = 0;
+									let inString = false;
+									let escape = false;
+									for (let i = 0; i < fixed.length; i++) {
+										const ch = fixed[i];
+										if (escape) { escape = false; continue; }
+										if (ch === "\\") { escape = true; continue; }
+										if (ch === '"') { inString = !inString; continue; }
+										if (!inString) {
+											if (ch === "{") braces++;
+											else if (ch === "}") braces--;
+										}
+									}
+									// Close any open string
+									if (inString) fixed += '"';
+									// Close open braces
+									while (braces > 0) { fixed += "}"; braces--; }
+								}
+								try {
+									JSON.parse(fixed);
+									tc.function.arguments = fixed;
+								} catch {
+									// Still broken — replace with empty object
+									tc.function.arguments = "{}";
+								}
+							}
+						}
+					}
 					resolve({
 						content: content || null,
 						tool_calls: toolCalls.length > 0 ? toolCalls : undefined,

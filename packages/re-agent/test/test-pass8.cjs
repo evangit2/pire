@@ -16,10 +16,10 @@ function ok(cond, msg) {
 // ─── 1. Sandbox bypass patterns ────────────────────────────────
 console.log("\n─ 1. Sandbox bypass patterns ─");
 const INDEX_SRC = fs.readFileSync(path.join(SRC, "index.ts"), "utf-8");
-ok(INDEX_SRC.includes("python3?\\s+.*-c.*import\\s+(urllib|requests|socket|http)"), "Python import urllib blocked");
-ok(INDEX_SRC.includes("python3?\\s+.*-c.*from\\s+(urllib|requests|socket|http)"), "Python from urllib blocked");
-ok(INDEX_SRC.includes("\\/dev\\/(tcp|udp)\\/" ), "/dev/tcp and /dev/udp blocked");
-ok(INDEX_SRC.includes("fork bomb"), "fork bomb still blocked");
+ok(INDEX_SRC.includes("python3?\\s+-c\\s+.*(?:import|from)\\s+(?:urllib|requests|socket|http)"), "Python import urllib blocked");
+ok(INDEX_SRC.includes("python3?\\s+-c\\s+.*(?:import|from)\\s+(?:urllib|requests|socket|http)"), "Python from urllib blocked");
+ok(INDEX_SRC.includes("\\/dev\\/(?:tcp|udp)\\/" ), "/dev/tcp and /dev/udp blocked");
+ok(INDEX_SRC.includes("Fork bomb") || INDEX_SRC.includes("fork bomb") || INDEX_SRC.includes(":\\(\\)\\{"), "fork bomb still blocked");
 
 // ─── 2. write_file path protection ─────────────────────────────
 console.log("\n─ 2. write_file path protection ─");

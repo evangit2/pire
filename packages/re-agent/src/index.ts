@@ -677,6 +677,8 @@ const r2Tool: AgentTool<{ path: string; command: string }> = {
 		command: Type.String(),
 	}),
 	async execute(_id, params) {
+		// Update Ghidra target so Ghidra tools auto-load the right binary
+		setGhidraTarget(params.path);
 		// Auto-run 'aaa' on first call per file, prepend to subsequent commands only if not already analyzed
 		const cmd =
 			params.command.startsWith("aaa") || r2Session.isAnalyzed(params.path)
@@ -726,6 +728,8 @@ const decompileTool: AgentTool<{ path: string; address: string; format?: string 
 		format: Type.Optional(Type.String({ default: "pdc" })),
 	}),
 	async execute(_id, params) {
+		// Update Ghidra target so Ghidra tools auto-load the right binary
+		setGhidraTarget(params.path);
 		const fmt = params.format === "pdf" ? "pdf" : "pdc";
 		// For symbol names, resolve via r2 first so we seek to the right place
 		let seekTarget = params.address;
@@ -761,8 +765,10 @@ const decompileTool: AgentTool<{ path: string; address: string; format?: string 
 		// r2 pdc/pdf outputs a null byte or empty string when there's nothing to decompile
 		// at the given address (e.g. data section, padding, invalid address)
 		let cleaned = result.replace(/\x00/g, "").trim();
-		if (!cleaned) {
-			// Try fallback: if pdc produced nothing, try pdf
+		// Also check if pdc output is truncated (no closing brace = incomplete decompilation)
+		const isTruncated = cleaned.length > 0 && cleaned.length < 80 && !cleaned.includes("}");
+		if (!cleaned || isTruncated) {
+			// Try fallback: if pdc produced nothing (or was truncated), try pdf
 			if (fmt === "pdc") {
 				const fallbackCmd = r2Session.isAnalyzed(params.path)
 					? `s ${seekTarget}; pdf`
@@ -1267,39 +1273,27 @@ export function setSandboxEnabled(enabled: boolean): void {
 
 /** Commands that could exfiltrate data or make network connections. */
 const BLOCKED_PATTERNS = [
-	/\bcurl\s/,
-	/\bwget\s/,
-	/\bnc\s/,
-	/\bnetcat\s/,
-	/\bssh\s/,
-	/\bscp\s/,
-	/\brsync\s/,
-	/\bapt-get\s/, // apt-get is the package manager — block it
-	// \bapt\s removed — too many false positives (e.g. "adapt ", "apt " in source code heredocs)
-	/\bdpkg\s/,
-	/\byum\s/,
-	/\bdnf\s/,
-	/\bpip\s/,
-	/\bpip3\s/,
-	/\bnpm\s/,
-	/\bnpx\s/,
-	/\byarn\s/,
-	/\bpnpm\s/,
-	/\bbrew\s/,
-	/\bsudo\s/,
-	/\bsu\s/,
-	/\bdoas\s/,
-	/\bshutdown\b/,
-	/\breboot\b/,
-	/\bpoweroff\b/,
-	/\bmkfs\b/,
-	/\bdd\s+.*of=/,
-	/\b:()\{\s*:\|:&\s*\};:/, // fork bomb
-	// Network exfiltration via Python — block urllib, requests, socket
-	/python3?\s+.*-c.*import\s+(urllib|requests|socket|http)/,
-	/python3?\s+.*-c.*from\s+(urllib|requests|socket|http)/,
+	// Network commands — only match at shell command position (start of line or after ;, |, &&, ||)
+	// This prevents false positives when "curl" or "wget" appears inside Python strings/heredocs
+	/(?:^|;|\||&&|\|\|)\s*(?:curl|wget|nc|netcat)\s/,
+	// Standalone network commands at start
+	/^(?:curl|wget|nc|netcat)\s/,
+	// SSH/file transfer
+	/(?:^|;|\||&&|\|\|)\s*(?:ssh|scp|rsync)\s/,
+	// Package managers
+	/(?:^|;|\||&&|\|\|)\s*(?:apt-get|dpkg|yum|dnf|pip|pip3|npm|npx|yarn|pnpm|brew)\s/,
+	// Privilege escalation
+	/(?:^|;|\||&&|\|\|)\s*(?:sudo|su|doas)\s/,
+	// System control
+	/(?:^|;|\||&&|\|\|)\s*(?:shutdown|reboot|poweroff|mkfs)\b/,
+	// Dangerous dd writes
+	/\bdd\s+.*of=\/(?!tmp\/)/,
+	// Fork bomb
+	/\b:\(\)\{\s*:\|:&\s*\};:/,
+	// Network exfiltration via Python inline — only block -c with imports, not script files
+	/python3?\s+-c\s+.*(?:import|from)\s+(?:urllib|requests|socket|http)/,
 	// Block /dev/tcp and /dev/udp (bash network redirect)
-	/\/dev\/(tcp|udp)\//,
+	/\/dev\/(?:tcp|udp)\//,
 ];
 
 /** Check if a path is within a protected system directory. Returns true if blocked. */

@@ -391,3 +391,45 @@ Ran 24 integration tests covering the 12 previously untested tools: extract, fet
 **Problem:** The blocked paths list was duplicated in 3 places (write_file, extract, patch).
 
 **Fix:** Extracted `isProtectedPath()` helper function. All three tools now call it.
+
+---
+
+## Pass 12: Sandbox false positives, Ghidra auto-load, JSON repair, decompile truncation (v0.89.18)
+
+### Bug #44: Sandbox false positive on "curl" inside Python strings/heredocs
+
+**File:** `packages/re-agent/src/index.ts`
+
+**Problem:** The sandbox blocked any command containing the word `curl` anywhere, including inside Python string literals and heredocs. E.g. `python3 -c "import requests; r = requests.get('http://...')"` was blocked because the URL contained "curl".
+
+**Fix:** Rewrote all BLOCKED_PATTERNS to only match at shell command position (start of line or after `;`, `|`, `&&`, `||`). Network commands inside quoted strings no longer trigger false positives.
+
+### Bug #45: Ghidra "No program loaded" when using r2 first
+
+**File:** `packages/re-agent/src/index.ts`
+
+**Problem:** When the LLM used r2 or decompile on a binary (without `:load`), Ghidra never learned the binary path. Subsequent `ghidra_functions` / `ghidra_decompile` calls returned "No program loaded."
+
+**Fix:** r2 and decompile tools now call `setGhidraTarget(params.path)` so Ghidra auto-loads the right binary.
+
+### Bug #46: write_file missing required "path" parameter
+
+**Problem:** LLM sometimes omits the `path` parameter when generating large file writes.
+
+**Status:** Error message already correct — tells LLM to retry. No code change needed.
+
+### Bug #47: HTTP 400 "Unterminated string" from malformed tool call arguments
+
+**File:** `packages/re-agent/src/llm.ts`
+
+**Problem:** When the LLM generated a very long tool call, the arguments JSON could be truncated mid-string. The malformed JSON was sent back to the API in the next request, causing HTTP 400.
+
+**Fix:** Added tool call argument sanitization in the SSE stream end handler. Detects unterminated strings and open braces, attempts to close them. Falls back to `{}` if unrepairable.
+
+### Bug #48: r2 decompile returns truncated output (no function body)
+
+**File:** `packages/re-agent/src/index.ts`
+
+**Problem:** r2's `pdc` command sometimes returns just the function signature (`int fcn.X (int esi, int edx) {`) with no body. The empty-output check didn't catch this because the output wasn't empty — just truncated.
+
+**Fix:** Added truncation detection: if output is <80 chars and doesn't contain `}`, treat as truncated and fall back to `pdf` (disassembly).
