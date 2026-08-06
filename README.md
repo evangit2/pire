@@ -295,7 +295,7 @@ After finding a command-line parsing bug (loop starting at `i=1` instead of `i=0
 
 *Left: CurrPorts v2.80 original (NirSoft) · Right: pire's reimplementation from decompiled source*
 
-https://github.com/user-attachments/assets/5e5ececb-9cbc-4dc6-9b17-2e36a0420d0c
+https://github.com/user-attachments/assets/1da3094b-f3bf-4c56-bee5-3961eb03e149
 
 Files in `targets/cports/`:
 
