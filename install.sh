@@ -205,6 +205,15 @@ INSTALL_YARA=0
 INSTALL_VOLATILITY=0
 INSTALL_PYTHON_TOOLS=0
 
+# If no flags given and stdin is not a TTY (e.g. piped from curl),
+# default to installing everything non-interactively — "just works"
+if [ "$INSTALL_ALL" = "0" ] && [ "$INSTALL_CORE_ONLY" = "0" ] && [ "$NONINTERACTIVE" = "0" ]; then
+	if [ ! -t 0 ]; then
+		INSTALL_ALL=1
+		NONINTERACTIVE=1
+	fi
+fi
+
 if [ "$INSTALL_ALL" = "1" ]; then
 	printf '  \033[0;32mInstalling ALL components\033[0m\n'
 	INSTALL_WINE=1
@@ -551,6 +560,10 @@ case "$OS" in
 		pkg_install node radare2 binutils git
 		# Ensure Python is available (node formula may pull it in, but not always)
 		pkg_install python@3 2>$DN || true
+		# brew's binutils installs greadelf, not readelf — symlink it
+		if has greadelf 2>$DN && ! has readelf 2>$DN; then
+			ln -sf "$(command -v greadelf)" "$HOME/.local/bin/readelf" 2>$DN || true
+		fi
 		;;
 	wsl)
 		. /etc/os-release 2>$DN

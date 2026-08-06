@@ -612,7 +612,8 @@ const readelfTool: AgentTool<{ path: string; info?: string }> = {
 			all: "-a",
 		};
 		const flag = flagMap[params.info ?? "headers"] ?? "-h";
-		return textResult(run(`readelf ${flag} ${shellEscape(params.path)}`));
+		const readelfBin = which("readelf") || which("greadelf") || "readelf";
+		return textResult(run(`${readelfBin} ${flag} ${shellEscape(params.path)}`));
 	},
 };
 
@@ -2123,7 +2124,7 @@ export function probeTools(): Record<string, boolean> {
 		filetype: !!which("file"),
 		objdump: !!which("objdump"),
 		disasm_func: !!which("objdump") || !!which("r2") || !!which("radare2"),
-		readelf: !!which("readelf"),
+		readelf: !!which("readelf") || !!which("greadelf"),
 		hexdump: !!which("hexdump") || IS_WIN,
 		nm: !!which("nm"),
 		size: !!which("size"),

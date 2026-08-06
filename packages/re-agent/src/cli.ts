@@ -160,6 +160,7 @@ async function showDiagnose() {
 		["radare2", "r2", "sudo apt install radare2"],
 		["objdump", "objdump", "sudo apt install binutils"],
 		["readelf", "readelf", "sudo apt install binutils"],
+	["readelf (greadelf)", "greadelf", "brew install binutils"],
 		["nm", "nm", "sudo apt install binutils"],
 		["size", "size", "sudo apt install binutils"],
 		["strings", "strings", "sudo apt install binutils"],
