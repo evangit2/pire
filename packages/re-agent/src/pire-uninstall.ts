@@ -142,7 +142,7 @@ function optionalPackages(os: string): PkgEntry[] {
 	switch (os) {
 		case "macos":
 			return [
-				{ name: "wine-stable", label: "Wine" },
+				{ name: "wine", label: "Wine" },
 				{ name: "mingw-w64", label: "MinGW-w64" },
 				{ name: "gdb", label: "GDB" },
 				{ name: "binwalk", label: "Binwalk" },
@@ -421,6 +421,13 @@ async function main() {
 	if (removeOpt && optPkgs.length > 0) {
 		console.log(chalk.cyan("  Removing optional packages..."));
 		pkgUninstall(pkgmgr, optPkgs);
+		// Clean up symlinks created by the installer
+		for (const link of ["readelf", "frida", "frida-ps", "frida-trace", "ghidra"]) {
+			const linkPath = `${HOME}/.local/bin/${link}`;
+			if (existsSync(linkPath)) {
+				run(`rm -f "${linkPath}" 2>/dev/null`);
+			}
+		}
 		console.log();
 	}
 

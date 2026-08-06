@@ -326,14 +326,15 @@ pkg_install() {
 			return 1
 		fi
 	else
-		# No flock (macOS without coreutils) — mkdir lock as fallback
+		# No flock (macOS without coreutils) — mkdir-based mutex as fallback.
+		# Retry with backoff; suppress "File exists" errors silently.
 		PKG_TRIES=0
-		while [ $PKG_TRIES -lt 60 ]; do
-			if mkdir "$PKG_LOCKFILE" 2>$DN; then
+		while [ $PKG_TRIES -lt 120 ]; do
+			if mkdir "$PKG_LOCKFILE" 2>/dev/null; then
 				PKG_LOCKHELD=2
 				break
 			fi
-			sleep 5
+			sleep 2
 			PKG_TRIES=$((PKG_TRIES + 1))
 		done
 		if [ "$PKG_LOCKHELD" != "2" ]; then
@@ -1009,18 +1010,10 @@ install_python_tools() {
 	for pkg in capstone unicorn lief; do
 		pip_install "$pkg" 2>$DN || true
 	done
-	# keystone-engine has no arm64 wheel on PyPI — use our pre-built one
-	if [ "$OS" = "macos" ] && [ "$(uname -m)" = "arm64" ]; then
-		KS_WHEEL="/tmp/keystone_engine-0.9.2-py2.py3-none-macosx_14_0_arm64.whl"
-		run_with_timeout_dl curl -fsSL "https://raw.githubusercontent.com/evangit2/pire/main/wheels/macos-arm64/keystone_engine-0.9.2-py2.py3-none-macosx_14_0_arm64.whl" -o "$KS_WHEEL" 2>$DN
-		if [ -f "$KS_WHEEL" ] && [ -s "$KS_WHEEL" ]; then
-			pip_install "$KS_WHEEL" 2>$DN || pip_install keystone-engine 2>$DN || true
-		else
-			pip_install keystone-engine 2>$DN || true
-		fi
-	else
-		pip_install keystone-engine 2>$DN || true
-	fi
+	# keystone-engine: compile from source (PyPI wheel doesn't include native lib
+	# for arm64 macOS; our pre-built wheel was also missing the .dylib).
+	# pip install from source builds libkeystone via cmake.
+	pip_install keystone-engine 2>$DN || true
 	# angr is heavy — try binary wheel first, fall back to source
 	pip_install "angr" 2>$DN || true
 	# Verify using the same Python that pip_install selected
