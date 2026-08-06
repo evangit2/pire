@@ -458,7 +458,13 @@ class GhidraBridge {
 	}
 
 	decompile(functionName: string): string {
-		return this.api(`decompile_function?address=${encodeURIComponent(functionName)}`);
+		// If it looks like a hex address (0x...) or a plain hex number, send as address
+		// Otherwise send as name (e.g. "entry", "FUN_140001000", "main")
+		if (/^(0x)?[0-9a-fA-F]+$/.test(functionName)) {
+			const addr = functionName.startsWith("0x") ? functionName : `0x${functionName}`;
+			return this.api(`decompile_function?address=${encodeURIComponent(addr)}`);
+		}
+		return this.api(`decompile_function?name=${encodeURIComponent(functionName)}`);
 	}
 
 	listFunctions(): string {
@@ -1968,6 +1974,42 @@ const appendFileTool: AgentTool<{ path: string; content: string }> = {
 	},
 };
 
+// ─── Patch File Tool (find-and-replace, inspired by Hermes agent) ───
+
+const patchFileTool: AgentTool<{ path: string; old: string; new: string }> = {
+	name: "patch_file",
+	description: "Find-and-replace in a file. Finds 'old' string and replaces with 'new'. Use this for surgical edits to existing files instead of rewriting the whole file. The 'old' string must be unique in the file. Pass replace_all=true to replace all occurrences.",
+	parameters: Type.Object({
+		path: Type.String(),
+		old: Type.String(),
+		new: Type.String(),
+	}),
+	async execute(_id, params) {
+		try {
+			const resolved = resolve(params.path);
+			if (isProtectedPath(resolved)) {
+				return textResult(`Patch blocked: ${resolved} is a protected system path`);
+			}
+			if (!existsSync(params.path)) {
+				return textResult(`Patch failed: file not found: ${params.path}`);
+			}
+			const content = readFileSync(params.path, "utf-8");
+			const count = content.split(params.old).length - 1;
+			if (count === 0) {
+				return textResult(`Patch failed: string not found in ${params.path}. The 'old' string must exist in the file.`);
+			}
+			if (count > 1) {
+				return textResult(`Patch failed: found ${count} occurrences of the 'old' string. Make it more unique (include surrounding context lines).`);
+			}
+			const patched = content.replace(params.old, params.new);
+			writeFileSync(params.path, patched);
+			return textResult(`Patched ${params.path}: replaced ${params.old.length} chars with ${params.new.length} chars`);
+		} catch (e: any) {
+			return textResult(`Patch failed: ${e.message}`);
+		}
+	},
+};
+
 // ─── Tool Registry ─────────────────────────────────────────────
 
 /** Validate that required tool parameters are present and non-empty. Returns error string or null. */
@@ -2031,6 +2073,7 @@ export const RE_TOOLS: AgentTool<any>[] = [
 	writeFileTool,
 	readFileTool,
 	appendFileTool,
+	patchFileTool,
 ];
 
 export function createReTools(extra: AgentTool<any>[] = []): AgentTool<any>[] {
@@ -2082,6 +2125,7 @@ export function probeTools(): Record<string, boolean> {
 		write_file: true,
 		read_file: true,
 		append_file: true,
+		patch_file: true,
 	};
 }
 
@@ -2099,7 +2143,7 @@ Rules: Work on copies (patch tool creates backups). Quote exact addresses. If un
 
 When listing functions with r2, use 'aflj' (JSON) for parseable output. When decompiling with r2, pass hex addresses (e.g. 0x3ca60) from the 'addr' column — never pass function indices.
 
-When writing analysis files, use the write_file tool directly with the full content. Do not use shell heredocs or echo commands.`;
+When writing analysis files, use the write_file tool directly with the full content. Do not use shell heredocs or echo commands. For large source files, build them incrementally: use write_file for the first chunk, then append_file for subsequent chunks. For surgical edits to existing files, use patch_file (find-and-replace).`;
 
 // ─── Exports ───────────────────────────────────────────────────
 
@@ -2143,4 +2187,5 @@ export {
 	writeFileTool,
 	readFileTool,
 	appendFileTool,
+	patchFileTool,
 };

@@ -60,7 +60,7 @@ ok(src.includes("probeTools"), "probeTools exported");
 const toolArrayMatch = src.match(/export const RE_TOOLS[\s\S]*?\];/);
 if (toolArrayMatch) {
 	const toolCount = (toolArrayMatch[0].match(/^	\w+(Tool|Status|Decompile|ListFunctions|Rename|Xrefs|Strings)/gm) || []).length;
-	ok(toolCount === 39, `RE_TOOLS has 39 tools (got ${toolCount})`);
+	ok(toolCount === 40, `RE_TOOLS has 40 tools (got ${toolCount})`);
 }
 
 // ─── 3. Auto-Detect Wrappers ──────────────────────────────────
@@ -159,7 +159,7 @@ ok(piTuiSrc.includes("agentLoop"), "Pi TUI has agentLoop method");
 ok(piTuiSrc.includes("onContent"), "Pi TUI streams content via onContent callback");
 ok(piTuiSrc.includes("tool_call"), "Pi TUI displays tool calls");
 ok(piTuiSrc.includes("tool_result"), "Pi TUI displays tool results");
-ok(piTuiSrc.includes("0.89.20"), "Pi TUI version is 0.89.20");
+ok(piTuiSrc.includes("0.89.21"), "Pi TUI version is 0.89.21");
 ok(piTuiSrc.includes("MAX_TURNS"), "Pi TUI has turn limit");
 ok(piTuiSrc.includes("MAX_OUTPUT"), "Pi TUI has output truncation");
 ok(tuiSrc.includes("agentLoop"), "TUI has agentLoop for autonomous tool calling");
@@ -283,7 +283,7 @@ if (fs.existsSync(pireConfig)) {
 console.log("\n─ Package Config ─");
 
 const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf-8"));
-ok(pkg.version === "0.89.20", `version is 0.89.20 (got ${pkg.version})`);
+ok(pkg.version === "0.89.21", `version is 0.89.21 (got ${pkg.version})`);
 ok(pkg.bin && pkg.bin.pire, "has pire bin entry");
 ok(pkg.scripts.test.includes("test-suite.cjs"), "test script runs test-suite");
 ok(pkg.scripts.test.includes("test-models.cjs"), "test script runs test-models");
@@ -516,16 +516,16 @@ ok(tuiSrc.includes("loadedTarget"), "TUI tracks loaded target");
 ok(tuiSrc.includes("PIRE_MAX_TURNS"), "TUI reads max turns from env/config");
 ok(tuiSrc.includes("onContent"), "TUI streams content to stdout");
 ok(tuiSrc.includes("VERSION"), "TUI has version constant");
-ok(tuiSrc.includes("0.89.20"), "TUI version is 0.89.20");
+ok(tuiSrc.includes("0.89.21"), "TUI version is 0.89.21");
 
 // ─── 25. Version Alignment ────────────────────────────────────
 
 console.log("\n─ Version Alignment ─");
 
 const rootPkg = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "..", "..", "package.json"), "utf-8"));
-ok(rootPkg.version === "0.89.20", `root package.json version is 0.89.20 (got ${rootPkg.version})`);
-ok(pkg.version === "0.89.20", `re-agent package.json version is 0.89.20 (got ${pkg.version})`);
-ok(tuiSrc.includes("0.89.20"), `tui.ts VERSION is 0.89.20`);
+ok(rootPkg.version === "0.89.21", `root package.json version is 0.89.21 (got ${rootPkg.version})`);
+ok(pkg.version === "0.89.21", `re-agent package.json version is 0.89.21 (got ${pkg.version})`);
+ok(tuiSrc.includes("0.89.21"), `tui.ts VERSION is 0.89.21`);
 
 // ─── 26. Skills Not Gitignored ────────────────────────────────
 

@@ -44,7 +44,7 @@ import {
 import { type ChatMessage, callLLM, loadLLMConfig, toolToFunction } from "./llm.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const VERSION = "0.89.20";
+const VERSION = "0.89.21";
 
 // ─── Context Window Management ─────────────────────────────────
 // Aggressive multi-stage compression: truncate → stub → drop.
@@ -60,7 +60,7 @@ function getContextCharLimit(): number {
 const CONTEXT_CHAR_LIMIT = parseInt(process.env.PIRE_CONTEXT_LIMIT || "0", 10) || getContextCharLimit();
 const TOOL_RESULT_HEAD = 600;
 const TOOL_RESULT_TAIL = 600;
-const PRESERVE_RECENT = 8;
+const PRESERVE_RECENT = 16;
 
 // Tool output truncation: 5% of context budget, min 2000, max 20000
 const MAX_TOOL_OUTPUT = Math.min(20000, Math.max(2000, Math.floor(getContextCharLimit() * 0.05)));
