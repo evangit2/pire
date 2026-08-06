@@ -584,7 +584,8 @@ esac
 
 # Ensure Node.js 22+
 log_step "Checking Node.js version..."
-NODE_VER=$(node -v 2>$DN | sed 's/v//' | cut -d. -f1 || echo "0")
+NODE_VER=$(node -v 2>$DN | sed 's/v//' | cut -d. -f1)
+[ -z "$NODE_VER" ] && NODE_VER=0
 if [ "$NODE_VER" -lt 22 ] 2>$DN; then
 	log_warn "Node.js is v$NODE_VER, need v22+"
 	log_step "Installing Node.js 22..."
