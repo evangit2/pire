@@ -152,38 +152,42 @@ async function showDiagnose() {
 		}
 	}
 
-	// CLI tools
+	// CLI tools — check multiple possible binary names per tool
 	console.log("\n═══════════════════════════════════════════════════");
 	console.log("CLI Tools");
 	console.log("═══════════════════════════════════════════════════");
-	const cliTools: [string, string, string][] = [
-		["radare2", "r2", "sudo apt install radare2"],
-		["objdump", "objdump", "sudo apt install binutils"],
-		["readelf", "readelf", "sudo apt install binutils"],
-	["readelf (greadelf)", "greadelf", "brew install binutils"],
-		["nm", "nm", "sudo apt install binutils"],
-		["size", "size", "sudo apt install binutils"],
-		["strings", "strings", "sudo apt install binutils"],
-		["file", "file", "sudo apt install file"],
-		["hexdump", "hexdump", "sudo apt install bsdmainutils"],
-		["diff", "diff", "sudo apt install diffutils"],
-		["gdb", "gdb", "sudo apt install gdb"],
-		["binwalk", "binwalk", "sudo apt install binwalk"],
-		["yara", "yara", "sudo apt install yara"],
-		["frida", "frida", "pip install --user frida-tools"],
-		["jadx", "jadx", "See install.sh jadx section"],
-		["ghidra", "ghidra", "See install.sh ghidra section"],
-		["monodis", "monodis", "sudo apt install mono-utils"],
+	const isMac = process.platform === "darwin";
+	const cliTools: [string, string[], string][] = [
+		["radare2", ["r2", "radare2"], "sudo apt install radare2"],
+		["objdump", ["objdump"], "sudo apt install binutils"],
+		["readelf", isMac ? ["readelf", "greadelf"] : ["readelf"], isMac ? "brew install binutils" : "sudo apt install binutils"],
+		["nm", ["nm"], "sudo apt install binutils"],
+		["size", ["size"], "sudo apt install binutils"],
+		["strings", ["strings"], "sudo apt install binutils"],
+		["file", ["file"], "sudo apt install file"],
+		["hexdump", ["hexdump"], "sudo apt install bsdmainutils"],
+		["diff", ["diff"], "sudo apt install diffutils"],
+		["gdb", ["gdb"], isMac ? "brew install gdb" : "sudo apt install gdb"],
+		["binwalk", ["binwalk"], isMac ? "brew install binwalk" : "sudo apt install binwalk"],
+		["yara", ["yara"], isMac ? "brew install yara" : "sudo apt install yara"],
+		["frida", ["frida", "frida-ps"], isMac ? "pip install --user frida-tools" : "pip install --user frida-tools"],
+		["jadx", ["jadx", "jadx-cli"], isMac ? "brew install jadx" : "See install.sh jadx section"],
+		["ghidra", ["ghidra", "ghidraRun"], "See install.sh ghidra section"],
+		["monodis", ["monodis"], "sudo apt install mono-utils"],
 	];
-	for (const [label, cmd, fixHint] of cliTools) {
-		try {
-			const path = execSync(`which ${cmd} 2>/dev/null`, { encoding: "utf-8" }).trim();
-			if (path) {
-				console.log(`  ✓ ${label.padEnd(15)} ${path}`);
-			} else {
-				console.log(`  ✗ ${label.padEnd(15)} not on PATH — ${fixHint}`);
-			}
-		} catch {
+	for (const [label, cmds, fixHint] of cliTools) {
+		let found = false;
+		for (const cmd of cmds) {
+			try {
+				const path = execSync(`which ${cmd} 2>/dev/null`, { encoding: "utf-8" }).trim();
+				if (path) {
+					console.log(`  ✓ ${label.padEnd(15)} ${path}`);
+					found = true;
+					break;
+				}
+			} catch {}
+		}
+		if (!found) {
 			console.log(`  ✗ ${label.padEnd(15)} not found — ${fixHint}`);
 		}
 	}

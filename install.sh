@@ -205,15 +205,6 @@ INSTALL_YARA=0
 INSTALL_VOLATILITY=0
 INSTALL_PYTHON_TOOLS=0
 
-# If no flags given and stdin is not a TTY (e.g. piped from curl),
-# default to installing everything non-interactively — "just works"
-if [ "$INSTALL_ALL" = "0" ] && [ "$INSTALL_CORE_ONLY" = "0" ] && [ "$NONINTERACTIVE" = "0" ]; then
-	if [ ! -t 0 ]; then
-		INSTALL_ALL=1
-		NONINTERACTIVE=1
-	fi
-fi
-
 if [ "$INSTALL_ALL" = "1" ]; then
 	printf '  \033[0;32mInstalling ALL components\033[0m\n'
 	INSTALL_WINE=1
@@ -560,8 +551,15 @@ case "$OS" in
 		pkg_install node radare2 binutils git
 		# Ensure Python is available (node formula may pull it in, but not always)
 		pkg_install python@3 2>$DN || true
-		# brew's binutils installs greadelf, not readelf — symlink it
-		if has greadelf 2>$DN && ! has readelf 2>$DN; then
+		# brew's binutils installs greadelf to /opt/homebrew/opt/binutils/bin/
+		# which isn't on PATH by default — symlink it
+		GNUBIN="/opt/homebrew/opt/binutils/libexec/gnubin"
+		BINUTILS_BIN="/opt/homebrew/opt/binutils/bin"
+		if [ -x "$GNUBIN/readelf" ]; then
+			ln -sf "$GNUBIN/readelf" "$HOME/.local/bin/readelf" 2>$DN || true
+		elif [ -x "$BINUTILS_BIN/greadelf" ]; then
+			ln -sf "$BINUTILS_BIN/greadelf" "$HOME/.local/bin/readelf" 2>$DN || true
+		elif command -v greadelf >$DN 2>&1; then
 			ln -sf "$(command -v greadelf)" "$HOME/.local/bin/readelf" 2>$DN || true
 		fi
 		;;
@@ -777,6 +775,10 @@ install_gdb() {
 	echo "$ST_RUNNING" > "$TMPDIR_PIRE/gdb.status"
 	case "$OS" in
 		windows) pkg_install mingw-w64-x86_64-gdb ;;
+		macos)
+			# gdb is a formula on macOS, not a cask
+			brew install gdb </dev/null >$DN 2>&1 || true
+			;;
 		*)       pkg_install gdb ;;
 	esac
 	if has gdb; then
@@ -813,6 +815,15 @@ install_frida() {
 	case "$OS" in
 		debian) pkg_install python3-frida 2>$DN ;;
 		arch)   pkg_install frida-tools 2>$DN ;;
+		macos)
+			# pip --user installs CLI tools to ~/Library/Python/X.Y/bin/
+			# which isn't on PATH — symlink frida and frida-ps to ~/.local/bin
+			for _pybin in "$HOME/Library/Python"/*/bin; do
+				for _bin in frida frida-ps frida-trace; do
+					[ -x "$_pybin/$_bin" ] && ln -sf "$_pybin/$_bin" "$HOME/.local/bin/$_bin" 2>$DN || true
+				done
+			done
+			;;
 	esac
 	if has frida || has frida-ps || "${PIRE_PYTHON:-python3}" -c "import frida" 2>$DN; then
 		echo "$ST_DONE" > "$TMPDIR_PIRE/frida.status"
@@ -961,7 +972,7 @@ install_yara() {
 	echo "$ST_RUNNING" > "$TMPDIR_PIRE/yara.status"
 	case "$OS" in
 		debian|fedora|arch|suse) pkg_install yara ;;
-		macos) pkg_install yara 2>$DN ;;
+		macos) brew install yara </dev/null >$DN 2>&1 || true ;;
 		*) pip_install yara-python ;;
 	esac
 	# Always install yara-python — pire uses the Python module, not the CLI
