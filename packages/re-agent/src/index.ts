@@ -10,7 +10,7 @@
  */
 
 import { execFileSync, execSync, spawn } from "node:child_process";
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, unlinkSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Type } from "typebox";
@@ -300,10 +300,30 @@ class GhidraBridge {
 		const logFile = "/tmp/pire-ghidra-mcp.log";
 		const analyzeLog = "/tmp/pire-ghidra-analyze.log";
 
+		// Kill any stale Ghidra MCP server on port 8089
+		try {
+			run("fuser -k 8089/tcp 2>/dev/null; sleep 2", { timeout: 15000 });
+		} catch {}
+
+		// Clean up stale lock files
+		const lockPath = projectPath + ".lock";
+		const lockTildePath = projectPath + ".lock~";
+		try {
+			if (existsSync(lockPath)) unlinkSync(lockPath);
+			if (existsSync(lockTildePath)) unlinkSync(lockTildePath);
+		} catch {}
+
 		// Phase 1: Import + analyze binary into Ghidra project using analyzeHeadless
-		// Skip if project already exists with this program
+		// Re-import if project doesn't exist OR .rep directory is missing
 		const gprPath = projectPath + ".gpr";
-		if (!existsSync(gprPath)) {
+		const repPath = projectPath + ".rep";
+		const projectExists = existsSync(gprPath) && existsSync(repPath);
+		if (!projectExists) {
+			// Delete any partial/corrupt project files
+			try {
+				if (existsSync(gprPath)) unlinkSync(gprPath);
+				if (existsSync(repPath)) rmSync(repPath, { recursive: true, force: true });
+			} catch {}
 			const analyzeScript = [
 				"#!/bin/bash",
 				`export GHIDRA_HOME=${this.ghidraHome}`,
@@ -320,6 +340,12 @@ class GhidraBridge {
 				run(`bash ${analyzeScriptPath}`, { timeout: 300000 });
 			} catch {
 				// analyzeHeadless may return non-zero even on success
+			}
+			// Verify the project was actually created
+			const repExists = existsSync(repPath);
+			if (!repExists) {
+				const logContent = (() => { try { return readFileSync(analyzeLog, "utf-8").slice(-500); } catch { return "(no log)"; } })();
+				throw new Error(`Ghidra analyzeHeadless failed to create project. Log: ${logContent}`);
 			}
 		}
 
@@ -350,7 +376,10 @@ class GhidraBridge {
 		// Wait for startup (Ghidra JVM takes ~15-20s)
 		for (let i = 0; i < 30; i++) {
 			run("sleep 1", { timeout: 5000 });
-			if (this.isAlive() && this.isProgramLoaded()) return true;
+			if (this.isAlive() && this.isProgramLoaded()) {
+				this.restartCount = 0; // Reset on success
+				return true;
+			}
 		}
 		return false;
 	}
@@ -383,15 +412,29 @@ class GhidraBridge {
 	}
 
 	private ensureAlive(): boolean {
+		// Case 1: Server alive AND program loaded (or no target needed) → all good
 		if (this.isAlive() && (!this.currentTarget || this.isProgramLoaded())) return true;
-		if (this.restartCount >= this.maxRestarts) return false;
+
+		// Case 2: Server alive but program NOT loaded → kill it so we can restart clean
+		if (this.isAlive() && this.currentTarget && !this.isProgramLoaded()) {
+			try { run("fuser -k 8089/tcp 2>/dev/null; sleep 2", { timeout: 15000 }); } catch {}
+		}
+
+		if (this.restartCount >= this.maxRestarts) {
+			// Last resort: kill any stale server and reset counter for one more try
+			try { run("fuser -k 8089/tcp 2>/dev/null; sleep 2", { timeout: 15000 }); } catch {}
+			this.restartCount = 0;
+		}
 		this.restartCount++;
 		// If we have a target loaded, try starting the headless server
 		// (which also imports+analyzes the binary via analyzeHeadless)
 		if (this.currentTarget) {
 			try {
 				if (this.startHeadless(this.currentTarget)) return true;
-			} catch {}
+			} catch (e) {
+				// If startHeadless threw (e.g. analyzeHeadless failed), log it
+				// but don't crash the agent — Ghidra tools will report the error
+			}
 		}
 		return false;
 	}
@@ -814,51 +857,70 @@ const decompileTool: AgentTool<{ path: string; address: string; format?: string 
 
 // ─── Ghidra Native Tools ───────────────────────────────────────
 
-const ghidraDecompile: AgentTool<{ function: string }> = {
+const ghidraDecompile: AgentTool<{ function: string; path?: string }> = {
 	name: "ghidra_decompile",
 	executionMode: "sequential",
-	description: "Decompile a function via Ghidra.",
-	parameters: Type.Object({ function: Type.String() }),
+	description:
+		"Decompile a function via Ghidra (high-quality C pseudocode, much better than r2 pdc). Pass a function name or address (e.g. 'main', 'entry', '0x140001000'). Optionally pass 'path' to specify the binary file to analyze (e.g. '/tmp/binary.exe'). If path is omitted, uses the binary from the last r2/decompile/:load call. First call may take 15-30s to start the Ghidra server and analyze the binary.",
+	parameters: Type.Object({
+		function: Type.String(),
+		path: Type.Optional(Type.String()),
+	}),
 	async execute(_id, params) {
+		if (params.path) setGhidraTarget(params.path);
 		return textResult(ghidra.decompile(params.function));
 	},
 };
 
-const ghidraListFunctions: AgentTool<Record<string, never>> = {
+const ghidraListFunctions: AgentTool<{ path?: string }> = {
 	name: "ghidra_functions",
-	description: "List Ghidra functions.",
-	parameters: Type.Object({}),
-	async execute() {
+	description:
+		"List all functions discovered by Ghidra. Optionally pass 'path' to specify the binary file to analyze. If path is omitted, uses the binary from the last r2/decompile/:load call. First call may take 15-30s to start the Ghidra server and analyze the binary.",
+	parameters: Type.Object({
+		path: Type.Optional(Type.String()),
+	}),
+	async execute(_id, params) {
+		if (params.path) setGhidraTarget(params.path);
 		return textResult(ghidra.listFunctions());
 	},
 };
 
-const ghidraRename: AgentTool<{ oldName: string; newName: string }> = {
+const ghidraRename: AgentTool<{ oldName: string; newName: string; path?: string }> = {
 	name: "ghidra_rename",
-	description: "Rename a function/variable in Ghidra.",
+	description: "Rename a function/variable in Ghidra. Optionally pass 'path' to specify the binary.",
 	parameters: Type.Object({
 		oldName: Type.String(),
 		newName: Type.String(),
+		path: Type.Optional(Type.String()),
 	}),
 	async execute(_id, params) {
+		if (params.path) setGhidraTarget(params.path);
 		return textResult(ghidra.rename(params.oldName, params.newName));
 	},
 };
 
-const ghidraXrefs: AgentTool<{ address: string }> = {
+const ghidraXrefs: AgentTool<{ address: string; path?: string }> = {
 	name: "ghidra_xrefs",
-	description: "List xrefs to an address in Ghidra.",
-	parameters: Type.Object({ address: Type.String() }),
+	description: "List xrefs to an address in Ghidra. Optionally pass 'path' to specify the binary.",
+	parameters: Type.Object({
+		address: Type.String(),
+		path: Type.Optional(Type.String()),
+	}),
 	async execute(_id, params) {
+		if (params.path) setGhidraTarget(params.path);
 		return textResult(ghidra.xrefs(params.address));
 	},
 };
 
-const ghidraStrings: AgentTool<{ pattern?: string }> = {
+const ghidraStrings: AgentTool<{ pattern?: string; path?: string }> = {
 	name: "ghidra_strings",
-	description: "Search strings in Ghidra.",
-	parameters: Type.Object({ pattern: Type.Optional(Type.String()) }),
+	description: "Search strings in Ghidra. Optionally pass 'path' to specify the binary.",
+	parameters: Type.Object({
+		pattern: Type.Optional(Type.String()),
+		path: Type.Optional(Type.String()),
+	}),
 	async execute(_id, params) {
+		if (params.path) setGhidraTarget(params.path);
 		return textResult(ghidra.searchStrings(params.pattern ?? ""));
 	},
 };
@@ -2002,9 +2064,11 @@ export const RE_SYSTEM_PROMPT = `You are pire, a reverse engineering agent. Anal
 
 Run tools automatically — adapt to the task. Use filetype first, then pick tools. Run PE binaries with WINEPREFIX=$HOME/.wine wine <binary>. Use write_file for source code, not shell heredocs.
 
+DECOMPILATION: Always prefer ghidra_decompile over r2's decompile tool — Ghidra produces much higher quality C pseudocode. You can pass 'path' directly to ghidra_decompile or ghidra_functions to specify the binary (e.g. {"function":"entry","path":"/tmp/binary.exe"}). The first Ghidra call may take 15-30 seconds to start the server and analyze the binary — this is normal, just wait. If Ghidra fails, fall back to r2 decompile with format "pdf".
+
 Rules: Work on copies (patch tool creates backups). Quote exact addresses. If unsure about a constant, say so. If a tool call fails or returns an error, retry with corrected parameters — do not stop or give up.
 
-When listing functions, use 'aflj' (JSON) for parseable output. When decompiling, pass hex addresses (e.g. 0x3ca60) from the 'addr' column — never pass function indices.
+When listing functions with r2, use 'aflj' (JSON) for parseable output. When decompiling with r2, pass hex addresses (e.g. 0x3ca60) from the 'addr' column — never pass function indices.
 
 When writing analysis files, use the write_file tool directly with the full content. Do not use shell heredocs or echo commands.`;
 

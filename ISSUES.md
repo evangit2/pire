@@ -433,3 +433,47 @@ Ran 24 integration tests covering the 12 previously untested tools: extract, fet
 **Problem:** r2's `pdc` command sometimes returns just the function signature (`int fcn.X (int esi, int edx) {`) with no body. The empty-output check didn't catch this because the output wasn't empty — just truncated.
 
 **Fix:** Added truncation detection: if output is <80 chars and doesn't contain `}`, treat as truncated and fall back to `pdf` (disassembly).
+
+---
+
+## Pass 13: Ghidra reliability overhaul (v0.89.19)
+
+### Bug #49: Ghidra server crash cascade — stale process blocks restart
+
+**File:** `packages/re-agent/src/index.ts`
+
+**Problem:** When the Ghidra MCP server crashed (e.g. failed to open project), the old Java process kept holding port 8089. The next `startHeadless` call couldn't bind to the port, producing "Address already in use." The agent would cycle through restart attempts, each failing on the port conflict.
+
+**Fix:** `startHeadless` now runs `fuser -k 8089/tcp` before starting a new server, with a 2-second sleep for socket cleanup. `ensureAlive` also kills the stale server when it detects the server is alive but the program isn't loaded.
+
+### Bug #50: Stale lock files prevent project re-opening
+
+**File:** `packages/re-agent/src/index.ts`
+
+**Problem:** Ghidra creates `.lock` and `.lock~` files when a project is open. If the server crashes, these files remain and prevent the next server from opening the project: `Failed to open project: pire_analysis`.
+
+**Fix:** `startHeadless` deletes `.lock` and `.lock~` files before attempting to start the server.
+
+### Bug #51: Corrupt project detection used wrong signal (0-byte .gpr)
+
+**File:** `packages/re-agent/src/index.ts`
+
+**Problem:** The code checked if the `.gpr` file was 0 bytes to detect corruption. But a 0-byte `.gpr` is normal — the actual project data lives in the `.rep` directory. This caused unnecessary re-imports (wasting 35+ seconds) or skipped re-imports when the project was actually corrupt.
+
+**Fix:** Now checks for the existence of BOTH `.gpr` and `.rep` directory. Only re-imports if either is missing.
+
+### Bug #52: Ghidra tools had no path parameter — LLM couldn't specify binary
+
+**File:** `packages/re-agent/src/index.ts`
+
+**Problem:** `ghidra_decompile`, `ghidra_functions`, `ghidra_rename`, `ghidra_xrefs`, `ghidra_strings` accepted no parameters to specify which binary to analyze. The LLM had to use r2 or `:load` first, which was not obvious.
+
+**Fix:** All Ghidra tools now accept an optional `path` parameter. When provided, `setGhidraTarget(path)` is called before the API call, auto-loading the binary.
+
+### Bug #53: System prompt didn't guide LLM to prefer Ghidra
+
+**File:** `packages/re-agent/src/index.ts`
+
+**Problem:** The system prompt didn't mention Ghidra, so the LLM would default to r2's `pdc` command, which produces poor-quality decompilation (`int fcn.X (int esi, int edx) {` with no body).
+
+**Fix:** System prompt now says "Always prefer ghidra_decompile over r2's decompile tool" and documents the `path` parameter.
