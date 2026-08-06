@@ -293,9 +293,21 @@ After finding a command-line parsing bug (loop starting at `i=1` instead of `i=0
 
 ![CurrPorts comparison: original vs reimplementation](targets/cports/comparison.png)
 
+*Left: CurrPorts v2.80 original (NirSoft) · Right: pire's reimplementation from decompiled source*
+
 📺 **[Watch the full session recording](https://files.catbox.moe/ou5poo.mp4)**
 
-Files in `targets/cports/`.
+Files in `targets/cports/`:
+
+| File | Description |
+|------|-------------|
+| `cports_original.exe` | Original binary (NirSoft CurrPorts v2.80, 216KB) |
+| `cports.exe` | pire's reimplementation (cross-compiled with MinGW, 283KB) |
+| `cports.c` | Reconstructed C source (41KB) |
+| `cports.rc` | Windows resource file |
+| `cports.chm` | Original help file |
+| `readme.txt` | Original readme |
+| `comparison.png` | Side-by-side screenshot (original vs reimpl) |
 
 ## Testing
 
