@@ -44,7 +44,7 @@ import {
 import { type ChatMessage, callLLM, loadLLMConfig, toolToFunction } from "./llm.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const VERSION = "0.89.19";
+const VERSION = "0.89.20";
 
 // ─── Context Window Management ─────────────────────────────────
 // Aggressive multi-stage compression: truncate → stub → drop.

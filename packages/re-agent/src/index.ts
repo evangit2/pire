@@ -1343,7 +1343,7 @@ const BLOCKED_PATTERNS = [
 	// SSH/file transfer
 	/(?:^|;|\||&&|\|\|)\s*(?:ssh|scp|rsync)\s/,
 	// Package managers
-	/(?:^|;|\||&&|\|\|)\s*(?:apt-get|dpkg|yum|dnf|pip|pip3|npm|npx|yarn|pnpm|brew)\s/,
+	/(?:^|;|\||&&|\|\|)\s*(?:apt-get\s+(?:install|remove|purge|upgrade|dist-upgrade|autoremove)|dpkg\s+(?:-i|--install|--configure|--remove|--purge)|yum\s+(?:install|remove|upgrade)|dnf\s+(?:install|remove|upgrade)|pip\s+install|pip3\s+install|npm\s+(?:install|uninstall|update)|npx\s+(?:install|uninstall)|yarn\s+(?:add|remove|upgrade)|pnpm\s+(?:add|remove|upgrade)|brew\s+(?:install|uninstall|upgrade))\s/,
 	// Privilege escalation
 	/(?:^|;|\||&&|\|\|)\s*(?:sudo|su|doas)\s/,
 	// System control
@@ -1943,6 +1943,31 @@ const readFileTool: AgentTool<{ path: string; offset?: number; limit?: number }>
 	},
 };
 
+// ─── Append File Tool ─────────────────────────────────────────
+
+const appendFileTool: AgentTool<{ path: string; content: string }> = {
+	name: "append_file",
+	description: "Append content to a file (creates if not exists). Use this to incrementally build decompiled source files — append each function as you decompile it, instead of writing one massive file.",
+	parameters: Type.Object({
+		path: Type.String(),
+		content: Type.String(),
+	}),
+	async execute(_id, params) {
+		try {
+			const resolved = resolve(params.path);
+			if (isProtectedPath(resolved)) {
+				return textResult(`Write blocked: ${resolved} is a protected system path`);
+			}
+			mkdirSync(dirname(params.path), { recursive: true });
+			const existing = existsSync(params.path) ? readFileSync(params.path, "utf-8") : "";
+			writeFileSync(params.path, existing + params.content);
+			return textResult(`Appended ${params.content.length} bytes to ${params.path} (total: ${existing.length + params.content.length} bytes)`);
+		} catch (e: any) {
+			return textResult(`Append failed: ${e.message}`);
+		}
+	},
+};
+
 // ─── Tool Registry ─────────────────────────────────────────────
 
 /** Validate that required tool parameters are present and non-empty. Returns error string or null. */
@@ -2005,6 +2030,7 @@ export const RE_TOOLS: AgentTool<any>[] = [
 	// File I/O
 	writeFileTool,
 	readFileTool,
+	appendFileTool,
 ];
 
 export function createReTools(extra: AgentTool<any>[] = []): AgentTool<any>[] {
@@ -2055,6 +2081,7 @@ export function probeTools(): Record<string, boolean> {
 		ilspy: !!which("ilspycmd") || !!which("monodis"),
 		write_file: true,
 		read_file: true,
+		append_file: true,
 	};
 }
 
@@ -2065,6 +2092,8 @@ export const RE_SYSTEM_PROMPT = `You are pire, a reverse engineering agent. Anal
 Run tools automatically — adapt to the task. Use filetype first, then pick tools. Run PE binaries with WINEPREFIX=$HOME/.wine wine <binary>. Use write_file for source code, not shell heredocs.
 
 DECOMPILATION: Always prefer ghidra_decompile over r2's decompile tool — Ghidra produces much higher quality C pseudocode. You can pass 'path' directly to ghidra_decompile or ghidra_functions to specify the binary (e.g. {"function":"entry","path":"/tmp/binary.exe"}). The first Ghidra call may take 15-30 seconds to start the server and analyze the binary — this is normal, just wait. If Ghidra fails, fall back to r2 decompile with format "pdf".
+
+IMPORTANT — MANAGING DECOMPILATION OUTPUT: Context is limited. Do NOT try to hold all decompiled functions in your context at once. After decompiling each function, IMMEDIATELY append it to a file using append_file (e.g. /tmp/decompiled.c) before decompiling the next function. When you're ready to reconstruct source, read_file the collected decompilations. Never decompile more than 8 functions without saving them to a file first.
 
 Rules: Work on copies (patch tool creates backups). Quote exact addresses. If unsure about a constant, say so. If a tool call fails or returns an error, retry with corrected parameters — do not stop or give up.
 
@@ -2113,4 +2142,5 @@ export {
 	ilspyTool,
 	writeFileTool,
 	readFileTool,
+	appendFileTool,
 };
