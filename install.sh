@@ -1235,12 +1235,18 @@ if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/package.json" ]; then
 			TSX_BIN="tsx"
 		fi
 		if [ -w /usr/local/bin ]; then
-			printf '#!/bin/sh\nexec %s "%s/packages/re-agent/src/cli.ts" "$@"\n' "$TSX_BIN" "$SCRIPT_DIR" > "$PIRE_WRAPPER"
+			cat > "$PIRE_WRAPPER" <<PIREEOF
+#!/bin/sh
+exec $TSX_BIN "$SCRIPT_DIR/packages/re-agent/src/cli.ts" "\$@"
+PIREEOF
 			chmod +x "$PIRE_WRAPPER"
 		else
 			# Write to temp file then sudo mv — avoids fragile quote escaping in sudo sh -c
 			_TMP_WRAPPER=$(mktemp)
-			printf '#!/bin/sh\nexec %s "%s/packages/re-agent/src/cli.ts" "$@"\n' "$TSX_BIN" "$SCRIPT_DIR" > "$_TMP_WRAPPER"
+			cat > "$_TMP_WRAPPER" <<PIREEOF
+#!/bin/sh
+exec $TSX_BIN "$SCRIPT_DIR/packages/re-agent/src/cli.ts" "\$@"
+PIREEOF
 			sudo install -m 755 "$_TMP_WRAPPER" "$PIRE_WRAPPER" 2>$DN
 			rm -f "$_TMP_WRAPPER"
 		fi
