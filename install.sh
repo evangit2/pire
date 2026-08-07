@@ -259,49 +259,49 @@ else
 		printf '    \033[0;31m✗\033[0m Ghidra\n'
 	fi
 
-	if prompt_yesno "  Frida (dynamic instrumentation)" "n"; then
+	if prompt_yesno "  Frida (dynamic instrumentation)" "y"; then
 		INSTALL_FRIDA=1
 		printf '    \033[0;32m✓\033[0m Frida\n'
 	else
 		printf '    \033[0;31m✗\033[0m Frida\n'
 	fi
 
-	if prompt_yesno "  GDB (scripted debugging)" "n"; then
+	if prompt_yesno "  GDB (scripted debugging)" "y"; then
 		INSTALL_GDB=1
 		printf '    \033[0;32m✓\033[0m GDB\n'
 	else
 		printf '    \033[0;31m✗\033[0m GDB\n'
 	fi
 
-	if prompt_yesno "  Binwalk (firmware extraction)" "n"; then
+	if prompt_yesno "  Binwalk (firmware extraction)" "y"; then
 		INSTALL_BINWALK=1
 		printf '    \033[0;32m✓\033[0m Binwalk\n'
 	else
 		printf '    \033[0;31m✗\033[0m Binwalk\n'
 	fi
 
-	if prompt_yesno "  JADX (APK/DEX → Java decompiler)" "n"; then
+	if prompt_yesno "  JADX (APK/DEX → Java decompiler)" "y"; then
 		INSTALL_JADX=1
 		printf '    \033[0;32m✓\033[0m JADX\n'
 	else
 		printf '    \033[0;31m✗\033[0m JADX\n'
 	fi
 
-	if prompt_yesno "  ILSpy (.NET → C# decompiler)" "n"; then
+	if prompt_yesno "  ILSpy (.NET → C# decompiler)" "y"; then
 		INSTALL_ILSPY=1
 		printf '    \033[0;32m✓\033[0m ILSpy\n'
 	else
 		printf '    \033[0;31m✗\033[0m ILSpy\n'
 	fi
 
-	if prompt_yesno "  Yara (pattern matching)" "n"; then
+	if prompt_yesno "  Yara (pattern matching)" "y"; then
 		INSTALL_YARA=1
 		printf '    \033[0;32m✓\033[0m Yara\n'
 	else
 		printf '    \033[0;31m✗\033[0m Yara\n'
 	fi
 
-	if prompt_yesno "  Volatility (memory forensics)" "n"; then
+	if prompt_yesno "  Volatility (memory forensics)" "y"; then
 		INSTALL_VOLATILITY=1
 		printf '    \033[0;32m✓\033[0m Volatility\n'
 	else
