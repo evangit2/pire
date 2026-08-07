@@ -523,20 +523,20 @@ case "$OS" in
 		/usr/bin/python3 -m pip --version >$DN 2>&1 || /usr/bin/python3 -m ensurepip --user </dev/null >$DN 2>&1
 		# radare2 from apt is often missing on LMDE or stale — install from GitHub releases
 		if ! has r2 && ! has radare2; then
-			log_step "Installing radare2 from GitHub..."
+			log_step "Installing radare2 from GitHub releases..."
 			R2_VER=$(run_with_timeout_dl curl -fsSL "https://api.github.com/repos/radareorg/radare2/releases/latest" 2>/dev/null \
 				| grep -o '"tag_name":"[^"]*"' | head -1 | sed 's/"tag_name":"//;s/"//')
-			[ -z "$R2_VER" ] && R2_VER="5.9.8"
-			R2_ARCH="x86_64"
-			case "$(uname -m)" in aarch64|arm64) R2_ARCH="arm64" ;; esac
-			R2_URL="https://github.com/radareorg/radare2/releases/download/${R2_VER}/radare2-${R2_VER#v}-${R2_ARCH}.tar.xz"
-			if run_with_timeout_dl curl -fsSL "$R2_URL" -o /tmp/r2.tar.xz 2>$DN; then
-				if [ -w /usr/local ]; then
-					tar -xJf /tmp/r2.tar.xz -C /usr/local --strip-components=1 2>$DN
-				else
-					sudo tar -xJf /tmp/r2.tar.xz -C /usr/local --strip-components=1 2>$DN
-				fi
-				rm -f /tmp/r2.tar.xz
+			[ -z "$R2_VER" ] && R2_VER="6.1.8"
+			# GitHub releases provide .deb packages for Debian-based distros
+			R2_DEB_ARCH="amd64"
+			case "$(uname -m)" in
+				aarch64|arm64) R2_DEB_ARCH="arm64" ;;
+				i686|i386)     R2_DEB_ARCH="i386" ;;
+			esac
+			R2_URL="https://github.com/radareorg/radare2/releases/download/${R2_VER}/radare2_${R2_VER#v}_${R2_DEB_ARCH}.deb"
+			if run_with_timeout_dl curl -fsSL "$R2_URL" -o /tmp/r2.deb 2>$DN; then
+				sudo dpkg -i /tmp/r2.deb >$DN 2>&1 || sudo apt-get install -f -y >$DN 2>&1
+				rm -f /tmp/r2.deb
 				# Create r2 symlink if only radare2 exists
 				if has radare2 && ! has r2; then
 					R2_PATH=$(command -v radare2)
@@ -1097,6 +1097,16 @@ install_python_tools() {
 	# pip install from source builds libkeystone via cmake.
 	pip_install keystone-engine 2>$DN || true
 	# angr is heavy — give it extra time (can take 5+ min to compile)
+	# angr depends on pyvex which requires setuptools-rust (Rust compiler)
+	# Install rustc first if not present
+	if ! has rustc 2>$DN; then
+		case "$OS" in
+			debian) pkg_install rustc cargo 2>$DN ;;
+			fedora) pkg_install rust cargo 2>$DN ;;
+			arch)   pkg_install rust 2>$DN ;;
+			macos)  pkg_install rust 2>$DN ;;
+		esac
+	fi
 	_ORIG_PIP_TIMEOUT="$PIP_INSTALL_TIMEOUT"
 	PIP_INSTALL_TIMEOUT=600
 	pip_install "angr" 2>$DN || true
