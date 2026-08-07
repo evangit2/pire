@@ -519,8 +519,38 @@ case "$OS" in
 		sudo apt-get update -qq </dev/null 2>$DN
 		log_step "Installing core packages..."
 		# Note: nodejs/npm installed separately from official binary below
-		pkg_install git build-essential radare2 binutils file python3-pip python3-venv unzip
+		pkg_install git build-essential binutils file python3-pip python3-venv unzip
 		/usr/bin/python3 -m pip --version >$DN 2>&1 || /usr/bin/python3 -m ensurepip --user </dev/null >$DN 2>&1
+		# radare2 from apt is often missing on LMDE or stale — install from GitHub releases
+		if ! has r2 && ! has radare2; then
+			log_step "Installing radare2 from GitHub..."
+			R2_VER=$(run_with_timeout_dl curl -fsSL "https://api.github.com/repos/radareorg/radare2/releases/latest" 2>/dev/null \
+				| grep -o '"tag_name":"[^"]*"' | head -1 | sed 's/"tag_name":"//;s/"//')
+			[ -z "$R2_VER" ] && R2_VER="5.9.8"
+			R2_ARCH="x86_64"
+			case "$(uname -m)" in aarch64|arm64) R2_ARCH="arm64" ;; esac
+			R2_URL="https://github.com/radareorg/radare2/releases/download/${R2_VER}/radare2-${R2_VER#v}-${R2_ARCH}.tar.xz"
+			if run_with_timeout_dl curl -fsSL "$R2_URL" -o /tmp/r2.tar.xz 2>$DN; then
+				if [ -w /usr/local ]; then
+					tar -xJf /tmp/r2.tar.xz -C /usr/local --strip-components=1 2>$DN
+				else
+					sudo tar -xJf /tmp/r2.tar.xz -C /usr/local --strip-components=1 2>$DN
+				fi
+				rm -f /tmp/r2.tar.xz
+				# Create r2 symlink if only radare2 exists
+				if has radare2 && ! has r2; then
+					R2_PATH=$(command -v radare2)
+					if [ -w /usr/local/bin ]; then
+						ln -sf "$R2_PATH" /usr/local/bin/r2 2>$DN
+					else
+						sudo ln -sf "$R2_PATH" /usr/local/bin/r2 2>$DN
+					fi
+				fi
+			else
+				# Last resort: try apt (may be in a different repo)
+				pkg_install radare2 2>$DN
+			fi
+		fi
 		;;
 	fedora)
 		log_step "Installing core packages..."
@@ -811,11 +841,19 @@ install_binwalk() {
 
 install_frida() {
 	echo "$ST_RUNNING" > "$TMPDIR_PIRE/frida.status"
-	pip_install frida-tools
 	case "$OS" in
-		debian) pkg_install python3-frida 2>$DN ;;
+		debian)
+			# Try apt first — pip install of frida-tools often fails on
+			# Python 3.12+ (no wheels, needs libfrida compilation)
+			pkg_install python3-frida 2>$DN
+			# If apt didn't provide frida-tools CLI, try pip as fallback
+			if ! has frida && ! has frida-ps; then
+				pip_install frida-tools 2>$DN
+			fi
+			;;
 		arch)   pkg_install frida-tools 2>$DN ;;
 		macos)
+			pip_install frida-tools 2>$DN
 			# pip --user installs CLI tools to ~/Library/Python/X.Y/bin/
 			# which isn't on PATH — symlink frida and frida-ps to ~/.local/bin
 			for _pybin in "$HOME/Library/Python"/*/bin; do
@@ -824,6 +862,7 @@ install_frida() {
 				done
 			done
 			;;
+		*)      pip_install frida-tools 2>$DN ;;
 	esac
 	if has frida || has frida-ps || "${PIRE_PYTHON:-python3}" -c "import frida" 2>$DN; then
 		echo "$ST_DONE" > "$TMPDIR_PIRE/frida.status"
@@ -861,13 +900,35 @@ install_ilspy() {
 	echo "$ST_RUNNING" > "$TMPDIR_PIRE/ilspy.status"
 	case "$OS" in
 		debian|fedora|arch|suse)
+			# Try apt/dnf/pacman first — works if dotnet is in repos
 			pkg_install dotnet-sdk-8.0 2>$DN || pkg_install dotnet-sdk 2>$DN || true
-			if has dotnet 2>$DN; then
+			# If dotnet not in repos, install via Microsoft's official script
+			if ! has dotnet 2>$DN; then
+				log_step "Installing .NET SDK via Microsoft script..."
+				DOTNET_SCRIPT="/tmp/dotnet-install-$$.sh"
+				if run_with_timeout_dl curl -fsSL "https://dot.net/v1/dotnet-install.sh" -o "$DOTNET_SCRIPT" 2>$DN; then
+					chmod +x "$DOTNET_SCRIPT" 2>$DN
+					# Install to user's home (no sudo needed), then add to PATH
+					"$DOTNET_SCRIPT" --channel 8.0 --install-dir "$HOME/.dotnet" </dev/null >"$TMPDIR_PIRE/ilspy.log" 2>&1
+					# Add dotnet to PATH for this session and profile
+					export PATH="$HOME/.dotnet:$PATH"
+					DOTNET_BIN="$HOME/.dotnet/dotnet"
+					# Persist in .bashrc / .profile
+					for _profile in "$HOME/.bashrc" "$HOME/.profile"; do
+						[ -f "$_profile" ] || continue
+						grep -q '.dotnet' "$_profile" 2>$DN && break
+						printf '\n# Added by pire installer\nexport PATH="$HOME/.dotnet:$PATH"\n' >> "$_profile"
+					done
+					rm -f "$DOTNET_SCRIPT"
+				fi
+			fi
+			# Install ilspycmd if dotnet is available
+			if has dotnet 2>$DN || [ -x "$DOTNET_BIN" ]; then
 				run_with_timeout dotnet tool install -g ilspycmd </dev/null 2>$DN
 			fi
-			# Fallback: mono-utils provides monodis
+			# Fallback: mono-utils provides monodis (lighter than mono-devel)
 			if ! has ilspycmd 2>$DN && ! has monodis 2>$DN; then
-				pkg_install mono-devel 2>$DN || true
+				pkg_install mono-utils 2>$DN || pkg_install mono-devel 2>$DN || true
 			fi
 			;;
 		macos)
@@ -877,7 +938,9 @@ install_ilspy() {
 			fi
 			;;
 	esac
-	if has ilspycmd 2>$DN || has monodis 2>$DN || has dotnet 2>$DN; then
+	# Refresh PATH in case we just installed dotnet to ~/.dotnet
+	export PATH="$HOME/.dotnet:$HOME/.dotnet/tools:$PATH"
+	if has ilspycmd 2>$DN || has monodis 2>$DN; then
 		echo "$ST_DONE" > "$TMPDIR_PIRE/ilspy.status"
 	else
 		echo "$ST_FAILED" > "$TMPDIR_PIRE/ilspy.status"
@@ -976,8 +1039,15 @@ install_yara() {
 		*) pip_install yara-python ;;
 	esac
 	# Always install yara-python — pire uses the Python module, not the CLI
-	pip_install yara-python 2>$DN
-	if has yara || python3 -c "import yara" 2>$DN; then
+	# Try apt python3-yara first on Debian (avoids compilation issues on Python 3.12+)
+	case "$OS" in
+		debian) pkg_install python3-yara 2>$DN ;;
+	esac
+	# If apt didn't provide the Python module, try pip
+	if ! "${PIRE_PYTHON:-python3}" -c "import yara" 2>$DN; then
+		pip_install yara-python 2>$DN
+	fi
+	if has yara || "${PIRE_PYTHON:-python3}" -c "import yara" 2>$DN; then
 		echo "$ST_DONE" > "$TMPDIR_PIRE/yara.status"
 	else
 		echo "$ST_FAILED" > "$TMPDIR_PIRE/yara.status"
@@ -986,7 +1056,16 @@ install_yara() {
 
 install_volatility() {
 	echo "$ST_RUNNING" > "$TMPDIR_PIRE/volatility.status"
-	pip_install volatility3
+	# Try pip first (volatility3 is not in most distro repos)
+	pip_install volatility3 2>$DN
+	# If pip failed, try apt (Debian 13+ has volatility3)
+	if ! command -v vol 2>$DN && ! "${PIRE_PYTHON:-python3}" -c "import volatility3" 2>$DN; then
+		case "$OS" in
+			debian) pkg_install volatility3 2>$DN ;;
+			fedora) pkg_install volatility3 2>$DN ;;
+			*) true ;;
+		esac
+	fi
 	if command -v vol 2>$DN || command -v vol3 2>$DN || "${PIRE_PYTHON:-python3}" -c "import volatility3" 2>$DN; then
 		echo "$ST_DONE" > "$TMPDIR_PIRE/volatility.status"
 	else
@@ -1000,6 +1079,9 @@ install_python_tools() {
 		debian)
 			pkg_install python3-pip python3-venv 2>$DN
 			pkg_install python3-capstone python3-lief 2>$DN
+			# Try apt for yara-python and frida-python modules too
+			pkg_install python3-yara 2>$DN
+			pkg_install python3-frida 2>$DN
 			;;
 		fedora) pkg_install python3-pip python3-capstone python3-lief 2>$DN ;;
 		arch)   pkg_install python-pip python-capstone python-lief 2>$DN ;;
@@ -1014,8 +1096,11 @@ install_python_tools() {
 	# for arm64 macOS; our pre-built wheel was also missing the .dylib).
 	# pip install from source builds libkeystone via cmake.
 	pip_install keystone-engine 2>$DN || true
-	# angr is heavy — try binary wheel first, fall back to source
+	# angr is heavy — give it extra time (can take 5+ min to compile)
+	_ORIG_PIP_TIMEOUT="$PIP_INSTALL_TIMEOUT"
+	PIP_INSTALL_TIMEOUT=600
 	pip_install "angr" 2>$DN || true
+	PIP_INSTALL_TIMEOUT="$_ORIG_PIP_TIMEOUT"
 	# Verify using the same Python that pip_install selected
 	VERIFY_PY="${PIRE_PYTHON:-python3}"
 	if "$VERIFY_PY" -c "import capstone" 2>$DN; then
@@ -1173,7 +1258,7 @@ has node    && log_done "Node.js $(node -v)"          || log_error "Node.js not 
 has npm     && log_done "npm $(npm -v)"               || log_error "npm not installed"
 has git     && log_done "git"                          || log_warn "git not installed"
 has gcc     && log_done "gcc $(gcc -dumpversion)"     || log_warn "gcc not installed"
-has r2      && log_done "radare2"                      || log_warn "radare2 not installed"
+(has r2 || has radare2) && log_done "radare2"            || log_warn "radare2 not installed"
 has strings && log_done "strings"                      || log_warn "strings not installed"
 has objdump && log_done "objdump"                      || log_warn "objdump not installed"
 has nm      && log_done "nm"                           || log_warn "nm not installed"
