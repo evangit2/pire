@@ -524,8 +524,9 @@ case "$OS" in
 		# radare2 from apt is often missing on LMDE or stale — install from GitHub releases
 		if ! has r2 && ! has radare2; then
 			log_step "Installing radare2 from GitHub releases..."
+			# Fetch latest version from GitHub API (handle spaces in JSON)
 			R2_VER=$(run_with_timeout_dl curl -fsSL "https://api.github.com/repos/radareorg/radare2/releases/latest" 2>/dev/null \
-				| grep -o '"tag_name":"[^"]*"' | head -1 | sed 's/"tag_name":"//;s/"//')
+				| grep -o '"tag_name": *"[^"]*"' | head -1 | sed 's/"tag_name": *"//;s/"//')
 			[ -z "$R2_VER" ] && R2_VER="6.1.8"
 			# GitHub releases provide .deb packages for Debian-based distros
 			R2_DEB_ARCH="amd64"
@@ -534,20 +535,16 @@ case "$OS" in
 				i686|i386)     R2_DEB_ARCH="i386" ;;
 			esac
 			R2_URL="https://github.com/radareorg/radare2/releases/download/${R2_VER}/radare2_${R2_VER#v}_${R2_DEB_ARCH}.deb"
+			log_step "Downloading radare2 ${R2_VER} (${R2_DEB_ARCH})..."
 			if run_with_timeout_dl curl -fsSL "$R2_URL" -o /tmp/r2.deb 2>$DN; then
-				sudo dpkg -i /tmp/r2.deb >$DN 2>&1 || sudo apt-get install -f -y >$DN 2>&1
+				sudo dpkg -i /tmp/r2.deb 2>&1 | tail -3 || sudo apt-get install -f -y 2>&1 | tail -3
 				rm -f /tmp/r2.deb
-				# Create r2 symlink if only radare2 exists
-				if has radare2 && ! has r2; then
-					R2_PATH=$(command -v radare2)
-					if [ -w /usr/local/bin ]; then
-						ln -sf "$R2_PATH" /usr/local/bin/r2 2>$DN
-					else
-						sudo ln -sf "$R2_PATH" /usr/local/bin/r2 2>$DN
-					fi
+				# Verify installation
+				if ! has r2 && ! has radare2; then
+					log_warn "radare2 .deb installed but binary not found in PATH"
 				fi
 			else
-				# Last resort: try apt (may be in a different repo)
+				log_warn "Failed to download radare2 .deb — trying apt"
 				pkg_install radare2 2>$DN
 			fi
 		fi
@@ -1096,21 +1093,16 @@ install_python_tools() {
 	# for arm64 macOS; our pre-built wheel was also missing the .dylib).
 	# pip install from source builds libkeystone via cmake.
 	pip_install keystone-engine 2>$DN || true
-	# angr is heavy — give it extra time (can take 5+ min to compile)
-	# angr depends on pyvex which requires setuptools-rust (Rust compiler)
-	# Install rustc first if not present
-	if ! has rustc 2>$DN; then
-		case "$OS" in
-			debian) pkg_install rustc cargo 2>$DN ;;
-			fedora) pkg_install rust cargo 2>$DN ;;
-			arch)   pkg_install rust 2>$DN ;;
-			macos)  pkg_install rust 2>$DN ;;
-		esac
-	fi
+	# angr: use binary wheels (cp312-abi3 wheels work on Python 3.12+).
+	# Give extra time as angr + deps are large (~20MB total).
 	_ORIG_PIP_TIMEOUT="$PIP_INSTALL_TIMEOUT"
 	PIP_INSTALL_TIMEOUT=600
 	pip_install "angr" 2>$DN || true
 	PIP_INSTALL_TIMEOUT="$_ORIG_PIP_TIMEOUT"
+	# Verify angr specifically (not just capstone)
+	if ! "${PIRE_PYTHON:-python3}" -c "import angr" 2>$DN; then
+		log_warn "angr not importable — try: pip install --user angr"
+	fi
 	# Verify using the same Python that pip_install selected
 	VERIFY_PY="${PIRE_PYTHON:-python3}"
 	if "$VERIFY_PY" -c "import capstone" 2>$DN; then
