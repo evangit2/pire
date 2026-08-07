@@ -519,9 +519,9 @@ case "$OS" in
 		sudo apt-get update -qq </dev/null 2>$DN
 		log_step "Installing core packages..."
 		# Note: nodejs/npm installed separately from official binary below
-		pkg_install git build-essential binutils file python3-pip python3-venv unzip
+		pkg_install git build-essential radare2 binutils file python3-pip python3-venv unzip
 		/usr/bin/python3 -m pip --version >$DN 2>&1 || /usr/bin/python3 -m ensurepip --user </dev/null >$DN 2>&1
-		# radare2 from apt is often missing on LMDE or stale — install from GitHub releases
+		# If apt's radare2 is missing or too old, install from GitHub releases
 		if ! has r2 && ! has radare2; then
 			log_step "Installing radare2 from GitHub releases..."
 			# Fetch latest version from GitHub API (handle spaces in JSON)
